@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create workflow"
+  short_description: "Design a validated Loomex workflow with a Codex sub-agent."
+  default_prompt: "Create a Loomex workflow from my description and return the validated workflow JSON."
