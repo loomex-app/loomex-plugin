@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workflow"
+  short_description: "Browse, inspect, and start Loomex plugin workflows."
+  default_prompt: "Browse, inspect, and start Loomex plugin workflows."
