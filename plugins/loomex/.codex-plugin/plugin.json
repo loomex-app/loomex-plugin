@@ -1,0 +1,40 @@
+{
+  "name": "loomex",
+  "version": "0.1.51",
+  "description": "Run durable Loomex workflows from natural Codex requests with guided first-use setup.",
+  "author": {
+    "name": "Loomex"
+  },
+  "homepage": "https://github.com/loomex-app/loomex-plugin",
+  "repository": "https://github.com/loomex-app/loomex-plugin",
+  "keywords": [
+    "workflow",
+    "automation",
+    "local-workspace",
+    "human-in-the-loop"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Loomex",
+    "shortDescription": "Ask naturally; Codex guides setup and runs workflows.",
+    "longDescription": "Ask for any Loomex task in natural language. Codex automatically checks first-use readiness, previews durable per-user Runner setup when needed, guides authentication and workspace binding, then resumes the original workflow request. The verified Runner runtime is bundled, and the Tauri app remains available as an alternative client.",
+    "developerName": "Loomex",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Local workspace",
+      "Long-running workflows",
+      "Human-in-the-loop"
+    ],
+    "brandColor": "#635BFF",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "logoDark": "./assets/logo-dark.png",
+    "defaultPrompt": [
+      "Show my Loomex workflows.",
+      "Run a Loomex workflow in this workspace.",
+      "Show pending Loomex human requests. Any required first-use setup should start automatically."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}
