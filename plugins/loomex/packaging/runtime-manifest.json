@@ -1,0 +1,111 @@
+{
+  "artifacts": {
+    "darwin-arm64": {
+      "path": "bin/darwin-arm64/loomex-mcp",
+      "platformSignature": {
+        "binaries": {
+          "loomex": {
+            "sha256": "a0fd0e37cda480f5e1b48e600ffd90264aaa0381538c2caf16fdf04bd6858ccd"
+          },
+          "loomex-mcp": {
+            "sha256": "781ce209a6b816c6d658d2934c5ca7af232c224bd7e35e3d31ea5504c79ffbf0"
+          }
+        },
+        "method": "none",
+        "schemaVersion": 1,
+        "status": "unsigned",
+        "target": "darwin-arm64"
+      },
+      "runtime": {
+        "path": "bin/darwin-arm64/loomex",
+        "sha256": "a0fd0e37cda480f5e1b48e600ffd90264aaa0381538c2caf16fdf04bd6858ccd",
+        "size": 8302400
+      },
+      "sha256": "781ce209a6b816c6d658d2934c5ca7af232c224bd7e35e3d31ea5504c79ffbf0",
+      "size": 1685328
+    },
+    "darwin-x64": {
+      "path": "bin/darwin-x64/loomex-mcp",
+      "platformSignature": {
+        "binaries": {
+          "loomex": {
+            "sha256": "7ba897686e2b10849f862860bb6463af950330307bfc7d003fd692be6371d078"
+          },
+          "loomex-mcp": {
+            "sha256": "e8907894c3aeb4aeb7ec6ca45db815ba256b18a95e463a658dc279c755f72522"
+          }
+        },
+        "method": "none",
+        "schemaVersion": 1,
+        "status": "unsigned",
+        "target": "darwin-x64"
+      },
+      "runtime": {
+        "path": "bin/darwin-x64/loomex",
+        "sha256": "7ba897686e2b10849f862860bb6463af950330307bfc7d003fd692be6371d078",
+        "size": 8793488
+      },
+      "sha256": "e8907894c3aeb4aeb7ec6ca45db815ba256b18a95e463a658dc279c755f72522",
+      "size": 1711152
+    },
+    "linux-arm64": {
+      "path": "bin/linux-arm64/loomex-mcp",
+      "platformSignature": {
+        "binaries": {
+          "loomex": {
+            "sha256": "23fbc44cb6b24082b74003a277ada8355b77992d4191c345da615fa86401888a"
+          },
+          "loomex-mcp": {
+            "sha256": "22218ebc6189dd73c8847942abf2d3b8fb03c292467a23ddd6b1997f2dc870f2"
+          }
+        },
+        "method": "none",
+        "schemaVersion": 1,
+        "status": "unsigned",
+        "target": "linux-arm64"
+      },
+      "runtime": {
+        "path": "bin/linux-arm64/loomex",
+        "sha256": "23fbc44cb6b24082b74003a277ada8355b77992d4191c345da615fa86401888a",
+        "size": 9315064
+      },
+      "sha256": "22218ebc6189dd73c8847942abf2d3b8fb03c292467a23ddd6b1997f2dc870f2",
+      "size": 1866752
+    },
+    "linux-x64": {
+      "path": "bin/linux-x64/loomex-mcp",
+      "platformSignature": {
+        "binaries": {
+          "loomex": {
+            "sha256": "a75ca29ff85cea7102e175601a8c74824d359361e34c889a0ec72a3a92040cac"
+          },
+          "loomex-mcp": {
+            "sha256": "ecb071e5457e1e0c1ccfbd0a9ace81e76b75b685e5d00b0012a32d27156a7037"
+          }
+        },
+        "method": "none",
+        "schemaVersion": 1,
+        "status": "unsigned",
+        "target": "linux-x64"
+      },
+      "runtime": {
+        "path": "bin/linux-x64/loomex",
+        "sha256": "a75ca29ff85cea7102e175601a8c74824d359361e34c889a0ec72a3a92040cac",
+        "size": 9791376
+      },
+      "sha256": "ecb071e5457e1e0c1ccfbd0a9ace81e76b75b685e5d00b0012a32d27156a7037",
+      "size": 1881760
+    }
+  },
+  "channel": "stable",
+  "developmentOverridesAllowed": false,
+  "distributionKind": "release",
+  "linuxRuntimeContract": {
+    "libc": "glibc",
+    "minimumVersion": "2.35"
+  },
+  "packageSigningState": "unsigned-release",
+  "pluginVersion": "0.1.63",
+  "runtimeVersion": "0.1.63",
+  "schemaVersion": 1
+}
