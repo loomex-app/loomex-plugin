@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scope"
+  short_description: "Select Loomex org, project, and workspace scope."
+  default_prompt: "Select the Loomex organization, project, or workspace scope."

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="192" viewBox="0 0 640 192">
+  <rect width="640" height="192" rx="36" fill="#17152F"/>
+  <rect x="28" y="28" width="136" height="136" rx="30" fill="#7C74FF"/>
+  <path d="M65 61v58c0 20 13 31 33 31h43v-23h-36c-10 0-16-5-16-15V61H65Z" fill="#FFFFFF"/>
+  <circle cx="126" cy="75" r="14" fill="#B9FBC0"/>
+  <path d="m120 75 5 5 8-10" fill="none" stroke="#1E1B4B" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="195" y="119" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="700" fill="#FFFFFF">Loomex</text>
+</svg>
