@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "loomex": {
+      "command": "/bin/sh",
+      "args": [
+        "./scripts/launch-mcp.sh"
+      ],
+      "cwd": "."
+    }
+  }
+}
