@@ -1,0 +1,4 @@
+interface:
+  display_name: "Setup"
+  short_description: "Set up and authenticate Loomex Runner from Codex requests."
+  default_prompt: "Set up and authenticate Loomex Runner from Codex requests."
