@@ -1,0 +1,4 @@
+interface:
+  display_name: "Human"
+  short_description: "Handle Loomex human requests, approvals, and plugin agent tasks."
+  default_prompt: "Handle Loomex human requests, approvals, and plugin agent tasks."
