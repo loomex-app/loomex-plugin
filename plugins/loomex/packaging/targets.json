@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "linuxRuntimeContract": {
+    "libc": "glibc",
+    "minimumVersion": "2.35"
+  },
+  "artifacts": {
+    "darwin-arm64": "bin/darwin-arm64/loomex-mcp",
+    "darwin-x64": "bin/darwin-x64/loomex-mcp",
+    "linux-arm64": "bin/linux-arm64/loomex-mcp",
+    "linux-x64": "bin/linux-x64/loomex-mcp"
+  }
+}
