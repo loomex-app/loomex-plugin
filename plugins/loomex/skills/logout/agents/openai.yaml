@@ -1,0 +1,4 @@
+interface:
+  display_name: "Loomex Logout"
+  short_description: "Safely sign out of Loomex"
+  default_prompt: "Use $logout to sign out of the current Loomex account."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Loomex Login"
+  short_description: "Sign in or register a Loomex account"
+  default_prompt: "Use $login to sign in or register a Loomex account."
