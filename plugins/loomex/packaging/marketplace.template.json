@@ -1,0 +1,20 @@
+{
+  "name": "loomex",
+  "interface": {
+    "displayName": "Loomex"
+  },
+  "plugins": [
+    {
+      "name": "loomex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/loomex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
