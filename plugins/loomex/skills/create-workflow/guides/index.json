@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "loomex.workflow-guides/v1",
+  "packVersion": "2",
+  "guides": [
+    {
+      "id": "workflow-contract",
+      "path": "workflow-contract.md",
+      "nodeTypes": [],
+      "sha256": "b500ce03db492bc447dad58528bffe85c628238144e6606347a55bc2e292ce9a",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "contract"
+    },
+    {
+      "id": "catalog-summary",
+      "path": "catalog-summary.md",
+      "nodeTypes": [],
+      "sha256": "0b0aea0b56db6950b61e42da3b9931b4db2e2860062925e083cb705fa7346f92",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "contract"
+    },
+    {
+      "id": "node.start",
+      "path": "node-guides/start.md",
+      "nodeTypes": ["start"],
+      "sha256": "dcaccfe9bec5f1621cb8675d6fdc1073acd52632fd9bb6647976ec9809836559",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.end",
+      "path": "node-guides/end.md",
+      "nodeTypes": ["end"],
+      "sha256": "42dda3f55a5f2c3fb517d9795404523658ef809073218125a7ef34d591f1b7b2",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.ai-agent",
+      "path": "node-guides/ai-agent.md",
+      "nodeTypes": ["ai_agent"],
+      "sha256": "f6de8f583d3231f4844f78a61017bdad4130bfe17a40d73e7f1a469f49b8374b",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.person",
+      "path": "node-guides/person.md",
+      "nodeTypes": ["person"],
+      "sha256": "6f188924f021b6126ced01aabca4e417f0b703a64f3e0bcabcc1838153b58980",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.human",
+      "path": "node-guides/human.md",
+      "nodeTypes": ["human"],
+      "sha256": "34bafa6e6535f1811050d2e58ee26b21205dcea7ea394770dcd415bd44a96454",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.condition",
+      "path": "node-guides/condition.md",
+      "nodeTypes": ["condition"],
+      "sha256": "397d5af9685687f5f824f9c3e78e35187a0e70f8a2ab6bcf94144305421b0c0e",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.switch",
+      "path": "node-guides/switch.md",
+      "nodeTypes": ["switch"],
+      "sha256": "8326950ad3697a652aa9301efd5a2b734c5e97b61a000982912fd7f0cb97270d",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.tool",
+      "path": "node-guides/tool.md",
+      "nodeTypes": ["tool"],
+      "sha256": "c80276fa9c4ef0b753cf92af6e556f919558676f3f090d903bbd131c0b011446",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "node.sub-workflow",
+      "path": "node-guides/sub-workflow.md",
+      "nodeTypes": ["sub_workflow"],
+      "sha256": "086b63718f5af9ad3638406870395e8fee7209f8e612b7e30751fc9c8855bfb0",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "node"
+    },
+    {
+      "id": "pattern.human-radio-after-agent",
+      "path": "patterns/human-radio-after-agent.md",
+      "nodeTypes": ["human", "ai_agent"],
+      "sha256": "f309af43916478f5c3f5c439ec2edee9bb6d9c109215dcb37f8922734e692165",
+      "audience": ["designer", "reviewer"],
+      "kind": "pattern"
+    },
+    {
+      "id": "pattern.human-checkbox-after-agent",
+      "path": "patterns/human-checkbox-after-agent.md",
+      "nodeTypes": ["human", "ai_agent"],
+      "sha256": "b552f387cc6e779dfba627565a34cf12cf6a1ea87d5d2eab403e90b442744323",
+      "audience": ["designer", "reviewer"],
+      "kind": "pattern"
+    },
+    {
+      "id": "pattern.developer-reviewer-loop",
+      "path": "patterns/developer-reviewer-loop.md",
+      "nodeTypes": ["ai_agent", "person", "condition"],
+      "sha256": "7b30fbcdac06f39509c5db27f0f73fdc562eb103ba19c78d1f287091998d197f",
+      "audience": ["designer", "reviewer"],
+      "kind": "pattern"
+    },
+    {
+      "id": "pattern.condition-after-review",
+      "path": "patterns/condition-after-review.md",
+      "nodeTypes": ["condition"],
+      "sha256": "1da675425f038a596d47eb715d3189ca3c891aeed2241bcc5eb0a36fe2809bbc",
+      "audience": ["designer", "reviewer"],
+      "kind": "pattern"
+    },
+    {
+      "id": "pattern.person-memory",
+      "path": "patterns/person-memory.md",
+      "nodeTypes": ["person"],
+      "sha256": "162f0cbab2c43ec95a26c8b55f6ec0ccb95f2e0b6ca65a5fb2bbbaac4b896d54",
+      "audience": ["designer", "reviewer"],
+      "kind": "pattern"
+    },
+    {
+      "id": "pattern.clarifier-loop",
+      "path": "patterns/clarifier-loop.md",
+      "nodeTypes": ["ai_agent", "human", "condition"],
+      "sha256": "f9203f998399768a162ed100242cd34df1922eca20ff62276e18e612b32e0ca8",
+      "audience": ["clarifier", "designer", "reviewer"],
+      "kind": "pattern"
+    }
+  ]
+}

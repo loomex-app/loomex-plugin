@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Loomex Organization"
+  short_description: "Create and select a Loomex organization"
+  default_prompt: "Use $organization-create to create a Loomex organization."

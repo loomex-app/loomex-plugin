@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "playwrightVersion": "1.51.1",
+  "browser": "chromium",
+  "provenance": {
+    "package": "playwright",
+    "version": "1.51.1",
+    "browser": "chromium"
+  },
+  "artifacts": {
+    "darwin-arm64": {
+      "launcher": { "path": "browser/darwin-arm64/playwright", "sha256": null, "size": null },
+      "browsers": {
+        "chromium": { "path": "browser/darwin-arm64/chromium", "sha256": null, "size": null },
+        "firefox": { "path": "browser/darwin-arm64/firefox", "sha256": null, "size": null },
+        "webkit": { "path": "browser/darwin-arm64/webkit", "sha256": null, "size": null }
+      }
+    },
+    "darwin-x64": {
+      "launcher": { "path": "browser/darwin-x64/playwright", "sha256": null, "size": null },
+      "browsers": {
+        "chromium": { "path": "browser/darwin-x64/chromium", "sha256": null, "size": null },
+        "firefox": { "path": "browser/darwin-x64/firefox", "sha256": null, "size": null },
+        "webkit": { "path": "browser/darwin-x64/webkit", "sha256": null, "size": null }
+      }
+    },
+    "linux-arm64": {
+      "launcher": { "path": "browser/linux-arm64/playwright", "sha256": null, "size": null },
+      "browsers": {
+        "chromium": { "path": "browser/linux-arm64/chromium", "sha256": null, "size": null },
+        "firefox": { "path": "browser/linux-arm64/firefox", "sha256": null, "size": null },
+        "webkit": { "path": "browser/linux-arm64/webkit", "sha256": null, "size": null }
+      }
+    },
+    "linux-x64": {
+      "launcher": { "path": "browser/linux-x64/playwright", "sha256": null, "size": null },
+      "browsers": {
+        "chromium": { "path": "browser/linux-x64/chromium", "sha256": null, "size": null },
+        "firefox": { "path": "browser/linux-x64/firefox", "sha256": null, "size": null },
+        "webkit": { "path": "browser/linux-x64/webkit", "sha256": null, "size": null }
+      }
+    },
+    "windows-arm64": {
+      "launcher": { "path": "browser/windows-arm64/playwright.exe", "sha256": null, "size": null },
+      "browsers": {
+        "chromium": { "path": "browser/windows-arm64/chromium.exe", "sha256": null, "size": null },
+        "firefox": { "path": "browser/windows-arm64/firefox.exe", "sha256": null, "size": null },
+        "webkit": { "path": "browser/windows-arm64/webkit.exe", "sha256": null, "size": null }
+      }
+    },
+    "windows-x64": {
+      "launcher": { "path": "browser/windows-x64/playwright.exe", "sha256": null, "size": null },
+      "browsers": {
+        "chromium": { "path": "browser/windows-x64/chromium.exe", "sha256": null, "size": null },
+        "firefox": { "path": "browser/windows-x64/firefox.exe", "sha256": null, "size": null },
+        "webkit": { "path": "browser/windows-x64/webkit.exe", "sha256": null, "size": null }
+      }
+    }
+  }
+}
