@@ -43,9 +43,8 @@ class ReleaseProvenanceTest(unittest.TestCase):
     @staticmethod
     def valid_policies():
         return {
-            "total_count": 3,
+            "total_count": 2,
             "branch_policies": [
-                {"id": 11, "node_id": "stage", "name": "stage", "type": "branch"},
                 {"id": 12, "node_id": "main", "name": "main", "type": "branch"},
                 {"id": 13, "node_id": "tag", "name": "v*", "type": "tag"},
             ],
@@ -130,7 +129,7 @@ class ReleaseProvenanceTest(unittest.TestCase):
 
     def test_environment_rejects_weakened_branch_policy(self) -> None:
         policies = self.valid_policies()
-        policies["branch_policies"][2]["name"] = "*"
+        policies["branch_policies"][1]["name"] = "*"
         with mock.patch.object(
             release_provenance,
             "api_get",

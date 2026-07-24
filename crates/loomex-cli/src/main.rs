@@ -14179,7 +14179,7 @@ mod tests {
             "sbom": [{"name": "loomex-cli", "version": "0.1.0"}],
             "provenance": {
                 "builder_id": "github-actions:loomex-runner",
-                "source_repository": "https://github.com/loomex-app/runner",
+                "source_repository": "https://github.com/loomex-app/loomex-plugin",
                 "source_revision": "abcdef123456",
                 "build_started_at": "2026-06-29T00:00:00Z",
                 "build_finished_at": "2026-06-29T00:01:00Z",
@@ -14296,7 +14296,7 @@ mod tests {
             "sbom": [{"name": "loomex-cli", "version": "0.1.0"}],
             "provenance": {
                 "builder_id": "github-actions:loomex-runner",
-                "source_repository": "https://github.com/loomex-app/runner",
+                "source_repository": "https://github.com/loomex-app/loomex-plugin",
                 "source_revision": "abcdef123456",
                 "build_started_at": "2026-06-29T00:00:00Z",
                 "build_finished_at": "2026-06-29T00:01:00Z",
@@ -14362,7 +14362,7 @@ mod tests {
                 }],
                 provenance: loomex_core::BuildProvenance {
                     builder_id: "github-actions:loomex-runner".to_string(),
-                    source_repository: "https://github.com/loomex-app/runner".to_string(),
+                    source_repository: "https://github.com/loomex-app/loomex-plugin".to_string(),
                     source_revision: "abcdef123456".to_string(),
                     build_started_at: "2026-06-29T00:00:00Z".to_string(),
                     build_finished_at: "2026-06-29T00:01:00Z".to_string(),

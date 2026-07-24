@@ -38,7 +38,7 @@ document. The provenance binds all of the following:
 
 - the plugin version, archive name, and archive SHA-256;
 - the canonical content-addressed Git tree and orphan commit;
-- the exact source release SHA, `v*` tag, `stage` or `main` base, and PR number;
+- the exact source release SHA, `v*` tag, `main` base, and PR number;
 - the explicit unsigned/unnotarized native-binary state; and
 - the SHA-256 plus keyless Sigstore release-integrity contract.
 
@@ -82,7 +82,7 @@ A `v*` tag or production manual run must resolve to a commit satisfying every
 condition below:
 
 - exactly two parents;
-- exact `merge_commit_sha` of one merged GitHub PR into `stage` or `main`;
+- exact `merge_commit_sha` of one merged GitHub PR into `main`;
 - GitHub's standard `Merge pull request #... from ...` subject;
 - second parent equal to the PR's exact head SHA; and
 - still reachable from the matching remote base branch.
@@ -96,7 +96,7 @@ The provenance job still fails closed unless the
 
 - disables administrator bypass (`can_admins_bypass` is exactly `false`);
 - uses custom deployment policies; and
-- exclusively permits branch policies `stage`, `main`, and tag policy `v*`.
+- exclusively permits the `main` branch and tag policy `v*`.
 
 Malformed, missing, broadened, additional, truncated, or inconsistently
 paginated policy data blocks release. `sign-release-archive`,

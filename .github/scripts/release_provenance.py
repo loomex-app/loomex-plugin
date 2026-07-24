@@ -18,7 +18,6 @@ ENVIRONMENT_NAME = "codex-plugin-production"
 DOCUMENTED_RULE_TYPES = {"wait_timer", "branch_policy"}
 RULE_VARIANT_FIELDS = {"wait_timer"}
 REQUIRED_DEPLOYMENT_POLICIES = {
-    ("stage", "branch"),
     ("main", "branch"),
     ("v*", "tag"),
 }
@@ -258,7 +257,7 @@ def verify_environment() -> None:
     if set(configured_policies) != REQUIRED_DEPLOYMENT_POLICIES:
         raise SystemExit(
             f"{environment_name} must exclusively allow branch policies "
-            "stage/main and tag policy v*"
+            "main and tag policy v*"
         )
 
 
@@ -277,12 +276,12 @@ def main() -> None:
         for pull in pulls
         if pull.get("merged_at")
         and pull.get("merge_commit_sha") == sha
-        and pull.get("base", {}).get("ref") in {"stage", "main"}
+        and pull.get("base", {}).get("ref") == "main"
     ]
     if len(candidates) != 1:
         raise SystemExit(
             "release commit must be the exact merge_commit_sha of one merged "
-            "GitHub PR targeting stage or main"
+            "GitHub PR targeting main"
         )
 
     pull = candidates[0]
