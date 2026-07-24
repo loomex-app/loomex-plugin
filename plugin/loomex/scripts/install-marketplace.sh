@@ -61,7 +61,7 @@ if [ -n "$trusted_root" ]; then
 else
   cosign verify-blob \
     --bundle "$temporary/provenance.sigstore.json" \
-    --certificate-identity "https://github.com/loomex-app/runner/.github/workflows/codex-plugin-release.yml@refs/tags/v$version" \
+    --certificate-identity "https://github.com/loomex-app/loomex-plugin/.github/workflows/codex-plugin-release.yml@refs/tags/v$version" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     /dev/fd/3
 fi

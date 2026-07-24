@@ -86,7 +86,7 @@ class SourcePluginContractTest(unittest.TestCase):
             "schemaVersion": 1,
             "pluginVersion": version,
             "marketplace": {
-                "repository": "loomex-app/runner",
+                "repository": "loomex-app/loomex-plugin",
                 "gitObjectFormat": "sha1",
                 "commit": commit,
             },
@@ -281,8 +281,8 @@ elif args[:3] == ["plugin", "marketplace", "add"]:
     if args[4:5] != ["--ref"] or len(args) != 6:
         sys.exit(31)
     commit = args[5]
-    if source == "loomex-app/runner":
-        source = "https://github.com/loomex-app/runner.git"
+    if source == "loomex-app/loomex-plugin":
+        source = "https://github.com/loomex-app/loomex-plugin.git"
     state["marketplace"] = {"source": source, "ref": commit, "commit": commit}
     state["last_revision"] = None
     state["plugin_installed"] = False
@@ -408,7 +408,7 @@ else:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             checkout = root / "checkout"
-            source = "https://github.com/loomex-app/runner.git"
+            source = "https://github.com/loomex-app/loomex-plugin.git"
             environment, _state_path, _log = self.write_stateful_installer_stubs(
                 root,
                 {
@@ -502,7 +502,7 @@ else:
         self.assertIn("verified local snapshot", readme)
         self.assertIn("https://token.actions.githubusercontent.com", installer)
         self.assertIn(
-            "https://github.com/loomex-app/runner/.github/workflows/codex-plugin-release.yml@refs/tags/v$version",
+            "https://github.com/loomex-app/loomex-plugin/.github/workflows/codex-plugin-release.yml@refs/tags/v$version",
             installer,
         )
         self.assertLess(
@@ -613,7 +613,7 @@ else:
             "releases/download/v${{ needs.assemble.outputs.version }}/install-codex.sh",
             workflow,
         )
-        self.assertNotIn("codex plugin marketplace add loomex-app/runner --ref", workflow)
+        self.assertNotIn("codex plugin marketplace add loomex-app/loomex-plugin --ref", workflow)
         self.assertIn("marketplace-installer", workflow)
         self.assertIn("MARKETPLACE_INSTALLER", workflow)
         self.assertIn("stable-installer: ${{ steps.metadata.outputs.stable-installer }}", workflow)
@@ -680,7 +680,7 @@ else:
                         "schemaVersion": 1,
                         "pluginVersion": version,
                         "marketplace": {
-                            "repository": "loomex-app/runner",
+                            "repository": "loomex-app/loomex-plugin",
                             "gitObjectFormat": "sha1",
                             "commit": commit,
                         },
@@ -711,7 +711,7 @@ else:
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = log.read_text(encoding="utf-8")
             self.assertIn(
-                f"plugin marketplace add loomex-app/runner --ref {trusted_commit}",
+                f"plugin marketplace add loomex-app/loomex-plugin --ref {trusted_commit}",
                 calls,
             )
             self.assertNotIn(replacement_commit, calls)
@@ -851,7 +851,7 @@ else:
             self.assertIn("plugin remove loomex@loomex", calls)
             self.assertIn("plugin marketplace remove loomex", calls)
             self.assertIn(
-                f"plugin marketplace add https://github.com/loomex-app/runner.git --ref {new_commit}",
+                f"plugin marketplace add https://github.com/loomex-app/loomex-plugin.git --ref {new_commit}",
                 calls,
             )
             self.assertIn("plugin marketplace upgrade loomex", calls)
@@ -868,7 +868,7 @@ else:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             commit = "9" * 40
-            source = "https://github.com/loomex-app/runner.git"
+            source = "https://github.com/loomex-app/loomex-plugin.git"
             environment, state_path, log = self.write_stateful_installer_stubs(
                 root,
                 {
@@ -912,7 +912,7 @@ else:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             commit = "8" * 40
-            source = "https://github.com/loomex-app/runner.git"
+            source = "https://github.com/loomex-app/loomex-plugin.git"
             environment, _state_path, log = self.write_stateful_installer_stubs(
                 root,
                 {
@@ -954,7 +954,7 @@ else:
             root = Path(temporary)
             old_commit = "c" * 40
             new_commit = "d" * 40
-            old_source = "https://github.com/loomex-app/runner.git"
+            old_source = "https://github.com/loomex-app/loomex-plugin.git"
             environment, state_path, log = self.write_stateful_installer_stubs(
                 root,
                 {
@@ -1026,7 +1026,7 @@ else:
             calls = log.read_text(encoding="utf-8")
             self.assertIn("plugin marketplace remove loomex", calls)
             self.assertIn(
-                f"plugin marketplace add loomex-app/runner --ref {new_commit}", calls
+                f"plugin marketplace add loomex-app/loomex-plugin --ref {new_commit}", calls
             )
 
     def test_installer_failure_restores_legacy_local_marketplace(self) -> None:
@@ -1073,7 +1073,7 @@ else:
             root = Path(temporary)
             old_commit = "1" * 40
             new_commit = "2" * 40
-            old_source = "https://github.com/loomex-app/runner.git"
+            old_source = "https://github.com/loomex-app/loomex-plugin.git"
             environment, state_path, _log = self.write_stateful_installer_stubs(
                 root,
                 {
@@ -1109,7 +1109,7 @@ else:
             root = Path(temporary)
             old_commit = "3" * 40
             new_commit = "4" * 40
-            source = "https://github.com/loomex-app/runner.git"
+            source = "https://github.com/loomex-app/loomex-plugin.git"
             environment, state_path, _log = self.write_stateful_installer_stubs(
                 root,
                 {
@@ -1155,7 +1155,7 @@ else:
                 {
                     "root": str(root / "checkout"),
                     "marketplace": {
-                        "source": "https://github.com/loomex-app/runner.git",
+                        "source": "https://github.com/loomex-app/loomex-plugin.git",
                         "ref": old_commit,
                         "commit": old_commit,
                         "sparse_paths": ["plugins/loomex"],
@@ -1189,7 +1189,7 @@ else:
                 {
                     "root": str(root / "checkout"),
                     "marketplace": {
-                        "source": "https://github.com/loomex-app/runner.git",
+                        "source": "https://github.com/loomex-app/loomex-plugin.git",
                         "ref": commit,
                         "commit": commit,
                     },

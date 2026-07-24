@@ -24,6 +24,17 @@ The normal installation is one command on macOS and Linux:
 curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/install-codex.sh | sh
 ```
 
+To install or upgrade to an exact plugin version:
+
+```bash
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.21/install-codex.sh | sh
+```
+
+The old `loomex-app/runner` URL is retained only for historical releases. New
+releases and upgrades come from `loomex-app/loomex-plugin`; running the command
+again is sufficient and preserves the existing Codex marketplace state on
+failure.
+
 GitHub selects the latest stable, non-prerelease release. That release's version
 is embedded in the downloaded script, which then uses version-specific asset
 URLs authenticated by Sigstore. It obtains a temporary pinned Cosign binary and

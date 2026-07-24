@@ -115,7 +115,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Require a standard PR merge on stage or main
+      - name: Require a standard PR merge on main
         id: gate
         shell: bash
         env:
@@ -601,7 +601,7 @@ jobs:
               "pullRequest": int("${{ needs.release-provenance.outputs.release-pr }}"),
           }
           marketplace = value["marketplace"]
-          assert marketplace["repository"] == "loomex-app/runner"
+          assert marketplace["repository"] == "loomex-app/loomex-plugin"
           assert marketplace["gitObjectFormat"] == "sha1"
           assert marketplace["commitEpoch"] == 946684800
           assert marketplace["commitIdentity"] == "Loomex Release Bot <release-bot@loomex.app>"
@@ -659,7 +659,7 @@ jobs:
           {
             echo "Install this release with the verified local-snapshot installer:"
             echo '```bash'
-            echo "curl -fsSL https://github.com/loomex-app/runner/releases/download/v${{ needs.assemble.outputs.version }}/install-codex.sh | sh"
+            echo "curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v${{ needs.assemble.outputs.version }}/install-codex.sh | sh"
             echo '```'
             echo "Marketplace publication commit for audit: $expected_commit"
           } >> "$GITHUB_STEP_SUMMARY"
