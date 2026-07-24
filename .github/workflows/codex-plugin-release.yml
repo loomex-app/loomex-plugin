@@ -1,0 +1,831 @@
+name: Codex Plugin Package
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/codex-plugin-release.yml"
+      - ".github/scripts/**"
+      - "codex_plugin_*"
+      - "plugin/**"
+      - "scripts/codex_mcp_discovery_smoke.py"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/loomex-core/**"
+      - "crates/loomex-cli/**"
+      - "crates/loomex-mcp/**"
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      production_release:
+        description: Publish a checksum- and Sigstore-protected production release
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-plugin-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CODEX_VALIDATOR_COMMIT: 1836ae0612052137d0cabaff7807ff8314cee940
+  CODEX_SMOKE_VERSION: "0.144.6"
+  MINIMUM_GLIBC: "2.35"
+  SIGSTORE_ROOT_COMMIT: a394944ec0ec1dd5e8ba50471e9ded37d88b5daa
+  SIGSTORE_ROOT_SHA256: 6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66
+
+jobs:
+  source-validation:
+    name: Source and packaging tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Fetch pinned official Codex plugin validator
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: openai/codex
+          ref: ${{ env.CODEX_VALIDATOR_COMMIT }}
+          path: .official-codex
+          persist-credentials: false
+      - name: Install official validator dependency
+        run: python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.2'
+      - name: Validate source plugin
+        run: |
+          node --test plugin/loomex/tests/*.test.mjs
+          node plugin/loomex/scripts/validate-package.mjs
+          python3 .official-codex/codex-rs/skills/src/assets/samples/plugin-creator/scripts/validate_plugin.py plugin/loomex
+      - name: Verify shipped version coherence
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import tomllib
+
+          root = pathlib.Path(".")
+          plugin_version = json.loads(
+              (root / "plugin/loomex/.codex-plugin/plugin.json").read_text()
+          )["version"]
+          manifests = [
+              "crates/loomex-core/Cargo.toml",
+              "crates/loomex-cli/Cargo.toml",
+              "crates/loomex-mcp/Cargo.toml",
+          ]
+          for manifest in manifests:
+              version = tomllib.loads((root / manifest).read_text())["package"]["version"]
+              if version != plugin_version:
+                  raise SystemExit(
+                      f"{manifest} version {version!r} differs from plugin {plugin_version!r}"
+                  )
+          PY
+      - name: Test package assembler
+        run: |
+          python3 -m unittest -v codex_plugin_assemble_test.py
+          python3 .github/scripts/release_provenance_test.py -v
+      - name: Check packaging scripts
+        run: |
+          python3 -m py_compile \
+            codex_plugin_assemble.py \
+            codex_plugin_validate.py \
+            .github/scripts/release_provenance.py
+          git diff --check
+
+  release-provenance:
+    name: Verify production release provenance
+    needs: source-validation
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      release-mode: ${{ steps.gate.outputs.release-mode }}
+      release-sha: ${{ steps.gate.outputs.release-sha }}
+      release-base: ${{ steps.gate.outputs.release-base }}
+      release-pr: ${{ steps.gate.outputs.release-pr }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a standard PR merge on stage or main
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_PRODUCTION: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.production_release == true }}
+        run: |
+          set -euo pipefail
+          if [ "$REQUESTED_PRODUCTION" != "true" ]; then
+            echo "release-mode=false" >> "$GITHUB_OUTPUT"
+            echo "release-sha=" >> "$GITHUB_OUTPUT"
+            echo "release-base=" >> "$GITHUB_OUTPUT"
+            echo "release-pr=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          release_sha="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          RELEASE_SHA="$release_sha" \
+            python3 .github/scripts/release_provenance.py \
+            > "$RUNNER_TEMP/release-provenance.env"
+          cat "$RUNNER_TEMP/release-provenance.env" >> "$GITHUB_OUTPUT"
+
+  native-build:
+    name: Build ${{ matrix.package_target }}
+    needs: [source-validation, release-provenance]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            rust_target: aarch64-apple-darwin
+            package_target: darwin-arm64
+            executable_suffix: ""
+          - os: macos-14
+            rust_target: x86_64-apple-darwin
+            package_target: darwin-x64
+            executable_suffix: ""
+          - os: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            package_target: linux-x64
+            executable_suffix: ""
+          - os: ubuntu-22.04
+            rust_target: aarch64-unknown-linux-gnu
+            package_target: linux-arm64
+            executable_suffix: ""
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-21
+        with:
+          targets: ${{ matrix.rust_target }}
+      - name: Install Linux ARM64 cross compiler
+        if: matrix.rust_target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
+      - name: Build both native executables
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          RUSTFLAGS: >-
+            --remap-path-prefix=/home/runner=/build
+            --remap-path-prefix=/Users/runner=/build
+        run: >-
+          cargo build --release --locked
+          -p loomex-cli -p loomex-mcp
+          --target ${{ matrix.rust_target }}
+      - name: Check both native packages for the declared target
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+        run: >-
+          cargo check --release --locked
+          -p loomex-cli -p loomex-mcp
+          --target ${{ matrix.rust_target }}
+      - name: Confirm both release binaries exist
+        shell: bash
+        run: |
+          test -f "target/${{ matrix.rust_target }}/release/loomex${{ matrix.executable_suffix }}"
+          test -f "target/${{ matrix.rust_target }}/release/loomex-mcp${{ matrix.executable_suffix }}"
+      - name: Execute Linux native smoke tests
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          runtime="target/${{ matrix.rust_target }}/release/loomex"
+          mcp="target/${{ matrix.rust_target }}/release/loomex-mcp"
+          if [ "${{ matrix.rust_target }}" = "aarch64-unknown-linux-gnu" ]; then
+            execute=(qemu-aarch64 -L /usr/aarch64-linux-gnu)
+          else
+            execute=()
+          fi
+          "${execute[@]}" "$runtime" --help >/dev/null
+          mcp_command=(
+            timeout --signal=TERM --kill-after=5s 30s
+            "${execute[@]}" "$mcp"
+          )
+          response="$(
+            printf '%s\n' \
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}' \
+              '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+              '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"progressToken":2,"com.openai/codex":{"source":"tool-discovery"}}}}' \
+              | "${mcp_command[@]}"
+          )"
+          SMOKE_RESPONSE="$response" python3 - <<'PY'
+          import json
+          import os
+
+          responses = [json.loads(line) for line in os.environ["SMOKE_RESPONSE"].splitlines()]
+          by_id = {response.get("id"): response for response in responses}
+          assert set(by_id) == {1, 2}, by_id
+          assert by_id[1]["result"]["serverInfo"]["name"] == "loomex"
+          tools = by_id[2]["result"]["tools"]
+          names = {tool["name"] for tool in tools}
+          assert len(tools) == 33, sorted(names)
+          assert len(names) == 33, "duplicate MCP tool names"
+          required = {
+              "loomex_setup_status",
+              "loomex_workflow_list",
+              "loomex_human_open",
+              "loomex_agent_task_list",
+              "loomex_agent_task_respond",
+          }
+          assert required <= names, sorted(required - names)
+          PY
+      - name: Enforce pinned glibc symbol ceiling
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          for binary in loomex loomex-mcp; do
+            path="target/${{ matrix.rust_target }}/release/$binary"
+            observed="$(strings "$path" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sed 's/GLIBC_//' | sort -Vu | tail -1)"
+            test -n "$observed"
+            highest="$(printf '%s\n%s\n' "$MINIMUM_GLIBC" "$observed" | sort -V | tail -1)"
+            if [ "$highest" != "$MINIMUM_GLIBC" ]; then
+              echo "$path requires GLIBC_$observed; maximum supported is GLIBC_$MINIMUM_GLIBC" >&2
+              exit 1
+            fi
+          done
+
+      - name: Stage native artifact
+        shell: bash
+        run: |
+          native_dir="$RUNNER_TEMP/native/${{ matrix.package_target }}"
+          mkdir -p "$native_dir"
+          cp "target/${{ matrix.rust_target }}/release/loomex${{ matrix.executable_suffix }}" "$native_dir/"
+          cp "target/${{ matrix.rust_target }}/release/loomex-mcp${{ matrix.executable_suffix }}" "$native_dir/"
+          chmod 755 "$native_dir/loomex" "$native_dir/loomex-mcp"
+          NATIVE_DIR="$native_dir" PACKAGE_TARGET="${{ matrix.package_target }}" RUNNER_KIND="${{ runner.os }}" python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ["NATIVE_DIR"])
+          def sha(name): return hashlib.sha256((root / name).read_bytes()).hexdigest()
+          value = {
+              "schemaVersion": 1,
+              "target": os.environ["PACKAGE_TARGET"],
+              "status": "unsigned",
+              "method": "none",
+              "binaries": {"loomex": {"sha256": sha("loomex")}, "loomex-mcp": {"sha256": sha("loomex-mcp")}},
+          }
+          (root / "signing.json").write_text(json.dumps(value, sort_keys=True) + "\n")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: loomex-unsigned-native-${{ matrix.package_target }}
+          path: ${{ runner.temp }}/native/${{ matrix.package_target }}
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-native-artifacts:
+    name: Revalidate transferred native artifacts
+    needs: [release-provenance, native-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: loomex-unsigned-native-*
+          path: native
+      - name: Verify unsigned-platform evidence and digests after transfer
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path("native")
+          targets = ("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64")
+          for target in targets:
+              candidates = [root / target, root / f"loomex-unsigned-native-{target}"]
+              directory = next((path for path in candidates if path.is_dir()), None)
+              assert directory is not None, f"missing {target}"
+              evidence = json.loads((directory / "signing.json").read_text())
+              assert evidence["schemaVersion"] == 1 and evidence["target"] == target
+              assert evidence["status"] == "unsigned" and evidence["method"] == "none"
+              for name in ("loomex", "loomex-mcp"):
+                  binary = directory / name
+                  actual = hashlib.sha256(binary.read_bytes()).hexdigest()
+                  assert evidence["binaries"][name]["sha256"] == actual
+          PY
+
+  assemble:
+    name: Assemble and validate universal plugin
+    if: always() && needs.verify-native-artifacts.result == 'success'
+    needs: [release-provenance, native-build, verify-native-artifacts]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_MODE: ${{ needs.release-provenance.outputs.release-mode }}
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      archive: ${{ steps.metadata.outputs.archive }}
+      marketplace-archive: ${{ steps.metadata.outputs.marketplace-archive }}
+      marketplace-provenance: ${{ steps.metadata.outputs.marketplace-provenance }}
+      marketplace-installer: ${{ steps.metadata.outputs.marketplace-installer }}
+      stable-installer: ${{ steps.metadata.outputs.stable-installer }}
+      artifact-name: ${{ steps.metadata.outputs.artifact-name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Fetch pinned official Codex plugin validator
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: openai/codex
+          ref: ${{ env.CODEX_VALIDATOR_COMMIT }}
+          path: .official-codex
+          persist-credentials: false
+      - name: Install official validator dependency
+        run: python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.2'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: loomex-unsigned-native-*
+          path: native
+      - name: Normalize downloaded native artifact directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            source="native/loomex-unsigned-native-$target"
+            test -d "$source"
+            mv "$source" "native/$target"
+          done
+      - name: Resolve immutable package metadata
+        id: metadata
+        shell: bash
+        run: |
+          version="$(node -p "require('./plugin/loomex/.codex-plugin/plugin.json').version")"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match plugin version v$version" >&2
+            exit 1
+          fi
+          archive="loomex-codex-plugin-$version.zip"
+          marketplace_archive="loomex-codex-marketplace-$version.zip"
+          marketplace_provenance="loomex-codex-marketplace-$version.provenance.json"
+          marketplace_installer="loomex-install-marketplace-$version.sh"
+          stable_installer="install-codex.sh"
+          if [ "$RELEASE_MODE" = "true" ]; then
+            artifact_name="loomex-codex-plugin-$version-unsigned-platform"
+          else
+            artifact_name="loomex-codex-plugin-$version-UNSIGNED-VALIDATION-ONLY"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "marketplace-archive=$marketplace_archive" >> "$GITHUB_OUTPUT"
+          echo "marketplace-provenance=$marketplace_provenance" >> "$GITHUB_OUTPUT"
+          echo "marketplace-installer=$marketplace_installer" >> "$GITHUB_OUTPUT"
+          echo "stable-installer=$stable_installer" >> "$GITHUB_OUTPUT"
+          echo "artifact-name=$artifact_name" >> "$GITHUB_OUTPUT"
+      - name: Assemble native files and integrity manifest
+        shell: bash
+        run: |
+          args=(
+            --plugin-source plugin/loomex
+            --artifacts-root native
+            --output-root dist
+            --archive "dist/${{ steps.metadata.outputs.archive }}"
+            --marketplace-archive "dist/${{ steps.metadata.outputs.marketplace-archive }}"
+            --marketplace-provenance "dist/${{ steps.metadata.outputs.marketplace-provenance }}"
+            --marketplace-installer "dist/${{ steps.metadata.outputs.marketplace-installer }}"
+            --version "${{ steps.metadata.outputs.version }}"
+          )
+          if [ "$RELEASE_MODE" = "true" ]; then
+            args+=(
+              --signing-state unsigned-release
+              --source-release-sha "${{ needs.release-provenance.outputs.release-sha }}"
+              --source-release-tag "$GITHUB_REF_NAME"
+              --source-release-base "${{ needs.release-provenance.outputs.release-base }}"
+              --source-release-pr "${{ needs.release-provenance.outputs.release-pr }}"
+            )
+          else
+            args+=(--signing-state unsigned-validation)
+          fi
+          python3 codex_plugin_assemble.py "${args[@]}"
+          python3 - "${{ steps.metadata.outputs.version }}" <<'PY'
+          import os
+          import pathlib
+          import sys
+
+          source = pathlib.Path("plugin/loomex/scripts/install-codex.sh")
+          destination = pathlib.Path("dist/install-codex.sh")
+          value = source.read_text(encoding="utf-8")
+          token = "@LOOMEX_RELEASE_VERSION@"
+          if value.count(token) != 1:
+              raise SystemExit("stable installer must contain exactly one version token")
+          destination.write_text(value.replace(token, sys.argv[1]), encoding="utf-8")
+          os.chmod(destination, 0o755)
+          PY
+      - name: Run release validator and safety scan
+        run: >-
+          python3 codex_plugin_validate.py dist/loomex
+          --plugin-validator .official-codex/codex-rs/skills/src/assets/samples/plugin-creator/scripts/validate_plugin.py
+          --marketplace-root dist/marketplace
+          --marketplace-archive "dist/${{ steps.metadata.outputs.marketplace-archive }}"
+          --marketplace-provenance "dist/${{ steps.metadata.outputs.marketplace-provenance }}"
+          --marketplace-installer "dist/${{ steps.metadata.outputs.marketplace-installer }}"
+      - name: Install pinned Codex CLI for marketplace smoke
+        shell: bash
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/codex-smoke" \
+            --no-audit --no-fund "@openai/codex@$CODEX_SMOKE_VERSION"
+          test "$("$RUNNER_TEMP/codex-smoke/bin/codex" --version)" = \
+            "codex-cli $CODEX_SMOKE_VERSION"
+      - name: Verify assembled marketplace discovery through Codex
+        run: >-
+          python3 scripts/codex_mcp_discovery_smoke.py
+          --codex "$RUNNER_TEMP/codex-smoke/bin/codex"
+          --marketplace-root dist/marketplace
+          --expected-version "${{ steps.metadata.outputs.version }}"
+          --timeout-seconds 60
+      - name: Verify archive extraction and executable modes
+        shell: bash
+        run: |
+          mkdir extracted
+          unzip -q "dist/${{ steps.metadata.outputs.archive }}" -d extracted
+          test -x extracted/loomex/bin/darwin-arm64/loomex
+          test -x extracted/loomex/bin/darwin-arm64/loomex-mcp
+          test -x extracted/loomex/bin/linux-arm64/loomex
+          test -x extracted/loomex/bin/linux-arm64/loomex-mcp
+          python3 codex_plugin_validate.py extracted/loomex --plugin-validator "$GITHUB_WORKSPACE/.official-codex/codex-rs/skills/src/assets/samples/plugin-creator/scripts/validate_plugin.py"
+          mkdir marketplace-extracted
+          unzip -q "dist/${{ steps.metadata.outputs.marketplace-archive }}" -d marketplace-extracted
+          test -f marketplace-extracted/.agents/plugins/marketplace.json
+          python3 codex_plugin_validate.py marketplace-extracted/plugins/loomex --plugin-validator "$GITHUB_WORKSPACE/.official-codex/codex-rs/skills/src/assets/samples/plugin-creator/scripts/validate_plugin.py"
+          cd dist
+          sha256sum "${{ steps.metadata.outputs.archive }}" > "${{ steps.metadata.outputs.archive }}.sha256"
+          sha256sum "${{ steps.metadata.outputs.marketplace-archive }}" > "${{ steps.metadata.outputs.marketplace-archive }}.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.metadata.outputs.artifact-name }}
+          path: |
+            dist/${{ steps.metadata.outputs.archive }}
+            dist/${{ steps.metadata.outputs.archive }}.sha256
+            dist/${{ steps.metadata.outputs.marketplace-archive }}
+            dist/${{ steps.metadata.outputs.marketplace-archive }}.sha256
+            dist/${{ steps.metadata.outputs.marketplace-provenance }}
+            dist/${{ steps.metadata.outputs.marketplace-installer }}
+            dist/${{ steps.metadata.outputs.stable-installer }}
+          if-no-files-found: error
+          retention-days: ${{ env.RELEASE_MODE == 'true' && 30 || 7 }}
+
+  sign-release-archive:
+    name: Sign production archive
+    if: needs.assemble.result == 'success' && needs.release-provenance.outputs.release-mode == 'true'
+    needs: [release-provenance, assemble]
+    runs-on: ubuntu-latest
+    environment:
+      name: codex-plugin-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.assemble.outputs.artifact-name }}
+          path: release
+      - name: Install checksum-pinned Cosign
+        run: bash .github/scripts/install-cosign.sh
+      - name: Keyless-sign and verify immutable release blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum -c "${{ needs.assemble.outputs.archive }}.sha256"
+          sha256sum -c "${{ needs.assemble.outputs.marketplace-archive }}.sha256"
+          provenance="${{ needs.assemble.outputs.marketplace-provenance }}"
+          test -s "$provenance"
+          trusted_root="$RUNNER_TEMP/sigstore-trusted-root.json"
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
+            --output "$trusted_root" \
+            "https://raw.githubusercontent.com/sigstore/root-signing/$SIGSTORE_ROOT_COMMIT/targets/trusted_root.json"
+          printf '%s  %s\n' "$SIGSTORE_ROOT_SHA256" "$trusted_root" | sha256sum -c -
+          workflow_identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          for name in "${{ needs.assemble.outputs.archive }}" "${{ needs.assemble.outputs.marketplace-archive }}" "$provenance" "${{ needs.assemble.outputs.marketplace-installer }}" "${{ needs.assemble.outputs.stable-installer }}"; do
+            cosign sign-blob --yes --bundle "$name.sigstore.json" "$name"
+            cosign verify-blob \
+              --bundle "$name.sigstore.json" \
+              --trusted-root "$trusted_root" \
+              --certificate-identity "$workflow_identity" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$name"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: loomex-codex-plugin-${{ needs.assemble.outputs.version }}-SIGSTORE-SIGNED
+          path: |
+            release/${{ needs.assemble.outputs.archive }}
+            release/${{ needs.assemble.outputs.archive }}.sha256
+            release/${{ needs.assemble.outputs.archive }}.sigstore.json
+            release/${{ needs.assemble.outputs.marketplace-archive }}
+            release/${{ needs.assemble.outputs.marketplace-archive }}.sha256
+            release/${{ needs.assemble.outputs.marketplace-archive }}.sigstore.json
+            release/loomex-codex-marketplace-${{ needs.assemble.outputs.version }}.provenance.json
+            release/loomex-codex-marketplace-${{ needs.assemble.outputs.version }}.provenance.json.sigstore.json
+            release/${{ needs.assemble.outputs.marketplace-installer }}
+            release/${{ needs.assemble.outputs.marketplace-installer }}.sigstore.json
+            release/${{ needs.assemble.outputs.stable-installer }}
+            release/${{ needs.assemble.outputs.stable-installer }}.sigstore.json
+          if-no-files-found: error
+          retention-days: 90
+  publish-marketplace:
+    name: Publish installable Codex marketplace snapshot
+    if: startsWith(github.ref, 'refs/tags/v') && needs.sign-release-archive.result == 'success'
+    needs: [release-provenance, assemble, sign-release-archive]
+    runs-on: ubuntu-latest
+    environment:
+      name: codex-plugin-production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: loomex-codex-plugin-${{ needs.assemble.outputs.version }}-SIGSTORE-SIGNED
+          path: ${{ runner.temp }}/release
+      - name: Install checksum-pinned Cosign
+        run: bash .github/scripts/install-cosign.sh
+      - name: Publish content-addressed assembled marketplace tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          sha256sum -c "${{ needs.assemble.outputs.marketplace-archive }}.sha256"
+          trusted_root="$RUNNER_TEMP/sigstore-trusted-root.json"
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
+            --output "$trusted_root" \
+            "https://raw.githubusercontent.com/sigstore/root-signing/$SIGSTORE_ROOT_COMMIT/targets/trusted_root.json"
+          printf '%s  %s\n' "$SIGSTORE_ROOT_SHA256" "$trusted_root" | sha256sum -c -
+          workflow_identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          expected_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/codex-plugin-release.yml@refs/tags/v${{ needs.assemble.outputs.version }}"
+          test "$workflow_identity" = "$expected_identity"
+          cosign verify-blob \
+            --bundle "${{ needs.assemble.outputs.marketplace-archive }}.sigstore.json" \
+            --trusted-root "$trusted_root" \
+            --certificate-identity "$workflow_identity" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${{ needs.assemble.outputs.marketplace-archive }}"
+          cosign verify-blob \
+            --bundle "${{ needs.assemble.outputs.marketplace-provenance }}.sigstore.json" \
+            --trusted-root "$trusted_root" \
+            --certificate-identity "$workflow_identity" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${{ needs.assemble.outputs.marketplace-provenance }}"
+          provenance="$RUNNER_TEMP/release/${{ needs.assemble.outputs.marketplace-provenance }}"
+          readarray -t identity < <(python3 - "$provenance" "${{ needs.assemble.outputs.version }}" <<'PY'
+          import json, re, sys
+          value = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert value["schemaVersion"] == 1
+          assert value["pluginVersion"] == sys.argv[2]
+          assert value["nativeBinaries"] == {
+              "platformSigning": "unsigned",
+              "appleNotarization": "none",
+          }
+          assert value["releaseIntegrity"] == {
+              "checksums": "sha256",
+              "blobSignature": "sigstore-keyless-external",
+          }
+          assert value["sourceRelease"] == {
+              "sha": "${{ needs.release-provenance.outputs.release-sha }}",
+              "tag": "${{ github.ref_name }}",
+              "base": "${{ needs.release-provenance.outputs.release-base }}",
+              "pullRequest": int("${{ needs.release-provenance.outputs.release-pr }}"),
+          }
+          marketplace = value["marketplace"]
+          assert marketplace["repository"] == "loomex-app/runner"
+          assert marketplace["gitObjectFormat"] == "sha1"
+          assert marketplace["commitEpoch"] == 946684800
+          assert marketplace["commitIdentity"] == "Loomex Release Bot <release-bot@loomex.app>"
+          assert marketplace["commitMessage"] == f"Loomex Codex plugin {sys.argv[2]}"
+          assert re.fullmatch(r"[0-9a-f]{40}", marketplace["tree"])
+          assert re.fullmatch(r"[0-9a-f]{40}", marketplace["commit"])
+          print(marketplace["tree"])
+          print(marketplace["commit"])
+          print(value["archive"]["sha256"])
+          print(value["archive"]["name"])
+          PY
+          )
+          expected_tree="${identity[0]}"
+          expected_commit="${identity[1]}"
+          expected_archive_sha256="${identity[2]}"
+          expected_archive_name="${identity[3]}"
+          test "$expected_archive_name" = "${{ needs.assemble.outputs.marketplace-archive }}"
+          printf '%s  %s\n' "$expected_archive_sha256" "$expected_archive_name" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/marketplace"
+          unzip -q "$RUNNER_TEMP/release/${{ needs.assemble.outputs.marketplace-archive }}" -d "$RUNNER_TEMP/marketplace"
+          test -f "$RUNNER_TEMP/marketplace/.agents/plugins/marketplace.json"
+          test -f "$RUNNER_TEMP/marketplace/plugins/loomex/packaging/runtime-manifest.json"
+          export GIT_INDEX_FILE="$RUNNER_TEMP/marketplace.index"
+          git -C "$GITHUB_WORKSPACE" read-tree --empty
+          git -C "$RUNNER_TEMP/marketplace" \
+            --git-dir="$GITHUB_WORKSPACE/.git" \
+            --work-tree="$RUNNER_TEMP/marketplace" \
+            -c core.autocrlf=false -c core.attributesFile=/dev/null \
+            add -f -A -- .
+          actual_tree="$(git -C "$GITHUB_WORKSPACE" write-tree)"
+          test "$actual_tree" = "$expected_tree"
+          export GIT_AUTHOR_NAME='Loomex Release Bot'
+          export GIT_AUTHOR_EMAIL='release-bot@loomex.app'
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          export GIT_AUTHOR_DATE='946684800 +0000'
+          export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+          actual_commit="$(printf '%s\n' "Loomex Codex plugin ${{ needs.assemble.outputs.version }}" | git -C "$GITHUB_WORKSPACE" commit-tree "$actual_tree")"
+          test "$actual_commit" = "$expected_commit"
+          publication_ref="refs/heads/codex-plugin-marketplace-v${{ needs.assemble.outputs.version }}"
+          existing="$(git -C "$GITHUB_WORKSPACE" ls-remote --heads origin "$publication_ref" | awk '{print $1}')"
+          if [ -n "$existing" ] && [ "$existing" != "$expected_commit" ]; then
+            echo "$publication_ref already points at different content; refusing to replace it" >&2
+            exit 1
+          fi
+          if [ -z "$existing" ]; then
+            git -C "$GITHUB_WORKSPACE" fetch --no-tags --force origin \
+              "refs/tags/$GITHUB_REF_NAME:refs/tags/loomex-live-release-check"
+            live_release_sha="$(git -C "$GITHUB_WORKSPACE" rev-parse 'refs/tags/loomex-live-release-check^{commit}')"
+            test "$live_release_sha" = "${{ needs.release-provenance.outputs.release-sha }}"
+            git -C "$GITHUB_WORKSPACE" push origin "$expected_commit:$publication_ref"
+          fi
+          published="$(git -C "$GITHUB_WORKSPACE" ls-remote --heads origin "$publication_ref" | awk '{print $1}')"
+          test "$published" = "$expected_commit"
+          {
+            echo "Install this release with the verified local-snapshot installer:"
+            echo '```bash'
+            echo "curl -fsSL https://github.com/loomex-app/runner/releases/download/v${{ needs.assemble.outputs.version }}/install-codex.sh | sh"
+            echo '```'
+            echo "Marketplace publication commit for audit: $expected_commit"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-release-assets:
+    name: Publish immutable Sigstore-signed release assets
+    if: startsWith(github.ref, 'refs/tags/v') && needs.publish-marketplace.result == 'success'
+    needs: [release-provenance, assemble, sign-release-archive, publish-marketplace]
+    runs-on: ubuntu-latest
+    environment:
+      name: codex-plugin-production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: loomex-codex-plugin-${{ needs.assemble.outputs.version }}-SIGSTORE-SIGNED
+          path: release
+      - name: Install checksum-pinned Cosign
+        run: bash .github/scripts/install-cosign.sh
+      - name: Reverify signed blobs and reject existing same-version assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum -c "${{ needs.assemble.outputs.archive }}.sha256"
+          sha256sum -c "${{ needs.assemble.outputs.marketplace-archive }}.sha256"
+          trusted_root="$RUNNER_TEMP/sigstore-trusted-root.json"
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
+            --output "$trusted_root" \
+            "https://raw.githubusercontent.com/sigstore/root-signing/$SIGSTORE_ROOT_COMMIT/targets/trusted_root.json"
+          printf '%s  %s\n' "$SIGSTORE_ROOT_SHA256" "$trusted_root" | sha256sum -c -
+          workflow_identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          expected_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/codex-plugin-release.yml@refs/tags/v${{ needs.assemble.outputs.version }}"
+          test "$workflow_identity" = "$expected_identity"
+          for name in \
+            "${{ needs.assemble.outputs.archive }}" \
+            "${{ needs.assemble.outputs.marketplace-archive }}" \
+            "${{ needs.assemble.outputs.marketplace-provenance }}" \
+            "${{ needs.assemble.outputs.marketplace-installer }}" \
+            "${{ needs.assemble.outputs.stable-installer }}"; do
+            cosign verify-blob \
+              --bundle "$name.sigstore.json" \
+              --trusted-root "$trusted_root" \
+              --certificate-identity "$workflow_identity" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$name"
+          done
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          tag = urllib.parse.quote(os.environ["GITHUB_REF_NAME"], safe="")
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repository}/releases/tags/{tag}",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request) as response:
+                  release = json.load(response)
+          except urllib.error.HTTPError as error:
+              if error.code == 404:
+                  raise SystemExit(0)
+              raise
+          expected = {
+              os.environ["PLUGIN_ARCHIVE"],
+              os.environ["PLUGIN_ARCHIVE"] + ".sha256",
+              os.environ["PLUGIN_ARCHIVE"] + ".sigstore.json",
+              os.environ["MARKETPLACE_ARCHIVE"],
+              os.environ["MARKETPLACE_ARCHIVE"] + ".sha256",
+              os.environ["MARKETPLACE_ARCHIVE"] + ".sigstore.json",
+              os.environ["MARKETPLACE_PROVENANCE"],
+              os.environ["MARKETPLACE_PROVENANCE"] + ".sigstore.json",
+              os.environ["MARKETPLACE_INSTALLER"],
+              os.environ["MARKETPLACE_INSTALLER"] + ".sigstore.json",
+              os.environ["STABLE_INSTALLER"],
+              os.environ["STABLE_INSTALLER"] + ".sigstore.json",
+          }
+          existing = sorted(
+              asset["name"] for asset in release.get("assets", [])
+              if asset.get("name") in expected
+          )
+          if existing:
+              raise SystemExit(
+                  "refusing to replace existing same-version release assets: "
+                  + ", ".join(existing)
+              )
+          PY
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLUGIN_ARCHIVE: ${{ needs.assemble.outputs.archive }}
+          MARKETPLACE_ARCHIVE: ${{ needs.assemble.outputs.marketplace-archive }}
+          MARKETPLACE_PROVENANCE: ${{ needs.assemble.outputs.marketplace-provenance }}
+          MARKETPLACE_INSTALLER: ${{ needs.assemble.outputs.marketplace-installer }}
+          STABLE_INSTALLER: ${{ needs.assemble.outputs.stable-installer }}
+      - name: Revalidate live release tag immediately before asset publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          live_release_sha="$(
+            python3 - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          tag = urllib.parse.quote(os.environ["GITHUB_REF_NAME"], safe="")
+          token = os.environ["GH_TOKEN"]
+
+          def api(path):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{repository}/{path}",
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request) as response:
+                  return json.load(response)
+
+          target = api(f"git/ref/tags/{tag}")["object"]
+          for _ in range(8):
+              if target.get("type") == "commit":
+                  print(target["sha"])
+                  break
+              if target.get("type") != "tag":
+                  raise SystemExit("release tag does not resolve to a commit")
+              target = api(f"git/tags/{target['sha']}")["object"]
+          else:
+              raise SystemExit("release tag annotation chain is too deep")
+          PY
+          )"
+          test -n "$live_release_sha"
+          test "$live_release_sha" = "${{ needs.release-provenance.outputs.release-sha }}"
+      - name: Publish signed tag release without replacement
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          overwrite_files: false
+          files: |
+            release/${{ needs.assemble.outputs.archive }}
+            release/${{ needs.assemble.outputs.archive }}.sha256
+            release/${{ needs.assemble.outputs.archive }}.sigstore.json
+            release/${{ needs.assemble.outputs.marketplace-archive }}
+            release/${{ needs.assemble.outputs.marketplace-archive }}.sha256
+            release/${{ needs.assemble.outputs.marketplace-archive }}.sigstore.json
+            release/${{ needs.assemble.outputs.marketplace-provenance }}
+            release/${{ needs.assemble.outputs.marketplace-provenance }}.sigstore.json
+            release/${{ needs.assemble.outputs.marketplace-installer }}
+            release/${{ needs.assemble.outputs.marketplace-installer }}.sigstore.json
+            release/${{ needs.assemble.outputs.stable-installer }}
+            release/${{ needs.assemble.outputs.stable-installer }}.sigstore.json
+          make_latest: true

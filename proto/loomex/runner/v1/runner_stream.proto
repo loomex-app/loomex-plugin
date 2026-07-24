@@ -1,0 +1,361 @@
+syntax = "proto3";
+
+package loomex.runner.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/loomex/runner/gen/loomex/runner/v1;runnerpb";
+option java_multiple_files = true;
+option java_package = "app.loomex.runner.v1";
+
+// Production data plane for native Loomex Runner clients.
+//
+// The runner opens this outbound bidirectional stream after obtaining a
+// short-lived stream credential from the REST management plane. REST long
+// polling is the legacy spike path and must not be treated as the future
+// production contract.
+service RunnerDataPlane {
+  rpc Open(stream RunnerToServer) returns (stream ServerToRunner);
+}
+
+message RunnerToServer {
+  string protocol_version = 1;
+  string runner_session_id = 2;
+  string runner_device_id = 3;
+  string organization_id = 4;
+  string project_id = 5;
+  uint64 sequence = 6;
+  string idempotency_key = 7;
+  google.protobuf.Timestamp sent_at = 8;
+
+  oneof payload {
+    RunnerHello hello = 20;
+    RunnerHeartbeat heartbeat = 21;
+    ToolCallStarted tool_call_started = 22;
+    ToolCallOutput tool_call_output = 23;
+    ToolCallResult tool_call_result = 24;
+    ToolCallError tool_call_error = 25;
+    ApprovalDecision approval_decision = 26;
+    ClientAck ack = 27;
+    StreamTokenRefreshResult stream_token_refresh_result = 28;
+    RunnerDisconnect disconnect = 29;
+  }
+}
+
+message ServerToRunner {
+  string protocol_version = 1;
+  string runner_session_id = 2;
+  string organization_id = 3;
+  string project_id = 4;
+  uint64 sequence = 5;
+  string idempotency_key = 6;
+  google.protobuf.Timestamp sent_at = 7;
+
+  oneof payload {
+    ServerHello hello = 20;
+    ToolCallRequest tool_call_request = 21;
+    ToolCallCancel tool_call_cancel = 22;
+    ApprovalRequest approval_request = 23;
+    PolicySync policy_sync = 24;
+    ServerAck ack = 25;
+    StreamError error = 26;
+    ServerPing ping = 27;
+    StreamTokenRefresh stream_token_refresh = 28;
+    ServerDrain drain = 29;
+  }
+}
+
+message RunnerHello {
+  string runner_version = 1;
+  string protocol_version = 2;
+  string minimum_supported_version = 3;
+  repeated string capabilities = 4;
+  string nonce = 5;
+  string runner_device_id = 6;
+  string runner_session_id = 7;
+  BindingContext binding = 8;
+  uint64 last_received_server_sequence = 9;
+  uint64 resume_after_server_sequence = 10;
+  google.protobuf.Struct platform = 11;
+  map<string, string> labels = 12;
+}
+
+message ServerHello {
+  string protocol_version = 1;
+  string minimum_supported_version = 2;
+  string minimum_supported_runner_version = 3;
+  repeated string accepted_capabilities = 4;
+  repeated string rejected_capabilities = 5;
+  uint64 last_received_runner_sequence = 6;
+  uint64 resume_after_runner_sequence = 7;
+  HeartbeatConfig heartbeat = 8;
+  google.protobuf.Timestamp server_time = 9;
+  bool update_required = 10;
+  string update_message = 11;
+}
+
+message BindingContext {
+  string organization_id = 1;
+  string project_id = 2;
+  string project_runner_binding_id = 3;
+  string local_root_path = 4;
+}
+
+message HeartbeatConfig {
+  google.protobuf.Duration interval = 1;
+  google.protobuf.Duration lease_timeout = 2;
+  google.protobuf.Duration clock_skew_warning_threshold = 3;
+}
+
+message RunnerHeartbeat {
+  RunnerState state = 1;
+  google.protobuf.Timestamp runner_time = 2;
+  repeated InflightToolCall inflight_tool_calls = 3;
+  repeated string active_capabilities = 4;
+  string status_message = 5;
+  google.protobuf.Struct health = 6;
+}
+
+message InflightToolCall {
+  string tool_call_id = 1;
+  string workflow_run_id = 2;
+  string capability = 3;
+  ToolCallState state = 4;
+  uint32 attempt = 5;
+  google.protobuf.Timestamp started_at = 6;
+}
+
+message ToolCallRequest {
+  string tool_call_id = 1;
+  string workflow_run_id = 2;
+  string workflow_id = 3;
+  string node_id = 4;
+  string organization_id = 5;
+  string project_id = 6;
+  string project_runner_binding_id = 7;
+  uint32 attempt = 8;
+  string capability = 9;
+  ExecutionProvider provider = 10;
+  string idempotency_key = 11;
+  string local_root_path = 12;
+  string working_directory = 13;
+  google.protobuf.Struct input = 14;
+  PolicyContext policy = 15;
+  ApprovalRequirement approval = 16;
+  google.protobuf.Timestamp requested_at = 17;
+  google.protobuf.Timestamp expires_at = 18;
+  google.protobuf.Duration deadline = 19;
+  uint64 max_output_chunk_bytes = 20;
+  uint64 max_total_output_bytes = 21;
+  map<string, string> trace_context = 22;
+}
+
+message PolicyContext {
+  string runner_policy_id = 1;
+  PolicyDecision decision = 2;
+  string reason = 3;
+  google.protobuf.Struct matched_rule = 4;
+}
+
+message ApprovalRequirement {
+  bool required = 1;
+  string approval_request_id = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  string prompt = 4;
+}
+
+message ToolCallStarted {
+  string tool_call_id = 1;
+  string workflow_run_id = 2;
+  uint32 attempt = 3;
+  google.protobuf.Timestamp started_at = 4;
+}
+
+message ToolCallOutput {
+  string tool_call_id = 1;
+  string workflow_run_id = 2;
+  uint32 attempt = 3;
+  uint64 chunk_sequence = 4;
+  OutputStream stream = 5;
+  bytes data = 6;
+  string text_encoding = 7;
+  uint64 offset = 8;
+  bool truncated = 9;
+  bool final_chunk = 10;
+  google.protobuf.Timestamp emitted_at = 11;
+}
+
+message ToolCallResult {
+  string tool_call_id = 1;
+  string workflow_run_id = 2;
+  uint32 attempt = 3;
+  google.protobuf.Timestamp completed_at = 4;
+  google.protobuf.Duration duration = 5;
+  google.protobuf.Struct output = 6;
+  int32 exit_code = 7;
+  bool has_exit_code = 8;
+  google.protobuf.Struct trace = 9;
+}
+
+message ToolCallError {
+  string tool_call_id = 1;
+  string workflow_run_id = 2;
+  uint32 attempt = 3;
+  StreamErrorCode code = 4;
+  string message = 5;
+  bool retryable = 6;
+  google.protobuf.Struct details = 7;
+  google.protobuf.Timestamp failed_at = 8;
+}
+
+message ToolCallCancel {
+  string tool_call_id = 1;
+  string workflow_run_id = 2;
+  uint32 attempt = 3;
+  string reason = 4;
+  google.protobuf.Timestamp requested_at = 5;
+  google.protobuf.Duration grace_period = 6;
+  string idempotency_key = 7;
+}
+
+message ApprovalRequest {
+  string approval_request_id = 1;
+  string tool_call_id = 2;
+  string workflow_run_id = 3;
+  string capability = 4;
+  string prompt = 5;
+  google.protobuf.Struct requested_action = 6;
+  google.protobuf.Timestamp requested_at = 7;
+  google.protobuf.Timestamp expires_at = 8;
+  string idempotency_key = 9;
+}
+
+message ApprovalDecision {
+  string approval_request_id = 1;
+  string tool_call_id = 2;
+  string workflow_run_id = 3;
+  ApprovalState state = 4;
+  string decided_by = 5;
+  google.protobuf.Timestamp decided_at = 6;
+  string reason = 7;
+  string idempotency_key = 8;
+}
+
+message PolicySync {
+  string runner_policy_id = 1;
+  uint64 policy_version = 2;
+  google.protobuf.Struct policy = 3;
+  repeated string capabilities = 4;
+  google.protobuf.Timestamp effective_at = 5;
+}
+
+message StreamTokenRefresh {
+  string refresh_request_id = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message StreamTokenRefreshResult {
+  string refresh_request_id = 1;
+  bool success = 2;
+  google.protobuf.Timestamp refreshed_at = 3;
+  string error_message = 4;
+}
+
+message ServerPing {
+  string ping_id = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+message ServerDrain {
+  string reason = 1;
+  google.protobuf.Duration reconnect_after = 2;
+  bool cancel_inflight = 3;
+}
+
+message RunnerDisconnect {
+  string reason = 1;
+  bool graceful = 2;
+  repeated string inflight_tool_call_ids = 3;
+}
+
+message ClientAck {
+  uint64 received_server_sequence = 1;
+  string received_idempotency_key = 2;
+}
+
+message ServerAck {
+  uint64 received_runner_sequence = 1;
+  string received_idempotency_key = 2;
+}
+
+message StreamError {
+  StreamErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+  google.protobuf.Struct details = 4;
+}
+
+enum RunnerState {
+  RUNNER_STATE_UNSPECIFIED = 0;
+  RUNNER_STATE_STARTING = 1;
+  RUNNER_STATE_READY = 2;
+  RUNNER_STATE_BUSY = 3;
+  RUNNER_STATE_DRAINING = 4;
+  RUNNER_STATE_STOPPING = 5;
+  RUNNER_STATE_OFFLINE = 6;
+}
+
+enum ToolCallState {
+  TOOL_CALL_STATE_UNSPECIFIED = 0;
+  TOOL_CALL_STATE_ACCEPTED = 1;
+  TOOL_CALL_STATE_WAITING_FOR_APPROVAL = 2;
+  TOOL_CALL_STATE_RUNNING = 3;
+  TOOL_CALL_STATE_CANCELLING = 4;
+}
+
+enum OutputStream {
+  OUTPUT_STREAM_UNSPECIFIED = 0;
+  OUTPUT_STREAM_STDOUT = 1;
+  OUTPUT_STREAM_STDERR = 2;
+  OUTPUT_STREAM_PROGRESS = 3;
+  OUTPUT_STREAM_TRACE = 4;
+}
+
+enum ExecutionProvider {
+  EXECUTION_PROVIDER_UNSPECIFIED = 0;
+  EXECUTION_PROVIDER_LOCAL_RUNNER = 1;
+  EXECUTION_PROVIDER_SERVER = 2;
+}
+
+enum PolicyDecision {
+  POLICY_DECISION_UNSPECIFIED = 0;
+  POLICY_DECISION_ALLOW = 1;
+  POLICY_DECISION_ASK = 2;
+  POLICY_DECISION_DENY = 3;
+}
+
+enum ApprovalState {
+  APPROVAL_STATE_UNSPECIFIED = 0;
+  APPROVAL_STATE_REQUESTED = 1;
+  APPROVAL_STATE_APPROVED = 2;
+  APPROVAL_STATE_DENIED = 3;
+  APPROVAL_STATE_TIMED_OUT = 4;
+  APPROVAL_STATE_CANCELLED = 5;
+}
+
+enum StreamErrorCode {
+  STREAM_ERROR_CODE_UNSPECIFIED = 0;
+  STREAM_ERROR_CODE_PROTOCOL_VERSION_UNSUPPORTED = 1;
+  STREAM_ERROR_CODE_AUTH_REVOKED = 2;
+  STREAM_ERROR_CODE_BINDING_REVOKED = 3;
+  STREAM_ERROR_CODE_DUPLICATE_SEQUENCE = 4;
+  STREAM_ERROR_CODE_STALE_SESSION = 5;
+  STREAM_ERROR_CODE_VALIDATION_FAILED = 6;
+  STREAM_ERROR_CODE_UNKNOWN_CAPABILITY = 7;
+  STREAM_ERROR_CODE_PAYLOAD_TOO_LARGE = 8;
+  STREAM_ERROR_CODE_DEADLINE_EXCEEDED = 9;
+  STREAM_ERROR_CODE_CANCELLED = 10;
+  STREAM_ERROR_CODE_INTERNAL = 11;
+}

@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "crates/loomex-protocol",
+  "crates/loomex-core",
+  "crates/loomex-cli",
+  "crates/loomex-mcp",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "UNLICENSED"
+repository = "https://github.com/loomex-app/loomex-plugin"

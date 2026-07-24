@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "pluginVersion": null,
+  "runtimeVersion": "0.1.21",
+  "channel": "stable",
+  "distributionKind": null,
+  "developmentOverridesAllowed": false,
+  "linuxRuntimeContract": {
+    "libc": "glibc",
+    "minimumVersion": "2.35"
+  },
+  "artifacts": {
+    "darwin-arm64": {
+      "path": "bin/darwin-arm64/loomex-mcp",
+      "sha256": null,
+      "size": null,
+      "platformSignature": null,
+      "runtime": {
+        "path": "bin/darwin-arm64/loomex",
+        "sha256": null,
+        "size": null
+      }
+    },
+    "darwin-x64": {
+      "path": "bin/darwin-x64/loomex-mcp",
+      "sha256": null,
+      "size": null,
+      "platformSignature": null,
+      "runtime": {
+        "path": "bin/darwin-x64/loomex",
+        "sha256": null,
+        "size": null
+      }
+    },
+    "linux-arm64": {
+      "path": "bin/linux-arm64/loomex-mcp",
+      "sha256": null,
+      "size": null,
+      "platformSignature": null,
+      "runtime": {
+        "path": "bin/linux-arm64/loomex",
+        "sha256": null,
+        "size": null
+      }
+    },
+    "linux-x64": {
+      "path": "bin/linux-x64/loomex-mcp",
+      "sha256": null,
+      "size": null,
+      "platformSignature": null,
+      "runtime": {
+        "path": "bin/linux-x64/loomex",
+        "sha256": null,
+        "size": null
+      }
+    }
+  }
+}

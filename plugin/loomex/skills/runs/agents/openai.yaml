@@ -1,0 +1,4 @@
+interface:
+  display_name: "Runs"
+  short_description: "Follow, inspect, recover, or cancel Loomex runs."
+  default_prompt: "Inspect or follow a Loomex workflow run."

@@ -1,0 +1,13 @@
+[package]
+name = "loomex-protocol"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Versioned Loomex runner contracts shared by desktop and plugin runtimes"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

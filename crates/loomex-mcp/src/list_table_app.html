@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Loomex list</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px 30px 32px;
+        color: light-dark(#171821, #f6f7fb);
+        background: light-dark(#f7f8fb, #14151a);
+      }
+      main { width: min(100%, 960px); margin: 0 auto; }
+      .eyebrow { margin: 0 0 7px; color: #0f9f90; font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+      h1 { margin: 0; font-size: 22px; line-height: 1.2; }
+      .summary { margin: 7px 0 16px; color: light-dark(#656676, #a9aab5); line-height: 1.45; }
+      .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+      input {
+        width: min(100%, 340px);
+        border: 1px solid light-dark(#d8dbe5, #3a3c47);
+        border-radius: 10px;
+        padding: 9px 11px;
+        color: inherit;
+        background: light-dark(#fff, #20222a);
+        font: inherit;
+        outline: none;
+      }
+      input:focus { border-color: #14b8a6; box-shadow: 0 0 0 3px color-mix(in srgb, #14b8a6 18%, transparent); }
+      .count { margin-left: auto; color: light-dark(#707180, #9698a5); font-size: 12px; white-space: nowrap; }
+      .table-wrap { overflow-x: auto; border: 1px solid light-dark(#dfe2ea, #343743); border-radius: 14px; background: light-dark(#fff, #1a1c23); }
+      table { width: 100%; border-collapse: collapse; min-width: 680px; }
+      th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid light-dark(#eceef3, #2b2d36); vertical-align: middle; }
+      th { color: light-dark(#737583, #a4a6b2); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+      tr:last-child td { border-bottom: 0; }
+      td { font-size: 13px; }
+      td:first-child { color: light-dark(#242631, #f4f5fa); font-weight: 700; }
+      .muted { color: light-dark(#777989, #9b9daa); font-weight: 400; }
+      .id { color: light-dark(#777989, #9b9daa); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+      .metric { color: light-dark(#303341, #f0f1f7); font-variant-numeric: tabular-nums; font-weight: 700; }
+      button { border: 0; border-radius: 8px; padding: 7px 10px; color: #07110f; background: #14f1d6; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+      button:disabled { cursor: progress; opacity: .6; }
+      .state { padding: 36px 18px; color: light-dark(#707180, #a4a6b2); text-align: center; }
+      .state.error { color: light-dark(#a02828, #ffaaaa); }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Loomex</p>
+      <h1 id="title">Loading list…</h1>
+      <p id="summary" class="summary"></p>
+      <div id="toolbar" class="toolbar hidden">
+        <input id="search" type="search" placeholder="Search" autocomplete="off" />
+        <span id="count" class="count"></span>
+      </div>
+      <div class="table-wrap">
+        <div id="state" class="state">Loading…</div>
+        <table id="table" class="hidden">
+          <thead><tr id="head"></tr></thead>
+          <tbody id="body"></tbody>
+        </table>
+      </div>
+    </main>
+    <script>
+      const titleEl = document.querySelector("#title");
+      const summaryEl = document.querySelector("#summary");
+      const stateEl = document.querySelector("#state");
+      const toolbarEl = document.querySelector("#toolbar");
+      const searchEl = document.querySelector("#search");
+      const countEl = document.querySelector("#count");
+      const tableEl = document.querySelector("#table");
+      const headEl = document.querySelector("#head");
+      const bodyEl = document.querySelector("#body");
+      let rows = [];
+      let listKind = "items";
+
+      function output() {
+        return window.openai?.toolOutput?.structuredContent || window.openai?.toolOutput || {};
+      }
+
+      function envelope(value) {
+        return value?.structuredContent || value || {};
+      }
+
+      function setState(message, error = false) {
+        stateEl.textContent = message;
+        stateEl.className = error ? "state error" : "state";
+        stateEl.classList.remove("hidden");
+        tableEl.classList.add("hidden");
+      }
+
+      function kindFor(tool) {
+        if (tool === "loomex_org_list") return "organizations";
+        if (tool === "loomex_project_list") return "projects";
+        if (tool === "loomex_workflow_list") return "workflows";
+        return "items";
+      }
+
+      function titleFor(kind) {
+        return kind[0].toUpperCase() + kind.slice(1);
+      }
+
+      function normalizedRows(data) {
+        if (Array.isArray(data?.workflows)) return data.workflows;
+        if (Array.isArray(data?.items)) return data.items;
+        return [];
+      }
+
+      function columnsFor(kind) {
+        if (kind === "workflows") return [["name", "Name"], ["nodeCount", "Nodes"], ["executionCount", "Executions"]];
+        if (kind === "organizations") return [["name", "Name"], ["slug", "Slug"], ["id", "ID"]];
+        if (kind === "projects") return [["name", "Name"], ["slug", "Slug"], ["id", "ID"]];
+        return [["name", "Name"], ["id", "ID"]];
+      }
+
+      function display(value) {
+        if (value === null || value === undefined || value === "") return "—";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
+      }
+
+      function columnValue(row, key) {
+        if (key === "nodeCount") {
+          return row.nodeCount ?? row.nodesCount ?? row.node_count ?? row.nodes_count ?? (Array.isArray(row.nodes) ? row.nodes.length : row.definition?.nodes?.length);
+        }
+        if (key === "executionCount") {
+          return row.executionCount ?? row.executionsCount ?? row.runCount ?? row.execution_count ?? row.executions_count ?? row.run_count ?? (Array.isArray(row.executions) ? row.executions.length : undefined);
+        }
+        return row[key];
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[char]));
+      }
+
+      function actionFor(row) {
+        if (listKind === "organizations" && row.id) return ["loomex_org_select", { organizationId: row.id }, "Select"];
+        if (listKind === "projects" && row.id) return ["loomex_project_select", { projectId: row.id }, "Select"];
+        return null;
+      }
+
+      async function selectRow(button, toolName, arguments_) {
+        if (!window.openai?.callTool) return;
+        button.disabled = true;
+        button.textContent = "Selecting…";
+        try {
+          const result = envelope(await window.openai.callTool(toolName, arguments_));
+          if (result.ok === false) throw new Error(result.error?.message || "Selection failed.");
+          button.textContent = "Selected";
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Select";
+          setState(error instanceof Error ? error.message : "Selection failed.", true);
+        }
+      }
+
+      function render(value = output()) {
+        const result = envelope(value);
+        if (result.ok === false) { setState(result.error?.message || "Unable to load the list.", true); return; }
+        const data = result.data || result;
+        listKind = kindFor(result.tool);
+        rows = normalizedRows(data);
+        titleEl.textContent = titleFor(listKind);
+        summaryEl.textContent = listKind === "workflows" ? "Available Loomex workflows in the selected project." : `Available ${listKind} in your Loomex account.`;
+        toolbarEl.classList.toggle("hidden", rows.length === 0);
+        if (!rows.length) { setState(`No ${listKind} found.`); return; }
+        stateEl.classList.add("hidden");
+        tableEl.classList.remove("hidden");
+        renderRows();
+      }
+
+      function renderRows() {
+        const columns = columnsFor(listKind);
+        headEl.innerHTML = columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("") + (listKind === "organizations" || listKind === "projects" ? "<th>Action</th>" : "");
+        const query = searchEl.value.trim().toLowerCase();
+        const filtered = rows.filter((row) => !query || JSON.stringify(row).toLowerCase().includes(query));
+        countEl.textContent = `${filtered.length} of ${rows.length}`;
+        bodyEl.innerHTML = filtered.map((row) => {
+          const cells = columns.map(([key]) => {
+            const value = display(columnValue(row, key));
+            const className = key === "id" ? " class=\"id\"" : key === "description" ? " class=\"muted\"" : key === "nodeCount" || key === "executionCount" ? " class=\"metric\"" : "";
+            return `<td${className}>${escapeHtml(value)}</td>`;
+          }).join("");
+          const action = actionFor(row);
+          return `<tr>${cells}${action ? `<td><button data-tool="${action[0]}" data-id="${escapeHtml(action[1].organizationId || action[1].projectId)}">${action[2]}</button></td>` : ""}</tr>`;
+        }).join("");
+        bodyEl.querySelectorAll("button[data-tool]").forEach((button) => button.addEventListener("click", () => {
+          const id = button.dataset.id;
+          const args = button.dataset.tool === "loomex_org_select" ? { organizationId: id } : { projectId: id };
+          void selectRow(button, button.dataset.tool, args);
+        }));
+      }
+
+      searchEl.addEventListener("input", renderRows);
+      render();
+      window.addEventListener("openai:set_globals", (event) => render(event.detail?.globals?.toolOutput));
+      window.addEventListener("message", (event) => {
+        if (event.data?.method === "ui/notifications/tool-result") render(event.data.params?.result);
+      });
+    </script>
+  </body>
+</html>

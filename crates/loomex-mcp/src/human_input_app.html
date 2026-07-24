@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Loomex Human Input</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px 30px 32px;
+        color: light-dark(#16161d, #f7f7fb);
+        background: light-dark(#f7f8fb, #14151a);
+      }
+      main { width: min(100%, 680px); margin: 0 auto; }
+      .eyebrow {
+        margin: 0 0 8px;
+        color: #14b8a6;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      h1 { margin: 0 0 8px; font-size: 24px; line-height: 1.18; }
+      .summary { margin: 0 0 22px; color: light-dark(#656676, #aaaab5); line-height: 1.5; }
+      form { display: grid; gap: 16px; }
+      textarea, input[type="text"] {
+        width: 100%;
+        border: 1px solid light-dark(#d8dbe5, #3a3c47);
+        border-radius: 10px;
+        padding: 11px 12px;
+        color: inherit;
+        background: light-dark(#fff, #20222a);
+        font: inherit;
+        outline: none;
+      }
+      textarea { min-height: 130px; resize: vertical; }
+      textarea:focus, input[type="text"]:focus {
+        border-color: #14b8a6;
+        box-shadow: 0 0 0 3px color-mix(in srgb, #14b8a6 18%, transparent);
+      }
+      .option {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        border: 1px solid light-dark(#dfe2ea, #343743);
+        border-radius: 11px;
+        padding: 12px;
+        background: light-dark(#fff, #1d1f27);
+        cursor: pointer;
+      }
+      .option input { margin-top: 3px; }
+      .option span { line-height: 1.4; }
+      .question-card {
+        border: 1px solid light-dark(#dfe2ea, #343743);
+        border-radius: 14px;
+        padding: 16px;
+        background: light-dark(#fff, #1a1c23);
+      }
+      .question-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 13px; }
+      .question-number {
+        display: grid;
+        flex: 0 0 28px;
+        height: 28px;
+        place-items: center;
+        border-radius: 999px;
+        color: #8b5cf6;
+        background: color-mix(in srgb, #8b5cf6 14%, transparent);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .question-title { margin: 3px 0 0; font-size: 15px; line-height: 1.4; }
+      .question-controls { display: grid; gap: 10px; }
+      .progress { margin: 0 0 14px; color: light-dark(#777989, #9b9daa); font-size: 12px; }
+      .review-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+      .review-item { border: 1px solid light-dark(#dfe2ea, #343743); border-radius: 11px; padding: 12px; background: light-dark(#fff, #1d1f27); }
+      .review-question { display: block; margin-bottom: 5px; color: light-dark(#5e6070, #a9aab5); font-size: 12px; }
+      .review-answer { display: block; line-height: 1.45; }
+      .actions { display: flex; justify-content: space-between; gap: 10px; padding-top: 4px; }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 11px 17px;
+        color: #08110f;
+        background: #14f1d6;
+        font: inherit;
+        font-weight: 800;
+        cursor: pointer;
+      }
+      button.secondary { color: inherit; background: light-dark(#e9ebf2, #30333d); }
+      button:disabled { cursor: progress; opacity: .65; }
+      .status {
+        display: none;
+        margin-top: 16px;
+        border: 1px solid light-dark(#bfe8cc, #2b6540);
+        border-radius: 11px;
+        padding: 13px;
+        color: light-dark(#176b35, #8be1a7);
+        background: light-dark(#edf9f1, #15281c);
+      }
+      .status.error {
+        border-color: light-dark(#efc2c2, #713434);
+        color: light-dark(#a02828, #ffaaaa);
+        background: light-dark(#fff0f0, #2d1717);
+      }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Loomex human input</p>
+      <h1 id="title">Human input required</h1>
+      <p id="summary" class="summary"></p>
+      <form id="form"></form>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </main>
+
+    <script>
+      const form = document.querySelector("#form");
+      const statusEl = document.querySelector("#status");
+      let humanRequest = null;
+      let questions = [];
+      let answers = [];
+      let currentIndex = 0;
+      let showingReview = false;
+      let activeRequestId = null;
+
+      function toolOutput() {
+        return window.openai?.toolOutput?.data || window.openai?.toolOutput || {};
+      }
+
+      function normalizeRequest(output) {
+        return output.humanRequest || output.request || output;
+      }
+
+      function spec() {
+        return humanRequest?.inputSpec || {};
+      }
+
+      function normalizeInputType(value) {
+        const raw = String(value || "text").replace("-", "_");
+        if (raw === "true_false" || raw === "bool") return "boolean";
+        return ["multi_select", "single_select", "text", "boolean"].includes(raw) ? raw : "text";
+      }
+
+      function inputType() {
+        return normalizeInputType(spec().inputType);
+      }
+
+      function isBatch() {
+        return spec().collectionMode === "batch" || Array.isArray(spec().questions);
+      }
+
+      function requiresReview() {
+        return questions.length > 1;
+      }
+
+      function questionList() {
+        return isBatch() ? (spec().questions || []) : [spec()];
+      }
+
+      function questionId(question, index) {
+        return String(question?.id ?? question?.questionId ?? question?.question_id ?? `question_${index + 1}`);
+      }
+
+      function questionType(question) {
+        return normalizeInputType(
+          question?.inputType ?? question?.input_type ?? question?.type ?? question?.kind ?? spec().inputType,
+        );
+      }
+
+      function questionPrompt(question, index) {
+        return question?.question ?? question?.questionText ?? question?.question_text ?? question?.text ?? `Question ${index + 1}`;
+      }
+
+      function questionOptionList(question) {
+        return question?.options ?? question?.choices ?? question?.values ?? [];
+      }
+
+      function questionAllowsOther(question) {
+        return question?.allowOther ?? question?.allow_other ?? true;
+      }
+
+      function questionOtherLabel(question) {
+        return question?.otherLabel ?? question?.other_label ?? "Other";
+      }
+
+      function normalizedOption(option, index) {
+        if (typeof option === "string" || typeof option === "number") {
+          return { id: String(option), label: String(option) };
+        }
+        const id = option?.id ?? option?.value ?? option?.key ?? `option_${index + 1}`;
+        const label = option?.label ?? option?.title ?? option?.name ?? option?.value ?? id;
+        return { id: String(id), label: String(label) };
+      }
+
+      function normalizedOptions(question) {
+        return questionOptionList(question).map(normalizedOption);
+      }
+
+      function setStatus(message, error = false) {
+        statusEl.textContent = message;
+        statusEl.className = error ? "status error" : "status";
+        statusEl.style.display = "block";
+      }
+
+      async function requestSidePanel() {
+        try {
+          await window.openai?.requestDisplayMode?.({ mode: "fullscreen" });
+        } catch {}
+      }
+
+      function render(output = toolOutput()) {
+        const nextRequest = normalizeRequest(output);
+        const requestChanged = activeRequestId !== nextRequest?.id;
+        if (requestChanged) {
+          answers = [];
+          currentIndex = 0;
+          showingReview = false;
+          activeRequestId = nextRequest?.id || null;
+        }
+        const previousAnswers = new Map(questions.map((question, index) => [questionId(question, index), answers[index]]));
+        humanRequest = nextRequest;
+        const currentSpec = spec();
+        document.querySelector("#title").textContent =
+          questionPrompt(currentSpec, 0) || humanRequest.title || "Human input required";
+        document.querySelector("#summary").textContent =
+          humanRequest.description || humanRequest.context?.summary || "";
+
+        questions = questionList();
+        answers = questions.map((question, index) => previousAnswers.get(questionId(question, index)) ?? answers[index] ?? null);
+        currentIndex = Math.min(currentIndex, Math.max(questions.length - 1, 0));
+        const disabled = humanRequest.status === "resolved";
+        if (disabled) showingReview = true;
+        renderStep(disabled);
+      }
+
+      function renderStep(disabled = false) {
+        const singleQuestion = !requiresReview();
+        const submitLabel = singleQuestion ? "Submit" : "Submit & Resume";
+        const actions = `<div class="actions">
+          <button id="expand" class="secondary" type="button">Open in side panel</button>
+          ${showingReview ? `<button id="back" class="secondary" type="button">Back</button><button id="submit" type="submit" ${disabled ? "disabled" : ""}>${submitLabel}</button>` : singleQuestion ? `<span></span><button id="submit" type="submit" ${disabled ? "disabled" : ""}>${submitLabel}</button>` : `${currentIndex > 0 ? `<button id="back" class="secondary" type="button">Back</button>` : `<span></span>`}<button id="next" type="button">${currentIndex === questions.length - 1 ? "Review answers" : "Next"}</button>`}
+        </div>`;
+        if (showingReview) {
+          form.innerHTML = `<p class="progress">Review all answers before submitting.</p><section class="question-card"><ul class="review-list">${questions.map((question, index) => `<li class="review-item"><span class="review-question">${index + 1}. ${escapeHtml(questionPrompt(question, index))}</span><span class="review-answer">${escapeHtml(answerLabel(question, answers[index]))}</span></li>`).join("")}</ul></section>${actions}`;
+        } else {
+          const question = questions[currentIndex] || {};
+          form.innerHTML = `<p class="progress">Question ${currentIndex + 1} of ${questions.length}</p><section class="question-card">
+            <div class="question-head"><span class="question-number">${currentIndex + 1}</span><h2 class="question-title">${escapeHtml(questionPrompt(question, currentIndex))}</h2></div>
+            <div class="question-controls">${questionControls(question, currentIndex, disabled)}</div>
+          </section>${actions}`;
+          restoreAnswer(question, currentIndex);
+          form.querySelectorAll(`input[name="value-${currentIndex}"]`).forEach((input) => input.addEventListener("change", () => {
+            updateOtherInput(question, currentIndex, disabled);
+            if (requiresReview() && questionType(question) !== "multi_select" && input.value !== "other") setTimeout(() => void advance(), 120);
+          }));
+          updateOtherInput(question, currentIndex, disabled);
+          if (questions.length === 1 && questionType(question) === "text") {
+            form.querySelector(`#answer-${currentIndex}`)?.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                form.requestSubmit();
+              }
+            });
+          }
+        }
+        document.querySelector("#expand").addEventListener("click", () => void requestSidePanel());
+        document.querySelector("#back")?.addEventListener("click", () => {
+          if (showingReview) showingReview = false;
+          currentIndex = Math.max(0, currentIndex - 1);
+          renderStep(disabled);
+        });
+        document.querySelector("#next")?.addEventListener("click", () => void advance());
+      }
+
+      function questionControls(question, index, disabled) {
+        const type = questionType(question);
+        const name = `value-${index}`;
+        if (type === "text") {
+          return `<textarea id="answer-${index}" required placeholder="Type your answer" ${disabled ? "disabled" : ""}></textarea>`;
+        }
+        if (type === "boolean") {
+          return [
+            optionHtml("true", "True", "radio", name, disabled),
+            optionHtml("false", "False", "radio", name, disabled),
+          ].join("");
+        }
+        const controls = [];
+        const controlType = type === "multi_select" ? "checkbox" : "radio";
+        for (const [optionIndex, option] of normalizedOptions(question).entries()) {
+          controls.push(optionHtml(option.id, option.label, controlType, name, disabled, optionIndex));
+        }
+        if (questionAllowsOther(question) !== false) {
+          controls.push(optionHtml("other", questionOtherLabel(question), controlType, name, disabled, normalizedOptions(question).length));
+          controls.push(`<input id="otherText-${index}" type="text" placeholder="Type other answer" hidden ${disabled ? "disabled" : ""} />`);
+        }
+        return controls.join("");
+      }
+
+      function updateOtherInput(question, index, disabled) {
+        const other = document.querySelector(`#otherText-${index}`);
+        if (!other) return;
+        const selected = [...document.querySelectorAll(`input[name="value-${index}"]:checked`)].some((input) => input.value === "other");
+        other.hidden = !selected;
+        other.disabled = disabled || !selected;
+        if (!selected) other.value = "";
+      }
+
+      function optionHtml(value, label, type, name, disabled, index = 0) {
+        return `<label class="option">
+          <input type="${type}" id="${name}-${index}" name="${name}" value="${escapeHtml(value)}" ${disabled ? "disabled" : ""} />
+          <span>${escapeHtml(label)}</span>
+        </label>`;
+      }
+
+      function restoreAnswer(question, index) {
+        const answer = answers[index];
+        if (!answer) return;
+        const type = questionType(question);
+        if (type === "text") document.querySelector(`#answer-${index}`).value = answer.value || "";
+        const values = type === "multi_select" ? (answer.values || []) : [answer.value];
+        values.filter((value) => value !== undefined).forEach((value) => {
+          const input = [...document.querySelectorAll(`input[name="value-${index}"]`)].find((candidate) => candidate.value === String(value));
+          if (input) input.checked = true;
+        });
+        const other = document.querySelector(`#otherText-${index}`);
+        if (other) other.value = answer.otherText || "";
+      }
+
+      function escapeHtml(value) {
+        return String(value || "").replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#039;",
+        }[char]));
+      }
+
+      function answerPayload() {
+        const payload = {
+          answers: questions.map((question, index) => ({
+            questionId: questionId(question, index),
+            inputType: questionType(question),
+            question: questionPrompt(question, index),
+            ...(answers[index] || {}),
+          })),
+        };
+        if (spec().schemaVersion) payload.schemaVersion = spec().schemaVersion;
+        if (spec().collectionMode) payload.collectionMode = spec().collectionMode;
+        return payload;
+      }
+
+      function answerLabel(question, answer) {
+        if (!answer) return "Not answered";
+        if (questionType(question) === "text") return answer.value || "—";
+        const values = questionType(question) === "multi_select" ? (answer.values || []) : [answer.value];
+        const labels = values.map((value) => normalizedOptions(question).find((option) => option.id === String(value))?.label || (value === "true" ? "True" : value === "false" ? "False" : value));
+        if (answer.otherText) labels.push(`Other: ${answer.otherText}`);
+        return labels.join(", ") || "—";
+      }
+
+      function captureCurrent() {
+        answers[currentIndex] = answerForQuestion(questions[currentIndex], currentIndex);
+      }
+
+      async function advance() {
+        try {
+          captureCurrent();
+          if (currentIndex < questions.length - 1) currentIndex += 1;
+          else showingReview = true;
+          renderStep(false);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : "Please complete this question.", true);
+        }
+      }
+
+      function answerForQuestion(question, index) {
+        const type = questionType(question);
+        const name = `value-${index}`;
+        if (type === "text") {
+          const value = document.querySelector(`#answer-${index}`)?.value.trim() || "";
+          if (!value) throw new Error("Answer is required.");
+          return { value };
+        }
+        if (type === "boolean") {
+          const selected = document.querySelector(`input[name="${name}"]:checked`)?.value;
+          if (selected === undefined) throw new Error("Select true or false.");
+          return { value: selected === "true" };
+        }
+        const selected = [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
+        const otherText = document.querySelector(`#otherText-${index}`)?.value.trim() || "";
+        if (!selected.length) throw new Error(type === "multi_select" ? "Select at least one option." : "Select one option.");
+        if (selected.includes("other") && !otherText) throw new Error("Other option requires text.");
+        return type === "multi_select" ? { values: selected, otherText } : { value: selected[0], otherText };
+      }
+
+      render();
+
+      window.addEventListener("openai:set_globals", (event) => {
+        const output = event.detail?.globals?.toolOutput;
+        render(output?.data || output || toolOutput());
+      });
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        statusEl.style.display = "none";
+        if (!window.openai?.callTool) {
+          setStatus("This host does not expose the app tool bridge.", true);
+          return;
+        }
+        const submit = document.querySelector("#submit");
+        submit.disabled = true;
+        submit.textContent = "Submitting...";
+        try {
+          if (!showingReview) captureCurrent();
+          const result = await window.openai.callTool("loomex_human_respond", {
+            requestId: humanRequest.id,
+            response: answerPayload(),
+            idempotencyKey: `human-${humanRequest.id}-${Date.now()}`,
+          });
+          const output = result?.structuredContent || {};
+          if (output.ok === false) throw new Error(output.error?.message || "Loomex rejected the answer.");
+          form.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = true; });
+          setStatus("Submitted. Continuing the workflow…");
+          if (window.openai?.sendFollowUpMessage) {
+            await window.openai.sendFollowUpMessage({
+              prompt: "The human input request was submitted successfully. Continue the Loomex workflow using the resolved request and report its next state.",
+              scrollToBottom: true,
+            });
+          }
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : "Submit failed.", true);
+        } finally {
+          submit.disabled = false;
+          submit.textContent = "Submit & Resume";
+        }
+      });
+    </script>
+  </body>
+</html>
