@@ -134,10 +134,11 @@ Typical prompts:
 - `Wait for run 123 and show me any human requests.`
 - `Show pending Loomex approvals.`
 
-Typed Human Input requests open as an interactive Codex side panel. The panel
-renders the request's `multi_select`, `single_select`, `text`, or `boolean`
-contract and submits directly to the durable request; legacy human requests
-remain available through the chat-based response flow.
+Typed Human Input requests are routed by input type. `boolean`, `single_select`
+(radio), and `multi_select` (checkbox) requests open as an interactive Codex
+side panel and submit directly to the durable request. `text` requests are
+answered in the Codex chat and submitted with `loomex_human_respond`. Legacy
+human requests remain available through the chat-based response flow.
 
 Every tool publishes a tool-specific `outputSchema` and returns the same
 discriminated structured envelope. Successful calls have

@@ -343,7 +343,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool_with_meta(
             "loomex_human_open",
             "Open human input",
-            "Open a Loomex human input request as an interactive side-panel form.",
+            "Open a Loomex boolean, radio, or checkbox human input request as an interactive side-panel form. Text requests must be answered in Codex chat with loomex_human_respond.",
             obj(&[("humanRequest", any_value())], &["humanRequest"]),
             open_ro(),
             json!({
