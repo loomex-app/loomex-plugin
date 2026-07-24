@@ -9,12 +9,16 @@ Use `loomex_human_list`, scoped with optional `executionId` or `workflowId` when
 known; optional `status` is `pending`, `resolved`, or `all`, and `limit` bounds
 the result. Preserve returned `nextCursor` and pass it as `cursor` to fetch the
 next page. A request with `inputSpec.schemaVersion` uses one of the four typed
-contracts: `multi_select`, `single_select`, `text`, or `boolean`. Immediately
-call `loomex_human_open` with that exact returned request and tell the user to
-complete the rendered side-panel form. Do not ask for the same values again in
-chat. An `inputSpec.collectionMode` of `batch` contains an ordered `questions`
-array; render it as one form and preserve that order in the submitted
-`answers[]`. The app submits the exact request ID through
+contracts: `multi_select` (checkbox), `single_select` (radio), `text`, or
+`boolean`. For `text`, ask the user for the answer in the Codex chat and submit
+it with `loomex_human_respond`; do not call `loomex_human_open`. For
+`multi_select`, `single_select`, and `boolean`, call `loomex_human_open` with
+that exact returned request and tell the user to complete the rendered
+side-panel form. Do not ask for those form values again in chat. An
+`inputSpec.collectionMode` of `batch` contains an ordered `questions` array;
+use the request-level input type consistently, without collecting any value
+twice. Preserve the question order in the submitted `answers[]`. The app
+submits the exact request ID through
 `loomex_human_respond`.
 
 For a legacy request without `inputSpec`, present the exact prompt, allowed

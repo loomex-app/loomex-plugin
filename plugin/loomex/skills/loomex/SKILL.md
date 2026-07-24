@@ -65,11 +65,13 @@ Read every reference needed for the user's request before calling its tools.
    `spawn` requires a new sub-agent; `resume` requires the exact prior session
    ID and must never fall back to a replacement. Do not let the server AI
    substitute for this work.
-10. When a wait returns a typed human request, call `loomex_human_open` with
-   the exact returned request so Codex opens the interactive side panel; do not
-   ask for the same values again in chat. For legacy human requests and policy
-   approvals, present the exact prompt, choices, consequences, and run context.
-   Submit only the user's decision.
+10. When a wait returns a typed human request, route by `inputSpec.inputType`:
+   collect `text` in the Codex chat and submit it with `loomex_human_respond`;
+   call `loomex_human_open` for `boolean`, `single_select` (radio), and
+   `multi_select` (checkbox), using the exact returned request. Do not collect
+   the same value in both places. For legacy human requests and policy
+   approvals, present the exact prompt, choices, consequences, and run
+   context. Submit only the user's decision.
 11. A closed Codex app cannot surface new prompts. The durable Runner keeps the
    run alive and the backend retains pending work. On reconnect, query the run
    and pending inboxes, and explain this boundary honestly.
