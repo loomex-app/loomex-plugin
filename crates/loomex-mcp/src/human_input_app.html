@@ -12,13 +12,13 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 36px 40px 44px;
+        padding: 40px 44px 48px;
         color: light-dark(#16161d, #f7f7fb);
         background: light-dark(#f7f8fb, #14151a);
       }
       main { width: min(100%, 680px); margin: 0 auto; }
       @media (max-width: 560px) {
-        body { padding: 24px 18px 30px; }
+        body { padding: 28px 22px 34px; }
       }
       .eyebrow {
         margin: 0 0 8px;
@@ -132,6 +132,7 @@
       let currentIndex = 0;
       let showingReview = false;
       let activeRequestId = null;
+      let submissionSucceeded = false;
 
       function structuredData(value) {
         const structured = value?.structuredContent ?? value;
@@ -241,6 +242,7 @@
           currentIndex = 0;
           showingReview = false;
           activeRequestId = nextRequest?.id || null;
+          submissionSucceeded = false;
         }
         const previousAnswers = new Map(questions.map((question, index) => [questionId(question, index), answers[index]]));
         humanRequest = nextRequest;
@@ -261,9 +263,10 @@
       function renderStep(disabled = false) {
         const singleQuestion = !requiresReview();
         const submitLabel = singleQuestion ? "Submit" : "Submit & Resume";
+        const disabledAttr = disabled ? "disabled" : "";
         const actions = `<div class="actions">
-          <button id="expand" class="secondary" type="button">Open in side panel</button>
-          ${showingReview ? `<button id="back" class="secondary" type="button">Back</button><button id="submit" type="submit" ${disabled ? "disabled" : ""}>${submitLabel}</button>` : singleQuestion ? `<span></span><button id="submit" type="submit" ${disabled ? "disabled" : ""}>${submitLabel}</button>` : `${currentIndex > 0 ? `<button id="back" class="secondary" type="button">Back</button>` : `<span></span>`}<button id="next" type="button">${currentIndex === questions.length - 1 ? "Review answers" : "Next"}</button>`}
+          <button id="expand" class="secondary" type="button" ${disabledAttr}>Open in side panel</button>
+          ${showingReview ? `<button id="back" class="secondary" type="button" ${disabledAttr}>Back</button><button id="submit" type="submit" ${disabledAttr}>${submitLabel}</button>` : singleQuestion ? `<span></span><button id="submit" type="submit" ${disabledAttr}>${submitLabel}</button>` : `${currentIndex > 0 ? `<button id="back" class="secondary" type="button" ${disabledAttr}>Back</button>` : `<span></span>`}<button id="next" type="button" ${disabledAttr}>${currentIndex === questions.length - 1 ? "Review answers" : "Next"}</button>`}
         </div>`;
         if (showingReview) {
           form.innerHTML = `<p class="progress">Review all answers before submitting.</p><section class="question-card"><ul class="review-list">${questions.map((question, index) => `<li class="review-item"><span class="review-question">${index + 1}. ${escapeHtml(questionPrompt(question, index))}</span><span class="review-answer">${escapeHtml(answerLabel(question, answers[index]))}</span></li>`).join("")}</ul></section>${actions}`;
@@ -362,14 +365,14 @@
       }
 
       function answerPayload() {
-        const payload = {
-          answers: questions.map((question, index) => ({
+        const answersPayload = questions.map((question, index) => ({
             questionId: questionId(question, index),
-            inputType: questionType(question),
+            inputType: questionType(question) === "multi_select" ? "checkbox" : questionType(question) === "single_select" ? "radio" : questionType(question),
             question: questionPrompt(question, index),
             ...(answers[index] || {}),
-          })),
-        };
+          }));
+        if (!isBatch()) return answersPayload[0] || {};
+        const payload = { answers: answersPayload };
         if (spec().schemaVersion) payload.schemaVersion = spec().schemaVersion;
         if (spec().collectionMode) payload.collectionMode = spec().collectionMode;
         return payload;
@@ -453,6 +456,7 @@
           const output = result?.structuredContent || {};
           if (output.ok === false) throw new Error(output.error?.message || "Loomex rejected the answer.");
           form.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = true; });
+          submissionSucceeded = true;
           setStatus("Submitted. Continuing the workflow…");
           if (window.openai?.sendFollowUpMessage) {
             await window.openai.sendFollowUpMessage({
@@ -463,8 +467,10 @@
         } catch (error) {
           setStatus(error instanceof Error ? error.message : "Submit failed.", true);
         } finally {
-          submit.disabled = false;
-          submit.textContent = "Submit & Resume";
+          if (!submissionSucceeded) {
+            submit.disabled = false;
+            submit.textContent = "Submit & Resume";
+          }
         }
       });
     </script>
