@@ -12,13 +12,13 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 40px 44px 48px;
+        padding: 64px 72px 80px;
         color: light-dark(#16161d, #f7f7fb);
         background: light-dark(#f7f8fb, #14151a);
       }
       main { width: min(100%, 680px); margin: 0 auto; }
       @media (max-width: 560px) {
-        body { padding: 28px 22px 34px; }
+        body { padding: 40px 32px 48px; }
       }
       .eyebrow {
         margin: 0 0 8px;
@@ -111,6 +111,7 @@
         background: light-dark(#fff0f0, #2d1717);
       }
       .hidden { display: none; }
+      .submitted .actions { display: none; }
     </style>
   </head>
   <body>
@@ -257,6 +258,7 @@
         currentIndex = Math.min(currentIndex, Math.max(questions.length - 1, 0));
         const disabled = humanRequest.status === "resolved";
         if (disabled) showingReview = true;
+        form.classList.toggle("submitted", disabled || submissionSucceeded);
         renderStep(disabled);
       }
 
@@ -279,7 +281,14 @@
           restoreAnswer(question, currentIndex);
           form.querySelectorAll(`input[name="value-${currentIndex}"]`).forEach((input) => input.addEventListener("change", () => {
             updateOtherInput(question, currentIndex, disabled);
-            if (requiresReview() && questionType(question) !== "multi_select" && input.value !== "other") setTimeout(() => void advance(), 120);
+            const otherSelected = [...form.querySelectorAll(`input[name="value-${currentIndex}"]:checked`)]
+              .some((selected) => selected.value === "other");
+            if (requiresReview() && questionType(question) !== "multi_select" && !otherSelected) {
+              setTimeout(() => {
+                if (!form.querySelector(`#otherText-${currentIndex}`)?.hidden) return;
+                void advance();
+              }, 120);
+            }
           }));
           updateOtherInput(question, currentIndex, disabled);
           if (questions.length === 1 && questionType(question) === "text") {
@@ -457,6 +466,7 @@
           if (output.ok === false) throw new Error(output.error?.message || "Loomex rejected the answer.");
           form.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = true; });
           submissionSucceeded = true;
+          form.classList.add("submitted");
           setStatus("Submitted. Continuing the workflow…");
           if (window.openai?.sendFollowUpMessage) {
             await window.openai.sendFollowUpMessage({
