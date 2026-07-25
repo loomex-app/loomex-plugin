@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.29
+
+- Render typed human-input forms directly from human request list results.
+- Move the workflow Run action to the first table column.
+
 ## 0.1.28
 
 - Keep choice inputs stable when selecting Other and preserve submitted human-input reviews across widget remounts.

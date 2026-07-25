@@ -303,11 +303,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             mutating(true, true, true),
         ),
-        tool(
+        tool_with_meta(
             "loomex_human_list",
             "List human requests",
             "List pending or resolved human-in-the-loop requests. After this tool returns a pending typed request, immediately call loomex_human_open for boolean, radio, checkbox, single_select, or multi_select requests; keep text requests in Codex chat.",
-            "human.list",
             obj(
                 &[
                     ("status", enum_string(&["pending", "resolved", "all"])),
@@ -319,6 +318,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 &[],
             ),
             open_ro(),
+            human_input_meta(),
         ),
         tool_with_meta(
             "loomex_human_respond",
@@ -681,6 +681,18 @@ fn list_table_meta() -> Value {
             "prefersBorder": true
         },
         "openai/outputTemplate": LIST_TABLE_APP_URI,
+        "openai/widgetAccessible": true
+    })
+}
+
+fn human_input_meta() -> Value {
+    json!({
+        "ui": {
+            "resourceUri": HUMAN_INPUT_APP_URI,
+            "visibility": ["model", "app"],
+            "prefersBorder": true
+        },
+        "openai/outputTemplate": HUMAN_INPUT_APP_URI,
         "openai/widgetAccessible": true
     })
 }
@@ -1497,6 +1509,10 @@ mod tests {
             .iter()
             .find(|definition| definition.name == "loomex_human_open")
             .unwrap();
+        let list = definitions
+            .iter()
+            .find(|definition| definition.name == "loomex_human_list")
+            .unwrap();
         let respond = definitions
             .iter()
             .find(|definition| definition.name == "loomex_human_respond")
@@ -1509,6 +1525,10 @@ mod tests {
         assert_eq!(
             open.meta.as_ref().unwrap()["ui"]["visibility"],
             json!(["model", "app"])
+        );
+        assert_eq!(
+            list.meta.as_ref().unwrap()["ui"]["resourceUri"],
+            HUMAN_INPUT_APP_URI
         );
         assert_eq!(
             respond.meta.as_ref().unwrap()["ui"]["visibility"],
