@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.24
+
+- Render typed human-input forms through the standard MCP Apps tool-result bridge.
+- Keep text requests in Codex chat and make the form render tool visible to the app host.
+
 ## 0.1.23
 
 - Recognize `radio` and `checkbox` human-input types and render their interactive form.
