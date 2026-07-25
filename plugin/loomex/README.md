@@ -27,7 +27,7 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.22/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.23/install-codex.sh | sh
 ```
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
@@ -134,8 +134,8 @@ Typical prompts:
 - `Wait for run 123 and show me any human requests.`
 - `Show pending Loomex approvals.`
 
-Typed Human Input requests are routed by input type. `boolean`, `single_select`
-(radio), and `multi_select` (checkbox) requests open as an interactive Codex
+Typed Human Input requests are routed by input type. `boolean`,
+`single_select`/`radio`, and `multi_select`/`checkbox` requests open as an interactive Codex
 side panel and submit directly to the durable request. `text` requests are
 answered in the Codex chat and submitted with `loomex_human_respond`. Legacy
 human requests remain available through the chat-based response flow.

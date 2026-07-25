@@ -511,6 +511,8 @@ mod tests {
         assert!(html.contains("loomex_human_respond"));
         assert!(html.contains("multi_select"));
         assert!(html.contains("single_select"));
+        assert!(html.contains("raw === \"radio\""));
+        assert!(html.contains("raw === \"checkbox\""));
         assert!(html.contains("boolean"));
         assert!(html.contains("question-card"));
         assert!(html.contains("answers"));
