@@ -306,7 +306,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_human_list",
             "List human requests",
-            "List pending or resolved human-in-the-loop requests.",
+            "List pending or resolved human-in-the-loop requests. After this tool returns a pending typed request, immediately call loomex_human_open for boolean, radio, checkbox, single_select, or multi_select requests; keep text requests in Codex chat.",
             "human.list",
             obj(
                 &[
@@ -349,7 +349,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             json!({
                 "ui": {
                     "resourceUri": HUMAN_INPUT_APP_URI,
-                    "visibility": ["model"]
+                    "visibility": ["model", "app"],
+                    "prefersBorder": true
                 },
                 "openai/outputTemplate": HUMAN_INPUT_APP_URI,
                 "openai/widgetAccessible": true
@@ -1507,7 +1508,7 @@ mod tests {
         );
         assert_eq!(
             open.meta.as_ref().unwrap()["ui"]["visibility"],
-            json!(["model"])
+            json!(["model", "app"])
         );
         assert_eq!(
             respond.meta.as_ref().unwrap()["ui"]["visibility"],

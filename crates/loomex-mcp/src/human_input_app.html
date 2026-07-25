@@ -121,6 +121,7 @@
 
     <script>
       const form = document.querySelector("#form");
+      const main = document.querySelector("main");
       const statusEl = document.querySelector("#status");
       let humanRequest = null;
       let questions = [];
@@ -129,12 +130,18 @@
       let showingReview = false;
       let activeRequestId = null;
 
+      function structuredData(value) {
+        const structured = value?.structuredContent ?? value;
+        return structured?.data ?? structured ?? {};
+      }
+
       function toolOutput() {
-        return window.openai?.toolOutput?.data || window.openai?.toolOutput || {};
+        return structuredData(window.openai?.toolOutput);
       }
 
       function normalizeRequest(output) {
-        return output.humanRequest || output.request || output;
+        const data = structuredData(output);
+        return data.humanRequest || data.request || data;
       }
 
       function spec() {
@@ -218,6 +225,13 @@
 
       function render(output = toolOutput()) {
         const nextRequest = normalizeRequest(output);
+        const nextType = nextRequest?.inputSpec?.inputType;
+        if (!nextRequest?.id || normalizeInputType(nextType) === "text") {
+          main.classList.add("hidden");
+          form.replaceChildren();
+          return;
+        }
+        main.classList.remove("hidden");
         const requestChanged = activeRequestId !== nextRequest?.id;
         if (requestChanged) {
           answers = [];
@@ -406,7 +420,14 @@
 
       window.addEventListener("openai:set_globals", (event) => {
         const output = event.detail?.globals?.toolOutput;
-        render(output?.data || output || toolOutput());
+        render(structuredData(output || toolOutput()));
+      });
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent || event.data?.jsonrpc !== "2.0") return;
+        if (event.data?.method === "ui/notifications/tool-result") {
+          render(event.data.params?.result || event.data.params || {});
+        }
       });
 
       form.addEventListener("submit", async (event) => {

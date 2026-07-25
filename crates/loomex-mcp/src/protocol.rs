@@ -509,6 +509,8 @@ mod tests {
         let html = content["text"].as_str().unwrap();
         assert!(html.contains("requestDisplayMode"));
         assert!(html.contains("loomex_human_respond"));
+        assert!(html.contains("ui/notifications/tool-result"));
+        assert!(html.contains("structuredContent"));
         assert!(html.contains("multi_select"));
         assert!(html.contains("single_select"));
         assert!(html.contains("raw === \"radio\""));
