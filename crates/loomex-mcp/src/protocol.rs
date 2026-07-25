@@ -529,7 +529,8 @@ mod tests {
         assert!(html.contains("question: questionPrompt(question, index)"));
         assert!(html.contains("updateOtherInput"));
         assert!(html.contains("form.requestSubmit"));
-        assert!(html.contains("padding: 40px 44px 48px"));
+        assert!(html.contains("padding: 64px 72px 80px"));
+        assert!(html.contains("submitted .actions"));
     }
 
     #[tokio::test]
@@ -563,7 +564,7 @@ mod tests {
         assert!(html.contains("ui/notifications/tool-result"));
         assert!(html.contains("nodeCount"));
         assert!(html.contains("executionCount"));
-        assert!(html.contains("padding: 40px 44px 48px"));
+        assert!(html.contains("padding: 64px 72px 80px"));
     }
 
     #[tokio::test]

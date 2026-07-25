@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.27
+
+- Increase widget frame spacing for Codex display scaling.
+- Hide human-input actions after a successful submission.
+- Keep the Other answer field visible while it is selected.
+
 ## 0.1.26
 
 - Improve widget spacing and disable human-input controls after submission.
