@@ -12,13 +12,13 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 64px 72px 80px;
+        padding: 0;
         color: light-dark(#16161d, #f7f7fb);
         background: light-dark(#f7f8fb, #14151a);
       }
-      main { width: min(100%, 680px); margin: 0 auto; }
+      main { width: 100%; max-width: 824px; margin: 0 auto; padding: 64px 72px 80px; }
       @media (max-width: 560px) {
-        body { padding: 40px 32px 48px; }
+        main { padding: 40px 32px 48px; }
       }
       .eyebrow {
         margin: 0 0 8px;
@@ -149,6 +149,38 @@
         return data.humanRequest || data.request || data;
       }
 
+      function stateKey(requestId) {
+        return `loomex-human-input:${requestId}`;
+      }
+
+      function readSavedState(requestId) {
+        try {
+          const raw = window.sessionStorage?.getItem(stateKey(requestId));
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function saveState() {
+        if (!activeRequestId) return;
+        try {
+          window.sessionStorage?.setItem(stateKey(activeRequestId), JSON.stringify({
+            answers,
+            currentIndex,
+            showingReview,
+            submissionSucceeded,
+          }));
+        } catch {}
+      }
+
+      function storedAnswers(request) {
+        const answer = request?.answer;
+        if (!answer || typeof answer !== "object") return null;
+        if (Array.isArray(answer.answers)) return answer.answers;
+        return [answer];
+      }
+
       function spec() {
         return humanRequest?.inputSpec || {};
       }
@@ -229,7 +261,8 @@
       }
 
       function render(output = toolOutput()) {
-        const nextRequest = normalizeRequest(output);
+        const candidate = normalizeRequest(output);
+        const nextRequest = candidate?.id ? candidate : humanRequest;
         const nextType = nextRequest?.inputSpec?.inputType;
         if (!nextRequest?.id || normalizeInputType(nextType) === "text") {
           main.classList.add("hidden");
@@ -239,11 +272,12 @@
         main.classList.remove("hidden");
         const requestChanged = activeRequestId !== nextRequest?.id;
         if (requestChanged) {
-          answers = [];
-          currentIndex = 0;
-          showingReview = false;
           activeRequestId = nextRequest?.id || null;
-          submissionSucceeded = false;
+          const saved = readSavedState(activeRequestId);
+          answers = saved?.answers || [];
+          currentIndex = Number.isInteger(saved?.currentIndex) ? saved.currentIndex : 0;
+          showingReview = saved?.showingReview === true;
+          submissionSucceeded = saved?.submissionSucceeded === true;
         }
         const previousAnswers = new Map(questions.map((question, index) => [questionId(question, index), answers[index]]));
         humanRequest = nextRequest;
@@ -254,10 +288,17 @@
           humanRequest.description || humanRequest.context?.summary || "";
 
         questions = questionList();
-        answers = questions.map((question, index) => previousAnswers.get(questionId(question, index)) ?? answers[index] ?? null);
+        const remoteAnswers = storedAnswers(humanRequest);
+        answers = questions.map((question, index) => {
+          const id = questionId(question, index);
+          return previousAnswers.get(id)
+            ?? answers[index]
+            ?? remoteAnswers?.find((answer) => String(answer?.questionId ?? answer?.id ?? "") === id)
+            ?? (remoteAnswers?.length === 1 && !isBatch() ? remoteAnswers[0] : null);
+        });
         currentIndex = Math.min(currentIndex, Math.max(questions.length - 1, 0));
         const disabled = humanRequest.status === "resolved";
-        if (disabled) showingReview = true;
+        if (disabled || submissionSucceeded || remoteAnswers) showingReview = true;
         form.classList.toggle("submitted", disabled || submissionSucceeded);
         renderStep(disabled);
       }
@@ -281,14 +322,7 @@
           restoreAnswer(question, currentIndex);
           form.querySelectorAll(`input[name="value-${currentIndex}"]`).forEach((input) => input.addEventListener("change", () => {
             updateOtherInput(question, currentIndex, disabled);
-            const otherSelected = [...form.querySelectorAll(`input[name="value-${currentIndex}"]:checked`)]
-              .some((selected) => selected.value === "other");
-            if (requiresReview() && questionType(question) !== "multi_select" && !otherSelected) {
-              setTimeout(() => {
-                if (!form.querySelector(`#otherText-${currentIndex}`)?.hidden) return;
-                void advance();
-              }, 120);
-            }
+            saveState();
           }));
           updateOtherInput(question, currentIndex, disabled);
           if (questions.length === 1 && questionType(question) === "text") {
@@ -338,6 +372,7 @@
         if (!other) return;
         const selected = [...document.querySelectorAll(`input[name="value-${index}"]:checked`)].some((input) => input.value === "other");
         other.hidden = !selected;
+        other.style.display = selected ? "block" : "none";
         other.disabled = disabled || !selected;
         if (!selected) other.value = "";
       }
@@ -398,6 +433,7 @@
 
       function captureCurrent() {
         answers[currentIndex] = answerForQuestion(questions[currentIndex], currentIndex);
+        saveState();
       }
 
       async function advance() {
@@ -405,6 +441,7 @@
           captureCurrent();
           if (currentIndex < questions.length - 1) currentIndex += 1;
           else showingReview = true;
+          saveState();
           renderStep(false);
         } catch (error) {
           setStatus(error instanceof Error ? error.message : "Please complete this question.", true);
@@ -467,6 +504,9 @@
           form.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = true; });
           submissionSucceeded = true;
           form.classList.add("submitted");
+          showingReview = true;
+          saveState();
+          renderStep(true);
           setStatus("Submitted. Continuing the workflow…");
           if (window.openai?.sendFollowUpMessage) {
             await window.openai.sendFollowUpMessage({

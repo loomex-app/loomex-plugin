@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.28
+
+- Keep choice inputs stable when selecting Other and preserve submitted human-input reviews across widget remounts.
+- Apply reliable widget shell spacing and disable the form after submission.
+- Preserve false Boolean routing for legacy human approval conditions.
+
 ## 0.1.27
 
 - Increase widget frame spacing for Codex display scaling.
@@ -31,3 +37,8 @@
 - Route typed text human-input requests through the Codex chat.
 - Keep boolean, radio, and checkbox requests in the interactive side-panel form.
 - Publish the updated plugin and native runtime artifacts.
+## 0.1.28
+
+- Keep choice inputs stable when selecting Other and preserve submitted human-input reviews across widget remounts.
+- Apply reliable widget shell spacing and disable the form after submission.
+- Preserve false Boolean routing for legacy human approval conditions.
