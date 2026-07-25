@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.30
+
+- Persist form progress and submitted workflow actions across widget reloads.
+- Advance typed choice forms automatically while keeping `Other` available for custom text.
+- Keep non-text human input in the interactive form and resume the workflow without a manual continue message.
+- Route batch boolean `false` answers through the configured workflow branch.
+
 ## 0.1.29
 
 - Render typed human-input forms directly from human request list results.
