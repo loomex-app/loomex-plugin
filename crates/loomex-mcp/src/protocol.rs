@@ -521,13 +521,15 @@ mod tests {
         assert!(html.contains("normalizedOption"));
         assert!(html.contains("Review answers"));
         assert!(html.contains("sendFollowUpMessage"));
+        assert!(html.contains("submissionSucceeded"));
+        assert!(html.contains("return answersPayload[0] || {}"));
         assert!(html.contains("requiresReview"));
         assert!(html.contains("question?.input_type"));
         assert!(html.contains("inputType: questionType(question)"));
         assert!(html.contains("question: questionPrompt(question, index)"));
         assert!(html.contains("updateOtherInput"));
         assert!(html.contains("form.requestSubmit"));
-        assert!(html.contains("padding: 36px 40px 44px"));
+        assert!(html.contains("padding: 40px 44px 48px"));
     }
 
     #[tokio::test]
@@ -556,10 +558,12 @@ mod tests {
         assert!(html.contains("structuredContent"));
         assert!(html.contains("loomex_org_select"));
         assert!(html.contains("loomex_project_select"));
+        assert!(html.contains("loomex_workflow_run"));
+        assert!(html.contains("sendFollowUpMessage"));
         assert!(html.contains("ui/notifications/tool-result"));
         assert!(html.contains("nodeCount"));
         assert!(html.contains("executionCount"));
-        assert!(html.contains("padding: 36px 40px 44px"));
+        assert!(html.contains("padding: 40px 44px 48px"));
     }
 
     #[tokio::test]

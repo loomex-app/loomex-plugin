@@ -12,13 +12,13 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 36px 40px 44px;
+        padding: 40px 44px 48px;
         color: light-dark(#171821, #f6f7fb);
         background: light-dark(#f7f8fb, #14151a);
       }
       main { width: min(100%, 960px); margin: 0 auto; }
       @media (max-width: 720px) {
-        body { padding: 24px 18px 30px; }
+        body { padding: 28px 22px 34px; }
       }
       .eyebrow { margin: 0 0 7px; color: #0f9f90; font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
       h1 { margin: 0; font-size: 22px; line-height: 1.2; }
@@ -145,6 +145,7 @@
       function actionFor(row) {
         if (listKind === "organizations" && row.id) return ["loomex_org_select", { organizationId: row.id }, "Select"];
         if (listKind === "projects" && row.id) return ["loomex_project_select", { projectId: row.id }, "Select"];
+        if (listKind === "workflows" && row.id) return ["loomex_workflow_run", { workflowId: row.id, name: row.name || row.title || row.id }, "Run"];
         return null;
       }
 
@@ -160,6 +161,26 @@
           button.disabled = false;
           button.textContent = "Select";
           setState(error instanceof Error ? error.message : "Selection failed.", true);
+        }
+      }
+
+      async function runWorkflow(button, workflow) {
+        if (!window.openai?.sendFollowUpMessage) {
+          setState("This host does not expose the Codex follow-up bridge.", true);
+          return;
+        }
+        button.disabled = true;
+        button.textContent = "Starting…";
+        try {
+          await window.openai.sendFollowUpMessage({
+            prompt: `Run the Loomex workflow "${workflow.name}" (workflowId: ${workflow.workflowId}) in the currently selected project. First inspect its input schema if inputs are required, then start it with loomex_workflow_run and report the execution ID and next state.`,
+            scrollToBottom: true,
+          });
+          button.textContent = "Started";
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Run";
+          setState(error instanceof Error ? error.message : "Unable to start workflow.", true);
         }
       }
 
@@ -180,7 +201,7 @@
 
       function renderRows() {
         const columns = columnsFor(listKind);
-        headEl.innerHTML = columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("") + (listKind === "organizations" || listKind === "projects" ? "<th>Action</th>" : "");
+        headEl.innerHTML = columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("") + (listKind === "organizations" || listKind === "projects" || listKind === "workflows" ? "<th>Action</th>" : "");
         const query = searchEl.value.trim().toLowerCase();
         const filtered = rows.filter((row) => !query || JSON.stringify(row).toLowerCase().includes(query));
         countEl.textContent = `${filtered.length} of ${rows.length}`;
@@ -191,10 +212,17 @@
             return `<td${className}>${escapeHtml(value)}</td>`;
           }).join("");
           const action = actionFor(row);
-          return `<tr>${cells}${action ? `<td><button data-tool="${action[0]}" data-id="${escapeHtml(action[1].organizationId || action[1].projectId)}">${action[2]}</button></td>` : ""}</tr>`;
+          const actionCell = action
+            ? `<td><button data-tool="${action[0]}" data-id="${escapeHtml(action[1].organizationId || action[1].projectId || action[1].workflowId)}" data-name="${escapeHtml(action[1].name || "")}">${action[2]}</button></td>`
+            : "";
+          return `<tr>${cells}${actionCell}</tr>`;
         }).join("");
         bodyEl.querySelectorAll("button[data-tool]").forEach((button) => button.addEventListener("click", () => {
           const id = button.dataset.id;
+          if (button.dataset.tool === "loomex_workflow_run") {
+            void runWorkflow(button, { workflowId: id, name: button.dataset.name || id });
+            return;
+          }
           const args = button.dataset.tool === "loomex_org_select" ? { organizationId: id } : { projectId: id };
           void selectRow(button, button.dataset.tool, args);
         }));

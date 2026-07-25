@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.26
+
+- Improve widget spacing and disable human-input controls after submission.
+- Send boolean responses in the server-compatible single-answer shape.
+- Add a Run action to the workflow list that resumes execution in Codex.
+
 ## 0.1.25
 
 - Add responsive outer padding to human-input forms and list/table widgets.
