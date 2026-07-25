@@ -142,8 +142,10 @@
       }
 
       function normalizeInputType(value) {
-        const raw = String(value || "text").replace("-", "_");
+        const raw = String(value || "text").trim().toLowerCase().replace(/-/g, "_");
         if (raw === "true_false" || raw === "bool") return "boolean";
+        if (raw === "radio") return "single_select";
+        if (raw === "checkbox") return "multi_select";
         return ["multi_select", "single_select", "text", "boolean"].includes(raw) ? raw : "text";
       }
 
