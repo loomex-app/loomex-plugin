@@ -201,7 +201,9 @@
 
       function renderRows() {
         const columns = columnsFor(listKind);
-        headEl.innerHTML = columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("") + (listKind === "organizations" || listKind === "projects" || listKind === "workflows" ? "<th>Action</th>" : "");
+        const hasAction = listKind === "organizations" || listKind === "projects" || listKind === "workflows";
+        const actionHeader = hasAction ? "<th>Action</th>" : "";
+        headEl.innerHTML = (listKind === "workflows" ? actionHeader : "") + columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("") + (listKind === "workflows" ? "" : actionHeader);
         const query = searchEl.value.trim().toLowerCase();
         const filtered = rows.filter((row) => !query || JSON.stringify(row).toLowerCase().includes(query));
         countEl.textContent = `${filtered.length} of ${rows.length}`;
@@ -215,7 +217,7 @@
           const actionCell = action
             ? `<td><button data-tool="${action[0]}" data-id="${escapeHtml(action[1].organizationId || action[1].projectId || action[1].workflowId)}" data-name="${escapeHtml(action[1].name || "")}">${action[2]}</button></td>`
             : "";
-          return `<tr>${cells}${actionCell}</tr>`;
+          return `<tr>${listKind === "workflows" ? actionCell : ""}${cells}${listKind === "workflows" ? "" : actionCell}</tr>`;
         }).join("");
         bodyEl.querySelectorAll("button[data-tool]").forEach((button) => button.addEventListener("click", () => {
           const id = button.dataset.id;
