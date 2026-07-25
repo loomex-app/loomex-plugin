@@ -146,7 +146,11 @@
 
       function normalizeRequest(output) {
         const data = structuredData(output);
-        return data.humanRequest || data.request || data;
+        if (data.humanRequest || data.request) return data.humanRequest || data.request;
+        if (Array.isArray(data.humanRequests)) {
+          return data.humanRequests.find((request) => request?.status === "pending") || data.humanRequests[0] || data;
+        }
+        return data;
       }
 
       function stateKey(requestId) {
