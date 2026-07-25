@@ -14,6 +14,8 @@ Handle durable human requests and policy approvals as separate inboxes. Read [hu
 - If a typed `inputSpec` is present, route it by control type:
   - `text`: do not call `loomex_human_open`. Ask the user for the requested text in the Codex chat, then submit exactly that answer with `loomex_human_respond`.
   - `boolean`, `single_select`/`radio`, or `multi_select`/`checkbox`: call `loomex_human_open` with the exact request and let the rendered side-panel form collect the answer. Do not ask for those values again in chat.
+- A non-text form is a live continuation surface, not a reason to stop the chat. After `loomex_human_open` succeeds, do not say that the request was merely sent to the Runner, do not ask the user to say "continue", and do not ask them to repeat the form value in chat. The form submission is the continuation trigger; its follow-up message resumes the workflow and the next Runner state must be reported from that follow-up.
+- Only a typed `text` request intentionally waits for a conversational answer. Ask for the text and wait for that text, then submit it; never turn a boolean, radio, checkbox, or other normal Runner wait into a manual "continue" gate.
 - For a batch request, use the request-level `inputType` routing consistently for its ordered questions; do not duplicate a value between chat and the form.
 - For legacy free-form requests, present the exact prompt, choices/schema, request ID, context, and deadline; submit only the user's answer through the public `response` field of `loomex_human_respond`.
 - For policy approvals, use `loomex_approval_list`, explain target, side effects, consequences, and choices, then call `loomex_approval_decide` with exact `approvalId` and `approve` or `reject`. Never auto-approve.

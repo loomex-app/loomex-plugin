@@ -14,7 +14,11 @@ contracts: `multi_select`/`checkbox`, `single_select`/`radio`, `text`, or
 it with `loomex_human_respond`; do not call `loomex_human_open`. For
 `multi_select`/`checkbox`, `single_select`/`radio`, and `boolean`, call `loomex_human_open` with
 that exact returned request and tell the user to complete the rendered
-side-panel form. Do not ask for those form values again in chat. An
+side-panel form. This is a live continuation surface: do not stop the chat with
+a message that the request was only sent to the Runner, do not ask the user to
+say "continue", and do not ask for the form value again in chat. The form's
+submit action sends the follow-up that resumes the workflow and exposes its next
+state. Only `text` requests wait for a conversational answer in Codex. An
 `inputSpec.collectionMode` of `batch` contains an ordered `questions` array;
 use the request-level input type consistently, without collecting any value
 twice. Preserve the question order in the submitted `answers[]`. The app
