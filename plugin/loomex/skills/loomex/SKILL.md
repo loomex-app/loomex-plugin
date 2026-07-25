@@ -69,12 +69,20 @@ Read every reference needed for the user's request before calling its tools.
    collect `text` in the Codex chat and submit it with `loomex_human_respond`;
    call `loomex_human_open` for `boolean`, `single_select`/`radio`, and
    `multi_select`/`checkbox`, using the exact returned request. Do not collect
-   the same value in both places. For legacy human requests and policy
+   the same value in both places. Opening a non-text form must not stop the
+   chat behind a manual continuation request: do not tell the user to say
+   "continue" or claim that the workflow will resume only after another chat
+   message. The form action sends the follow-up that resumes the workflow;
+   report the next Runner state from that follow-up. Only a `text` request
+   waits for a conversational answer. For legacy human requests and policy
    approvals, present the exact prompt, choices, consequences, and run
    context. Submit only the user's decision.
 11. A closed Codex app cannot surface new prompts. The durable Runner keeps the
    run alive and the backend retains pending work. On reconnect, query the run
-   and pending inboxes, and explain this boundary honestly.
+   and pending inboxes, and explain this boundary honestly. A healthy
+   non-terminal run must still be followed through its form action or bounded
+   `loomex_run_wait`; never ask the user for a standalone "continue" message
+   merely because a request was sent to the Runner.
 12. Treat retryable management or wait transport failures as unknown state, not
    as evidence that the run survived, failed, or was cancelled. Recover with
    `loomex_run_get` using the authoritative execution ID, then use bounded

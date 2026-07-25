@@ -82,6 +82,31 @@
       const bodyEl = document.querySelector("#body");
       let rows = [];
       let listKind = "items";
+      const ACTION_STATE_KEY = "loomex-list-action-state";
+
+      function actionStateId(toolName, id) {
+        return `${toolName}:${id}`;
+      }
+
+      function readActionState() {
+        try {
+          return JSON.parse(window.localStorage?.getItem(ACTION_STATE_KEY) || "{}");
+        } catch {
+          return {};
+        }
+      }
+
+      function actionState(toolName, id) {
+        return readActionState()[actionStateId(toolName, id)] || null;
+      }
+
+      function saveActionState(toolName, id, label) {
+        try {
+          const state = readActionState();
+          state[actionStateId(toolName, id)] = { label, updatedAt: Date.now() };
+          window.localStorage?.setItem(ACTION_STATE_KEY, JSON.stringify(state));
+        } catch {}
+      }
 
       function output() {
         return window.openai?.toolOutput?.structuredContent || window.openai?.toolOutput || {};
@@ -156,6 +181,7 @@
         try {
           const result = envelope(await window.openai.callTool(toolName, arguments_));
           if (result.ok === false) throw new Error(result.error?.message || "Selection failed.");
+          saveActionState(toolName, arguments_.organizationId || arguments_.projectId, "Selected");
           button.textContent = "Selected";
         } catch (error) {
           button.disabled = false;
@@ -176,6 +202,7 @@
             prompt: `Run the Loomex workflow "${workflow.name}" (workflowId: ${workflow.workflowId}) in the currently selected project. First inspect its input schema if inputs are required, then start it with loomex_workflow_run and report the execution ID and next state.`,
             scrollToBottom: true,
           });
+          saveActionState("loomex_workflow_run", workflow.workflowId, "Started");
           button.textContent = "Started";
         } catch (error) {
           button.disabled = false;
@@ -214,8 +241,10 @@
             return `<td${className}>${escapeHtml(value)}</td>`;
           }).join("");
           const action = actionFor(row);
+          const actionId = action && (action[1].organizationId || action[1].projectId || action[1].workflowId);
+          const savedAction = action && actionState(action[0], actionId);
           const actionCell = action
-            ? `<td><button data-tool="${action[0]}" data-id="${escapeHtml(action[1].organizationId || action[1].projectId || action[1].workflowId)}" data-name="${escapeHtml(action[1].name || "")}">${action[2]}</button></td>`
+            ? `<td><button data-tool="${action[0]}" data-id="${escapeHtml(actionId)}" data-name="${escapeHtml(action[1].name || "")}" ${savedAction ? "disabled" : ""}>${escapeHtml(savedAction?.label || action[2])}</button></td>`
             : "";
           return `<tr>${listKind === "workflows" ? actionCell : ""}${cells}${listKind === "workflows" ? "" : actionCell}</tr>`;
         }).join("");
