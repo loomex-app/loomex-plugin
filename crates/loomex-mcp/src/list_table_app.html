@@ -12,11 +12,14 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 28px 30px 32px;
+        padding: 36px 40px 44px;
         color: light-dark(#171821, #f6f7fb);
         background: light-dark(#f7f8fb, #14151a);
       }
       main { width: min(100%, 960px); margin: 0 auto; }
+      @media (max-width: 720px) {
+        body { padding: 24px 18px 30px; }
+      }
       .eyebrow { margin: 0 0 7px; color: #0f9f90; font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
       h1 { margin: 0; font-size: 22px; line-height: 1.2; }
       .summary { margin: 7px 0 16px; color: light-dark(#656676, #a9aab5); line-height: 1.45; }

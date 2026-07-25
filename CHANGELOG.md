@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.25
+
+- Add responsive outer padding to human-input forms and list/table widgets.
+
 ## 0.1.24
 
 - Render typed human-input forms through the standard MCP Apps tool-result bridge.
