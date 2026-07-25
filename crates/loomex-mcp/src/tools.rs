@@ -306,7 +306,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool_with_meta(
             "loomex_human_list",
             "List human requests",
-            "List pending or resolved human-in-the-loop requests. After this tool returns a pending typed request, immediately call loomex_human_open for boolean, radio, checkbox, single_select, or multi_select requests; keep text requests in Codex chat.",
+            "List pending or resolved human-in-the-loop requests. After this tool returns a pending typed request, immediately call loomex_human_open for boolean, radio, checkbox, single_select, or multi_select requests; keep text requests in Codex chat. Non-text forms are the live continuation surface: do not stop for a manual continue message or ask for their values in chat.",
             obj(
                 &[
                     ("status", enum_string(&["pending", "resolved", "all"])),
@@ -343,7 +343,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool_with_meta(
             "loomex_human_open",
             "Open human input",
-            "Open a Loomex boolean, radio, or checkbox human input request as an interactive side-panel form. Text requests must be answered in Codex chat with loomex_human_respond.",
+            "Open a Loomex boolean, radio, or checkbox human input request as an interactive side-panel form. The form submission sends the continuation follow-up; do not ask the user to say continue or repeat the value in chat. Text requests must be answered in Codex chat with loomex_human_respond.",
             obj(&[("humanRequest", any_value())], &["humanRequest"]),
             open_ro(),
             json!({

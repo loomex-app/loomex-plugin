@@ -188,7 +188,7 @@ impl Server {
             let envelope =
                 success_envelope(name, request_id, json!({"humanRequest": human_request}));
             return Ok(json!({
-                "content": [{"type":"text", "text": "Opened the Loomex human input side panel."}],
+                "content": [{"type":"text", "text": "Opened the Loomex human input side panel. For non-text requests, keep the form as the active continuation surface; do not ask the user to say continue. The form submission will send the follow-up and resume the workflow."}],
                 "structuredContent": envelope,
                 "isError": false
             }));

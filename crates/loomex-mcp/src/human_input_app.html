@@ -159,7 +159,8 @@
 
       function readSavedState(requestId) {
         try {
-          const raw = window.sessionStorage?.getItem(stateKey(requestId));
+          const raw = window.localStorage?.getItem(stateKey(requestId))
+            || window.sessionStorage?.getItem(stateKey(requestId));
           return raw ? JSON.parse(raw) : null;
         } catch {
           return null;
@@ -169,12 +170,14 @@
       function saveState() {
         if (!activeRequestId) return;
         try {
-          window.sessionStorage?.setItem(stateKey(activeRequestId), JSON.stringify({
+          const state = JSON.stringify({
             answers,
             currentIndex,
             showingReview,
             submissionSucceeded,
-          }));
+          });
+          window.localStorage?.setItem(stateKey(activeRequestId), state);
+          window.sessionStorage?.setItem(stateKey(activeRequestId), state);
         } catch {}
       }
 
@@ -311,7 +314,8 @@
         const singleQuestion = !requiresReview();
         const submitLabel = singleQuestion ? "Submit" : "Submit & Resume";
         const disabledAttr = disabled ? "disabled" : "";
-        const actions = `<div class="actions">
+        const formSubmitted = disabled || submissionSucceeded;
+        const actions = formSubmitted ? "" : `<div class="actions">
           <button id="expand" class="secondary" type="button" ${disabledAttr}>Open in side panel</button>
           ${showingReview ? `<button id="back" class="secondary" type="button" ${disabledAttr}>Back</button><button id="submit" type="submit" ${disabledAttr}>${submitLabel}</button>` : singleQuestion ? `<span></span><button id="submit" type="submit" ${disabledAttr}>${submitLabel}</button>` : `${currentIndex > 0 ? `<button id="back" class="secondary" type="button" ${disabledAttr}>Back</button>` : `<span></span>`}<button id="next" type="button" ${disabledAttr}>${currentIndex === questions.length - 1 ? "Review answers" : "Next"}</button>`}
         </div>`;
@@ -327,7 +331,9 @@
           form.querySelectorAll(`input[name="value-${currentIndex}"]`).forEach((input) => input.addEventListener("change", () => {
             updateOtherInput(question, currentIndex, disabled);
             saveState();
+            if (!disabled && input.value !== "other") void advance();
           }));
+          form.querySelector(`#otherText-${currentIndex}`)?.addEventListener("input", saveState);
           updateOtherInput(question, currentIndex, disabled);
           if (questions.length === 1 && questionType(question) === "text") {
             form.querySelector(`#answer-${currentIndex}`)?.addEventListener("keydown", (event) => {
@@ -338,10 +344,16 @@
             });
           }
         }
-        document.querySelector("#expand").addEventListener("click", () => void requestSidePanel());
+        document.querySelector("#expand")?.addEventListener("click", () => void requestSidePanel());
         document.querySelector("#back")?.addEventListener("click", () => {
-          if (showingReview) showingReview = false;
+          if (showingReview) {
+            showingReview = false;
+            saveState();
+            renderStep(disabled);
+            return;
+          }
           currentIndex = Math.max(0, currentIndex - 1);
+          saveState();
           renderStep(disabled);
         });
         document.querySelector("#next")?.addEventListener("click", () => void advance());
@@ -514,7 +526,7 @@
           setStatus("Submitted. Continuing the workflow…");
           if (window.openai?.sendFollowUpMessage) {
             await window.openai.sendFollowUpMessage({
-              prompt: "The human input request was submitted successfully. Continue the Loomex workflow using the resolved request and report its next state.",
+              prompt: "The non-text human input form was submitted successfully. Continue the Loomex workflow immediately using the resolved request, without asking the user to say continue or repeat the answer in chat, and report its next state.",
               scrollToBottom: true,
             });
           }
