@@ -67,8 +67,8 @@ Read every reference needed for the user's request before calling its tools.
    substitute for this work.
 10. When a wait returns a typed human request, route by `inputSpec.inputType`:
    collect `text` in the Codex chat and submit it with `loomex_human_respond`;
-   call `loomex_human_open` for `boolean`, `single_select` (radio), and
-   `multi_select` (checkbox), using the exact returned request. Do not collect
+   call `loomex_human_open` for `boolean`, `single_select`/`radio`, and
+   `multi_select`/`checkbox`, using the exact returned request. Do not collect
    the same value in both places. For legacy human requests and policy
    approvals, present the exact prompt, choices, consequences, and run
    context. Submit only the user's decision.

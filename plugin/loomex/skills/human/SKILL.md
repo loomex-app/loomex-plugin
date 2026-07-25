@@ -13,7 +13,7 @@ Handle durable human requests and policy approvals as separate inboxes. Read [hu
 - For human input, use `loomex_human_list` with known `executionId` or `workflowId`, preserve `nextCursor`, and inspect the exact request schema.
 - If a typed `inputSpec` is present, route it by control type:
   - `text`: do not call `loomex_human_open`. Ask the user for the requested text in the Codex chat, then submit exactly that answer with `loomex_human_respond`.
-  - `boolean`, `single_select` (radio), or `multi_select` (checkbox): call `loomex_human_open` with the exact request and let the rendered side-panel form collect the answer. Do not ask for those values again in chat.
+  - `boolean`, `single_select`/`radio`, or `multi_select`/`checkbox`: call `loomex_human_open` with the exact request and let the rendered side-panel form collect the answer. Do not ask for those values again in chat.
 - For a batch request, use the request-level `inputType` routing consistently for its ordered questions; do not duplicate a value between chat and the form.
 - For legacy free-form requests, present the exact prompt, choices/schema, request ID, context, and deadline; submit only the user's answer through the public `response` field of `loomex_human_respond`.
 - For policy approvals, use `loomex_approval_list`, explain target, side effects, consequences, and choices, then call `loomex_approval_decide` with exact `approvalId` and `approve` or `reject`. Never auto-approve.
