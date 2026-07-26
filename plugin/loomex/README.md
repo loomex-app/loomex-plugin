@@ -108,7 +108,9 @@ local data directory, register that local marketplace, and install
 Run the one-command installer again to upgrade. It inspects the existing Codex
 marketplace and plugin state, does nothing when the same verified local snapshot
 is already installed, and otherwise replaces the marketplace with the newly
-verified local snapshot. If any upgrade step fails, it restores the previous
+verified local snapshot. It then runs the bundled Runner's transaction-safe setup
+update, including service health-check and rollback, so the durable Runner
+matches the installed plugin release. If any upgrade step fails, it restores the previous
 checkout by its captured exact commit—or the previous local marketplace path—and
 restores whether the plugin was installed. A
 pre-existing sparse or disabled Loomex installation is rejected before any
