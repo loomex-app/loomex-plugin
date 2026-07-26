@@ -232,7 +232,7 @@ fn run(args: Vec<String>) -> Result<String, String> {
     let _direct_lifecycle_lock = direct_lifecycle_mutation
         .then(PluginSetupTransactionLock::acquire)
         .transpose()?;
-    if direct_lifecycle_mutation {
+    if direct_lifecycle_mutation && !direct_cli_is_setup_recovery_command(&parsed.args) {
         plugin_reject_unfinished_setup_transaction()?;
     }
 
@@ -241,6 +241,7 @@ fn run(args: Vec<String>) -> Result<String, String> {
         [command, rest @ ..] if command == "config" => run_config(rest, &parsed.options),
         [command, rest @ ..] if command == "completion" => run_completion(rest, &parsed.options),
         [command, rest @ ..] if command == "profile" => run_profile(rest, &parsed.options),
+        [command, rest @ ..] if command == "setup" => run_setup(rest, &parsed.options),
         [command, rest @ ..] if command == "runner" => run_runner(rest, &parsed.options),
         [command, rest @ ..] if command == "login" => run_login(rest, &parsed.options),
         [command, rest @ ..] if command == "logout" => run_logout(rest, &parsed.options),
@@ -255,6 +256,15 @@ fn run(args: Vec<String>) -> Result<String, String> {
         [command, ..] => Err(format!("unknown loomex command: {command}\n{ROOT_HELP}")),
         [] => Ok(wizard_start_output(parsed.options.json)),
     }
+}
+
+fn direct_cli_is_setup_recovery_command(args: &[String]) -> bool {
+    matches!(
+        args,
+        [command, subcommand, ..]
+            if command == "setup"
+                && matches!(subcommand.as_str(), "install" | "apply" | "rollback")
+    )
 }
 
 fn direct_cli_is_lifecycle_mutation(args: &[String]) -> bool {
@@ -277,6 +287,9 @@ fn direct_cli_is_lifecycle_mutation(args: &[String]) -> bool {
         }
         [command, service, subcommand, ..] if command == "runner" && service == "service" => {
             matches!(subcommand.as_str(), "install" | "uninstall")
+        }
+        [command, subcommand, ..] if command == "setup" => {
+            matches!(subcommand.as_str(), "install" | "apply" | "rollback")
         }
         _ => false,
     }
@@ -1769,6 +1782,95 @@ fn binding_create_idempotency_key(
             process::id()
         ),
     )
+}
+
+fn run_setup(args: &[String], options: &GlobalOptions) -> Result<String, String> {
+    if args.is_empty() || is_help(&args[0]) {
+        return Ok(SETUP_HELP.to_string());
+    }
+    match args {
+        [subcommand, rest @ ..] if subcommand == "install" => plugin_setup_install(rest, options),
+        [subcommand, ..] => Err(format!(
+            "unknown setup subcommand: {subcommand}\n{SETUP_HELP}"
+        )),
+        [] => Ok(SETUP_HELP.to_string()),
+    }
+}
+
+fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<String, String> {
+    if !options.json || !options.non_interactive {
+        return Err(
+            "PLUGIN_SETUP_INSTALL_MODE_REQUIRED: setup install requires --json and --non-interactive"
+                .to_string(),
+        );
+    }
+    let request = SetupInstallRequest::parse(args)?;
+    let package = plugin_package_runtime()?;
+    if request.version != package.runtime_version && request.version != package.plugin_version {
+        return Err(format!(
+            "PLUGIN_RUNTIME_VERSION_UNAVAILABLE: package contains runtime {} (plugin {}), not {}",
+            package.runtime_version, package.plugin_version, request.version
+        ));
+    }
+    if request.channel != package.channel {
+        return Err(format!(
+            "PLUGIN_RUNTIME_CHANNEL_UNAVAILABLE: package contains {}, not {}",
+            package.channel, request.channel
+        ));
+    }
+    let status = plugin_setup_status(options)?;
+    let already_current = status.get("setupRequired").and_then(Value::as_bool) == Some(false)
+        && status.get("supported").and_then(Value::as_bool) == Some(true)
+        && status
+            .pointer("/durableRuntime/runtimeMatchesBundle")
+            .and_then(Value::as_bool)
+            == Some(true)
+        && status
+            .pointer("/durableRuntime/serviceRegistered")
+            .and_then(Value::as_bool)
+            == Some(true);
+    if already_current {
+        return Ok(json!({
+            "schemaVersion": "loomex.cli.setupInstall/v1",
+            "updated": false,
+            "version": request.version,
+            "channel": request.channel,
+            "setupStatus": status,
+        })
+        .to_string());
+    }
+
+    let plan = plugin_setup_plan(
+        &json!({
+            "version": request.version,
+            "channel": request.channel,
+            "installService": true,
+        }),
+        options,
+    )?;
+    let plan_id = plan
+        .get("planId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "PLUGIN_SETUP_PLAN_INVALID: planId is required".to_string())?;
+    let applied = plugin_setup_apply(
+        &json!({
+            "planId": plan_id,
+            "version": plan.get("pluginVersion"),
+            "channel": plan.get("channel"),
+            "installService": true,
+            "confirm": true,
+        }),
+        options,
+    )?;
+    Ok(json!({
+        "schemaVersion": "loomex.cli.setupInstall/v1",
+        "updated": true,
+        "version": request.version,
+        "channel": request.channel,
+        "plan": plan,
+        "apply": applied,
+    })
+    .to_string())
 }
 
 fn run_runner(args: &[String], options: &GlobalOptions) -> Result<String, String> {
@@ -9711,6 +9813,48 @@ struct ParsedArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct SetupInstallRequest {
+    version: String,
+    channel: String,
+}
+
+impl SetupInstallRequest {
+    fn parse(args: &[String]) -> Result<Self, String> {
+        let mut version = None;
+        let mut channel = "stable".to_string();
+        let mut index = 0;
+        while index < args.len() {
+            match args[index].as_str() {
+                "--version" => {
+                    index += 1;
+                    version = Some(required_value(args, index, "--version")?);
+                }
+                "--channel" => {
+                    index += 1;
+                    channel = required_value(args, index, "--channel")?;
+                }
+                "--help" | "-h" => return Err(SETUP_HELP.to_string()),
+                value => {
+                    return Err(format!(
+                        "unknown setup install option: {value}\n{SETUP_HELP}"
+                    ))
+                }
+            }
+            index += 1;
+        }
+        let version = version.ok_or_else(|| {
+            "PLUGIN_SETUP_INSTALL_VERSION_REQUIRED: --version is required".to_string()
+        })?;
+        if channel != "stable" && channel != "beta" {
+            return Err(
+                "PLUGIN_SETUP_INSTALL_CHANNEL_INVALID: channel must be stable or beta".to_string(),
+            );
+        }
+        Ok(Self { version, channel })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LoginRequest {
     api_key: Option<String>,
     api_secret: Option<String>,
@@ -9862,6 +10006,7 @@ usage:
   loomex profile list|current|use NAME
   loomex org list|select ORG_ID
   loomex project list|select PROJECT_ID
+  loomex setup install --version VERSION [--channel stable|beta]
   loomex bind .|--project PROJECT_ID --workspace PATH|list|revoke BINDING_ID
   loomex workflow list|show WORKFLOW_ID|run WORKFLOW_ID --input JSON [--follow]
   loomex runner start|stop|status|logs|doctor|service|release|ops
@@ -9886,6 +10031,10 @@ usage:
   loomex completion bash
   loomex completion zsh
   loomex completion fish";
+
+const SETUP_HELP: &str = "\
+usage:
+  loomex setup install --version VERSION [--channel stable|beta] [--json --non-interactive]";
 
 const PROFILE_HELP: &str = "\
 usage:
@@ -10492,9 +10641,34 @@ mod tests {
 
         assert!(help.contains("loomex workflow list|show WORKFLOW_ID|run WORKFLOW_ID --input JSON"));
         assert!(help.contains("loomex runner start|stop|status|logs|doctor"));
+        assert!(help.contains("loomex setup install --version VERSION"));
         assert!(help.contains("loomex trace export RUN_ID"));
         assert!(!help.contains("loomex run "));
         assert!(!help.contains("loomex status"));
+    }
+
+    #[test]
+    fn setup_install_request_requires_a_supported_version_and_channel() {
+        let request = SetupInstallRequest::parse(&[
+            "--version".to_string(),
+            "0.1.31".to_string(),
+            "--channel".to_string(),
+            "stable".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(request.version, "0.1.31");
+        assert_eq!(request.channel, "stable");
+        assert!(SetupInstallRequest::parse(&[])
+            .unwrap_err()
+            .contains("VERSION_REQUIRED"));
+        assert!(SetupInstallRequest::parse(&[
+            "--version".to_string(),
+            "0.1.31".to_string(),
+            "--channel".to_string(),
+            "nightly".to_string(),
+        ])
+        .unwrap_err()
+        .contains("CHANNEL_INVALID"));
     }
 
     #[test]

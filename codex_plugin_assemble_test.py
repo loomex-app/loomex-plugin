@@ -132,6 +132,13 @@ class SourcePluginContractTest(unittest.TestCase):
             executable.create_system = 3
             executable.external_attr = (stat.S_IFREG | 0o755) << 16
             archive.writestr(executable, b"#!/bin/sh\n")
+            runtime = zipfile.ZipInfo("plugins/loomex/bin/darwin-arm64/loomex")
+            runtime.create_system = 3
+            runtime.external_attr = (stat.S_IFREG | 0o755) << 16
+            archive.writestr(
+                runtime,
+                b'#!/bin/sh\nprintf \'{"schemaVersion":"loomex.cli.setupInstall/v1","updated":true}\n\'\n',
+            )
         return archive_path
 
     @staticmethod

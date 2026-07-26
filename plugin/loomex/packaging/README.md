@@ -26,9 +26,12 @@ absent manifests, and digest mismatches. Development overrides remain limited
 to source checkouts and cannot replace packaged release bytes.
 
 The archive is one install for users: it includes every supported
-macOS/Linux MCP adapter and Runner pair. The first `loomex_setup_apply` installs the durable
-per-user Runner from the checksum-verified artifact for the current target; it
-does not ask the user to obtain a second installer.
+macOS/Linux MCP adapter and Runner pair. The verified marketplace installer
+automatically invokes the bundled Runner's transaction-safe setup path, so the
+durable per-user Runner is installed or updated from the checksum-verified
+artifact for the current target without a Codex prompt. `loomex_setup_apply`
+remains available as the explicit repair and recovery path; users do not obtain
+a second installer.
 
 ## Marketplace integrity and publication
 

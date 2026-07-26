@@ -157,8 +157,19 @@ test("one-install documentation requires both bundled native artifacts", async (
   const packaging = await readFile(path.join(root, "packaging", "README.md"), "utf8");
   assert.match(readme, /both the `loomex-mcp` adapter\s+and the matching, verified Loomex Runner runtime/);
   assert.match(packaging, /includes every supported\s+macOS\/Linux MCP adapter and Runner pair/);
-  assert.match(packaging, /does not ask the user to obtain a second installer/);
+  assert.match(packaging, /users do not obtain\s+a second installer/);
   assert.doesNotMatch(readme, /Windows/);
+});
+
+test("the verified installer updates the durable Runner from the bundled artifact", async () => {
+  const installer = await readFile(
+    path.join(root, "scripts", "install-marketplace.sh"),
+    "utf8",
+  );
+  assert.match(installer, /update_durable_runner\(local_source, sys\.argv\[1\]\)/);
+  assert.match(installer, /"setup",\s*"install",\s*"--version"/);
+  assert.match(installer, /LOOMEX_PLUGIN_ROOT/);
+  assert.match(installer, /loomex\.cli\.setupInstall\/v1/);
 });
 
 test("natural Loomex requests automatically enter first-use onboarding", async () => {
@@ -182,6 +193,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   assert.match(skill, /resume the user's\s+original request/);
   assert.match(setup, /Never tell the user to type a setup phrase/);
   assert.match(readme, /No special setup prompt is\s+needed/);
+  assert.match(installer, /matching durable Runner are installed/);
   assert.match(installer, /ask for any Loomex workflow naturally/);
 });
 
