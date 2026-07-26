@@ -528,6 +528,9 @@ mod tests {
         assert!(html.contains("inputType: questionType(question)"));
         assert!(html.contains("question: questionPrompt(question, index)"));
         assert!(html.contains("updateOtherInput"));
+        assert!(html.contains("draftAnswerForQuestion"));
+        assert!(html.contains("window.openai?.widgetState"));
+        assert!(html.contains("window.openai?.setWidgetState"));
         assert!(html.contains("form.requestSubmit"));
         assert!(html.contains("padding: 64px 72px 80px"));
         assert!(html.contains("submitted .actions"));
