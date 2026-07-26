@@ -139,6 +139,13 @@ class SourcePluginContractTest(unittest.TestCase):
                 runtime,
                 b'#!/bin/sh\nprintf \'{"schemaVersion":"loomex.cli.setupInstall/v1","updated":true}\n\'\n',
             )
+            linux_runtime = zipfile.ZipInfo("plugins/loomex/bin/linux-x64/loomex")
+            linux_runtime.create_system = 3
+            linux_runtime.external_attr = (stat.S_IFREG | 0o755) << 16
+            archive.writestr(
+                linux_runtime,
+                b'#!/bin/sh\nprintf \'{"schemaVersion":"loomex.cli.setupInstall/v1","updated":true}\n\'\n',
+            )
         return archive_path
 
     @staticmethod
@@ -1273,7 +1280,7 @@ else:
                     "--marketplace-installer",
                     str(temp / "loomex-install-marketplace.sh"),
                     "--version",
-                    "0.1.32",
+                    "0.1.33",
                 ],
                 text=True,
                 capture_output=True,
@@ -1295,7 +1302,7 @@ else:
             shutil.copytree(ROOT / "plugin/loomex", source)
             plugin_json = source / ".codex-plugin/plugin.json"
             plugin = json.loads(plugin_json.read_text())
-            plugin["version"] = "0.1.32+codex.local-20260723-120000"
+            plugin["version"] = "0.1.33+codex.local-20260723-120000"
             plugin_json.write_text(json.dumps(plugin))
             artifacts = temp / "artifacts"
             self.write_artifacts(artifacts)
@@ -1313,7 +1320,7 @@ else:
             self.assertEqual(result.returncode, 0, result.stderr)
             manifest = json.loads((temp / "dist/loomex/packaging/runtime-manifest.json").read_text())
             self.assertEqual(manifest["pluginVersion"], plugin["version"])
-            self.assertEqual(manifest["runtimeVersion"], "0.1.32")
+            self.assertEqual(manifest["runtimeVersion"], "0.1.33")
             self.assertEqual(validate_runtime_integrity(temp / "dist/loomex"), [])
 
 
