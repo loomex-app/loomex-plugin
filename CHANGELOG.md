@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.37
+
+- Remove the standalone Runs, Human, and Scope sub-skills from the Codex plugin.
+- Route run follow-up, human input, approvals, and scope handling through the main Loomex skill.
+- Keep focused Setup and Workflow sub-skills with explicit run continuation guidance.
+
 ## 0.1.36
 
 - Restore human-input form progress and submitted review state after reopening the same Codex chat.
