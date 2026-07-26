@@ -2,6 +2,7 @@
 
 ## 0.1.31
 
+- Release the verified Codex package with durable widget-state handling.
 - Keep `Other` drafts visible across widget rerenders.
 - Restore checkbox and radio selections after reopening the chat form.
 - Persist human-input form state through the Codex widget-state bridge.
