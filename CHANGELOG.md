@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.36
+
+- Restore human-input form progress and submitted review state after reopening the same Codex chat.
+- Preserve workflow action state within its originating Codex chat without leaking it into other chats.
+- Keep custom `Other` drafts persistent without interrupting input focus.
+
 ## 0.1.31
 
 - Release the verified Codex package with durable widget-state handling.
