@@ -83,6 +83,8 @@
       let rows = [];
       let listKind = "items";
       let actionStateCache = null;
+      let actionStateScope = "";
+      const ACTION_STATE_PREFIX = "loomex-list-action-state";
 
       function widgetActionState() {
         const widgetState = window.openai?.widgetState;
@@ -97,9 +99,26 @@
         return `${toolName}:${id}`;
       }
 
+      function actionStateStorageKey() {
+        return actionStateScope ? `${ACTION_STATE_PREFIX}:${actionStateScope}` : null;
+      }
+
+      function persistedActionState() {
+        const key = actionStateStorageKey();
+        if (!key) return {};
+        try {
+          const raw = window.localStorage?.getItem(key);
+          const parsed = raw ? JSON.parse(raw) : null;
+          return parsed && typeof parsed === "object" ? parsed : {};
+        } catch {
+          return {};
+        }
+      }
+
       function readActionState() {
         if (actionStateCache) return actionStateCache;
-        actionStateCache = widgetActionState();
+        const widgetState = widgetActionState();
+        actionStateCache = Object.keys(widgetState).length ? widgetState : persistedActionState();
         return actionStateCache;
       }
 
@@ -111,6 +130,10 @@
         const state = { ...readActionState() };
         state[actionStateId(toolName, id)] = { label, updatedAt: Date.now() };
         actionStateCache = state;
+        try {
+          const key = actionStateStorageKey();
+          if (key) window.localStorage?.setItem(key, JSON.stringify(state));
+        } catch {}
         try {
           const widgetState = window.openai?.widgetState;
           const privateContent = widgetState?.privateContent
@@ -230,6 +253,13 @@
       function render(value = output()) {
         const result = envelope(value);
         if (result.ok === false) { setState(result.error?.message || "Unable to load the list.", true); return; }
+        const nextScope = kindFor(result.tool) !== "items"
+          ? String(result?.meta?.requestId || "").trim()
+          : "";
+        if (nextScope !== actionStateScope) {
+          actionStateScope = nextScope;
+          actionStateCache = null;
+        }
         const data = result.data || result;
         listKind = kindFor(result.tool);
         rows = normalizedRows(data);

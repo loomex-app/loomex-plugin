@@ -532,7 +532,11 @@ mod tests {
         assert!(html.contains("window.openai?.widgetState"));
         assert!(html.contains("window.openai?.setWidgetState"));
         assert!(html.contains("privateContent.loomexHumanInput = { version: 2, requests }"));
-        assert!(!html.contains("window.localStorage"));
+        assert!(html.contains("HUMAN_STATE_PREFIX"));
+        assert!(html.contains("activeStateScope"));
+        assert!(html.contains("structured?.meta?.requestId"));
+        assert!(html.contains("window.localStorage"));
+        assert!(html.contains("saveState(false)"));
         assert!(!html.contains("window.sessionStorage"));
         assert!(html.contains("form.requestSubmit"));
         assert!(html.contains("padding: 64px 72px 80px"));
@@ -570,7 +574,10 @@ mod tests {
         assert!(html.contains("ui/notifications/tool-result"));
         assert!(html.contains("privateContent.loomexList = { version: 1, actions: state }"));
         assert!(html.contains("window.openai?.setWidgetState"));
-        assert!(!html.contains("window.localStorage"));
+        assert!(html.contains("ACTION_STATE_PREFIX"));
+        assert!(html.contains("actionStateScope"));
+        assert!(html.contains("result?.meta?.requestId"));
+        assert!(html.contains("window.localStorage"));
         assert!(html.contains("nodeCount"));
         assert!(html.contains("executionCount"));
         assert!(html.contains("padding: 64px 72px 80px"));
