@@ -153,15 +153,14 @@
         return data;
       }
 
-      function stateKey(requestId) {
-        return `loomex-human-input:${requestId}`;
-      }
-
       function widgetSavedState(requestId) {
         const widgetState = window.openai?.widgetState;
         const candidate = widgetState?.privateContent?.loomexHumanInput
           || widgetState?.loomexHumanInput
           || widgetState;
+        if (candidate?.requests && typeof candidate.requests === "object") {
+          return candidate.requests[requestId] || null;
+        }
         return candidate?.requestId === requestId ? candidate : null;
       }
 
@@ -169,12 +168,10 @@
         try {
           const widgetState = widgetSavedState(requestId);
           if (widgetState) return widgetState;
-          const raw = window.localStorage?.getItem(stateKey(requestId))
-            || window.sessionStorage?.getItem(stateKey(requestId));
-          return raw ? JSON.parse(raw) : null;
         } catch {
           return null;
         }
+        return null;
       }
 
       function saveState() {
@@ -188,12 +185,21 @@
           submissionSucceeded,
         };
         try {
-          window.openai?.setWidgetState?.({ privateContent: { loomexHumanInput: state } });
-        } catch {}
-        try {
-          const serialized = JSON.stringify(state);
-          window.localStorage?.setItem(stateKey(activeRequestId), serialized);
-          window.sessionStorage?.setItem(stateKey(activeRequestId), serialized);
+          const widgetState = window.openai?.widgetState;
+          const current = widgetState?.privateContent?.loomexHumanInput
+            || widgetState?.loomexHumanInput;
+          const requests = current?.requests && typeof current.requests === "object"
+            ? { ...current.requests }
+            : {};
+          requests[activeRequestId] = state;
+          const privateContent = widgetState?.privateContent
+            && typeof widgetState.privateContent === "object"
+            ? { ...widgetState.privateContent }
+            : {};
+          privateContent.loomexHumanInput = { version: 2, requests };
+          window.openai?.setWidgetState?.({
+            privateContent,
+          });
         } catch {}
       }
 
@@ -351,6 +357,9 @@
             if (!disabled && input.value !== "other") void advance();
           }));
           form.querySelector(`#otherText-${currentIndex}`)?.addEventListener("input", () => {
+            saveDraft();
+          });
+          form.querySelector(`#otherText-${currentIndex}`)?.addEventListener("change", () => {
             saveDraft();
             saveState();
           });
