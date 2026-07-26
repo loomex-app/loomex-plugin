@@ -1280,7 +1280,7 @@ else:
                     "--marketplace-installer",
                     str(temp / "loomex-install-marketplace.sh"),
                     "--version",
-                    "0.1.33",
+                    "0.1.34",
                 ],
                 text=True,
                 capture_output=True,
@@ -1302,7 +1302,7 @@ else:
             shutil.copytree(ROOT / "plugin/loomex", source)
             plugin_json = source / ".codex-plugin/plugin.json"
             plugin = json.loads(plugin_json.read_text())
-            plugin["version"] = "0.1.33+codex.local-20260723-120000"
+            plugin["version"] = "0.1.34+codex.local-20260723-120000"
             plugin_json.write_text(json.dumps(plugin))
             artifacts = temp / "artifacts"
             self.write_artifacts(artifacts)
@@ -1320,7 +1320,7 @@ else:
             self.assertEqual(result.returncode, 0, result.stderr)
             manifest = json.loads((temp / "dist/loomex/packaging/runtime-manifest.json").read_text())
             self.assertEqual(manifest["pluginVersion"], plugin["version"])
-            self.assertEqual(manifest["runtimeVersion"], "0.1.33")
+            self.assertEqual(manifest["runtimeVersion"], "0.1.34")
             self.assertEqual(validate_runtime_integrity(temp / "dist/loomex"), [])
 
 
