@@ -318,6 +318,7 @@ def marketplace_entry(*, read_metadata=True):
         return {
             "kind": "local",
             "source": url,
+            "root": root,
             "commit": None,
             "configured_commit": None,
         }
@@ -340,6 +341,7 @@ def marketplace_entry(*, read_metadata=True):
     return {
         "kind": "git",
         "source": url,
+        "root": root,
         "commit": commit,
         "configured_commit": (
             commit
@@ -506,6 +508,63 @@ def install_local_archive(archive_path, payload, version):
     return str(root)
 
 
+def bundled_runtime_path(marketplace_root):
+    platform = sys.platform
+    machine = os.uname().machine
+    target = {
+        ("darwin", "arm64"): "darwin-arm64",
+        ("darwin", "aarch64"): "darwin-arm64",
+        ("darwin", "x86_64"): "darwin-x64",
+        ("linux", "aarch64"): "linux-arm64",
+        ("linux", "arm64"): "linux-arm64",
+        ("linux", "x86_64"): "linux-x64",
+    }.get((platform, machine))
+    if target is None:
+        fail(f"Loomex Runner auto-update is unsupported on {platform}/{machine}")
+    plugin_root = Path(marketplace_root) / "plugins" / "loomex"
+    candidate = plugin_root / "bin" / target / "loomex"
+    try:
+        mode = os.lstat(candidate).st_mode
+    except FileNotFoundError:
+        fail(f"marketplace archive is missing the bundled Runner for {target}")
+    if not stat.S_ISREG(mode) or stat.S_ISLNK(mode) or not (mode & 0o111):
+        fail("bundled Runner is not a regular executable file")
+    return plugin_root, candidate
+
+
+def update_durable_runner(marketplace_root, version):
+    plugin_root, runtime = bundled_runtime_path(marketplace_root)
+    environment = os.environ.copy()
+    environment["LOOMEX_PLUGIN_ROOT"] = str(plugin_root)
+    result = subprocess.run(
+        [
+            str(runtime),
+            "--json",
+            "--non-interactive",
+            "setup",
+            "install",
+            "--version",
+            version,
+            "--channel",
+            "stable",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=environment,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
+        fail(f"durable Runner update failed ({result.returncode}): {detail}")
+    try:
+        document = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        fail(f"durable Runner update returned invalid JSON: {error}")
+    if not isinstance(document, dict) or document.get("schemaVersion") != "loomex.cli.setupInstall/v1":
+        fail("durable Runner update returned an invalid setup result")
+    return document
+
+
 def verify_state(expected_marketplace, installed):
     current_marketplace = marketplace_entry()
     current_plugin = plugin_state()
@@ -583,6 +642,7 @@ if archive_path is not None:
         and old_plugin["enabled"]
     ):
         verify_state({"kind": "local", "source": local_source}, True)
+        update_durable_runner(local_source, sys.argv[1])
         sys.exit(0)
     try:
         if old_marketplace is not None:
@@ -592,6 +652,7 @@ if archive_path is not None:
         add_local_marketplace(local_source)
         codex_json("plugin", "add", PLUGIN_ID)
         verify_state({"kind": "local", "source": local_source}, True)
+        update_durable_runner(local_source, sys.argv[1])
     except Exception as original_error:
         try:
             restore(previous)

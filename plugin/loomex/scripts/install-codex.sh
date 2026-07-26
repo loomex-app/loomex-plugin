@@ -187,8 +187,10 @@ step "Verifying signed release assets"
   "$temporary/$marketplace_archive" >/dev/null
 step "Verified release signatures and provenance"
 
-# The versioned installer performs the only Codex mutation. It snapshots the
-# previous marketplace/plugin state and restores it if any install step fails.
+# The versioned installer performs the Codex marketplace mutation and then
+# installs or updates the durable Runner from the same verified archive. It
+# snapshots the previous marketplace/plugin state and restores it if any
+# install step fails; the Runner setup path has its own transaction rollback.
 (
   cd "$temporary"
   step "Installing the verified Loomex marketplace into Codex"
@@ -197,7 +199,7 @@ step "Verified release signatures and provenance"
     "./$installer" "$version" "$temporary/$marketplace_archive"
 )
 
-step "Installation complete: Loomex Codex plugin $version is installed and enabled"
+step "Installation complete: Loomex Codex plugin $version and matching durable Runner are installed"
 step "Restart Codex or open a new task, then ask for any Loomex workflow naturally"
 }
 
