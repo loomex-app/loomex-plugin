@@ -133,7 +133,9 @@
       let currentIndex = 0;
       let showingReview = false;
       let activeRequestId = null;
+      let activeStateScope = "";
       let submissionSucceeded = false;
+      const HUMAN_STATE_PREFIX = "loomex-human-input";
 
       function structuredData(value) {
         const structured = value?.structuredContent ?? value;
@@ -141,7 +143,7 @@
       }
 
       function toolOutput() {
-        return structuredData(window.openai?.toolOutput);
+        return window.openai?.toolOutput || {};
       }
 
       function normalizeRequest(output) {
@@ -151,6 +153,17 @@
           return data.humanRequests.find((request) => request?.status === "pending") || data.humanRequests[0] || data;
         }
         return data;
+      }
+
+      function envelopeRequestId(output) {
+        const structured = output?.structuredContent ?? output;
+        return String(structured?.meta?.requestId || "").trim();
+      }
+
+      function stateKey(requestId) {
+        return activeStateScope && requestId
+          ? `${HUMAN_STATE_PREFIX}:${activeStateScope}:${requestId}`
+          : null;
       }
 
       function widgetSavedState(requestId) {
@@ -168,22 +181,30 @@
         try {
           const widgetState = widgetSavedState(requestId);
           if (widgetState) return widgetState;
+          const scopedKey = stateKey(requestId);
+          const scopedRaw = scopedKey ? window.localStorage?.getItem(scopedKey) : null;
+          if (scopedRaw) return JSON.parse(scopedRaw);
         } catch {
           return null;
         }
         return null;
       }
 
-      function saveState() {
+      function saveState(syncWidget = true) {
         if (!activeRequestId) return;
         const state = {
-          version: 1,
+          version: 2,
           requestId: activeRequestId,
           answers,
           currentIndex,
           showingReview,
           submissionSucceeded,
         };
+        try {
+          const key = stateKey(activeRequestId);
+          if (key) window.localStorage?.setItem(key, JSON.stringify(state));
+        } catch {}
+        if (!syncWidget) return;
         try {
           const widgetState = window.openai?.widgetState;
           const current = widgetState?.privateContent?.loomexHumanInput
@@ -299,9 +320,12 @@
           return;
         }
         main.classList.remove("hidden");
-        const requestChanged = activeRequestId !== nextRequest?.id;
+        const nextScope = candidate?.id ? envelopeRequestId(output) : "";
+        const requestChanged = activeRequestId !== nextRequest?.id
+          || nextScope !== activeStateScope;
         if (requestChanged) {
           activeRequestId = nextRequest?.id || null;
+          activeStateScope = nextScope;
           const saved = readSavedState(activeRequestId);
           answers = saved?.answers || [];
           currentIndex = Number.isInteger(saved?.currentIndex) ? saved.currentIndex : 0;
@@ -358,6 +382,7 @@
           }));
           form.querySelector(`#otherText-${currentIndex}`)?.addEventListener("input", () => {
             saveDraft();
+            saveState(false);
           });
           form.querySelector(`#otherText-${currentIndex}`)?.addEventListener("change", () => {
             saveDraft();
@@ -539,7 +564,7 @@
 
       window.addEventListener("openai:set_globals", (event) => {
         const output = event.detail?.globals?.toolOutput;
-        render(structuredData(output || toolOutput()));
+        render(output || toolOutput());
       });
 
       window.addEventListener("message", (event) => {
