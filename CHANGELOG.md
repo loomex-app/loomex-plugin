@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.31
+
+- Keep `Other` drafts visible across widget rerenders.
+- Restore checkbox and radio selections after reopening the chat form.
+- Persist human-input form state through the Codex widget-state bridge.
+
 ## 0.1.30
 
 - Persist form progress and submitted workflow actions across widget reloads.
