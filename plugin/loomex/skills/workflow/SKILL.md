@@ -14,7 +14,7 @@ Browse and start only Loomex workflows with execution model `plugin`. Read [work
 - `loomex_workflow_list` renders a searchable ChatGPT UI table when supported. Use the table for browsing, then call `loomex_workflow_show` when the user needs details or when a workflow choice is ambiguous.
 - Use `loomex_workflow_show` when a workflow name collides, inputs are unclear, a version is selected, or local capabilities/approval points need explanation.
 - Before `loomex_workflow_run`, confirm workflow ID/version, selected project, exact binding, inputs, capabilities, and known approval points. Use a fresh `idempotencyKey` for a new run.
-- Treat the returned execution ID and status as authoritative. A queued or submitted response is not completion; hand off follow-up to the `runs` skill.
+- Treat the returned execution ID and status as authoritative. A queued or submitted response is not completion; continue with bounded `loomex_run_wait` calls and recover uncertain state with `loomex_run_get`.
 - Never pass credentials, tokens, or unrelated environment variables as inputs. Never execute workflow nodes with shell commands.
 
 If run input is ambiguous, stop and ask rather than guessing IDs, versions, or schema fields.

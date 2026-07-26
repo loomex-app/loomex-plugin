@@ -11,10 +11,11 @@ inside the Codex task.
 
 ## Route the request
 
-- Use the focused child skill when the request is primarily about one area:
-  `setup`, `scope`, `workflow`, `runs`, or `human`. The child skills share this
-  skill's Loomex MCP contract and safety rules; do not duplicate execution in
-  shell commands or bypass the Runner.
+- Use the focused `setup` or `workflow` child skill when the request is
+  primarily about one of those areas. Handle scope, run follow-up, human input,
+  approvals, and agent tasks through this main skill and its references. All
+  skills share the same Loomex MCP contract and safety rules; do not duplicate
+  execution in shell commands or bypass the Runner.
 - Setup, upgrade, repair, or uninstall/rollback: read
   [setup-and-auth.md](references/setup-and-auth.md).
 - Organization, project, or local workspace binding: read
