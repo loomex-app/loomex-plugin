@@ -157,8 +157,18 @@
         return `loomex-human-input:${requestId}`;
       }
 
+      function widgetSavedState(requestId) {
+        const widgetState = window.openai?.widgetState;
+        const candidate = widgetState?.privateContent?.loomexHumanInput
+          || widgetState?.loomexHumanInput
+          || widgetState;
+        return candidate?.requestId === requestId ? candidate : null;
+      }
+
       function readSavedState(requestId) {
         try {
+          const widgetState = widgetSavedState(requestId);
+          if (widgetState) return widgetState;
           const raw = window.localStorage?.getItem(stateKey(requestId))
             || window.sessionStorage?.getItem(stateKey(requestId));
           return raw ? JSON.parse(raw) : null;
@@ -169,15 +179,21 @@
 
       function saveState() {
         if (!activeRequestId) return;
+        const state = {
+          version: 1,
+          requestId: activeRequestId,
+          answers,
+          currentIndex,
+          showingReview,
+          submissionSucceeded,
+        };
         try {
-          const state = JSON.stringify({
-            answers,
-            currentIndex,
-            showingReview,
-            submissionSucceeded,
-          });
-          window.localStorage?.setItem(stateKey(activeRequestId), state);
-          window.sessionStorage?.setItem(stateKey(activeRequestId), state);
+          window.openai?.setWidgetState?.({ privateContent: { loomexHumanInput: state } });
+        } catch {}
+        try {
+          const serialized = JSON.stringify(state);
+          window.localStorage?.setItem(stateKey(activeRequestId), serialized);
+          window.sessionStorage?.setItem(stateKey(activeRequestId), serialized);
         } catch {}
       }
 
@@ -330,10 +346,14 @@
           restoreAnswer(question, currentIndex);
           form.querySelectorAll(`input[name="value-${currentIndex}"]`).forEach((input) => input.addEventListener("change", () => {
             updateOtherInput(question, currentIndex, disabled);
+            saveDraft();
             saveState();
             if (!disabled && input.value !== "other") void advance();
           }));
-          form.querySelector(`#otherText-${currentIndex}`)?.addEventListener("input", saveState);
+          form.querySelector(`#otherText-${currentIndex}`)?.addEventListener("input", () => {
+            saveDraft();
+            saveState();
+          });
           updateOtherInput(question, currentIndex, disabled);
           if (questions.length === 1 && questionType(question) === "text") {
             form.querySelector(`#answer-${currentIndex}`)?.addEventListener("keydown", (event) => {
@@ -452,6 +472,12 @@
         saveState();
       }
 
+      function saveDraft() {
+        const question = questions[currentIndex];
+        if (!question) return;
+        answers[currentIndex] = draftAnswerForQuestion(question, currentIndex);
+      }
+
       async function advance() {
         try {
           captureCurrent();
@@ -477,10 +503,26 @@
           if (selected === undefined) throw new Error("Select true or false.");
           return { value: selected === "true" };
         }
+        const draft = draftAnswerForQuestion(question, index);
+        const selected = type === "multi_select" ? draft.values : [draft.value];
+        const otherText = draft.otherText || "";
+        if (!selected.filter((value) => value !== undefined).length) throw new Error(type === "multi_select" ? "Select at least one option." : "Select one option.");
+        if (selected.includes("other") && !otherText) throw new Error("Other option requires text.");
+        return type === "multi_select" ? { values: selected, otherText } : { value: selected[0], otherText };
+      }
+
+      function draftAnswerForQuestion(question, index) {
+        const type = questionType(question);
+        const name = `value-${index}`;
+        if (type === "text") {
+          return { value: document.querySelector(`#answer-${index}`)?.value.trim() || "" };
+        }
+        if (type === "boolean") {
+          const selected = document.querySelector(`input[name="${name}"]:checked`)?.value;
+          return selected === undefined ? {} : { value: selected === "true" };
+        }
         const selected = [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
         const otherText = document.querySelector(`#otherText-${index}`)?.value.trim() || "";
-        if (!selected.length) throw new Error(type === "multi_select" ? "Select at least one option." : "Select one option.");
-        if (selected.includes("other") && !otherText) throw new Error("Other option requires text.");
         return type === "multi_select" ? { values: selected, otherText } : { value: selected[0], otherText };
       }
 
