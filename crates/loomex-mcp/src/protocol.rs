@@ -531,6 +531,9 @@ mod tests {
         assert!(html.contains("draftAnswerForQuestion"));
         assert!(html.contains("window.openai?.widgetState"));
         assert!(html.contains("window.openai?.setWidgetState"));
+        assert!(html.contains("privateContent.loomexHumanInput = { version: 2, requests }"));
+        assert!(!html.contains("window.localStorage"));
+        assert!(!html.contains("window.sessionStorage"));
         assert!(html.contains("form.requestSubmit"));
         assert!(html.contains("padding: 64px 72px 80px"));
         assert!(html.contains("submitted .actions"));
@@ -565,6 +568,9 @@ mod tests {
         assert!(html.contains("loomex_workflow_run"));
         assert!(html.contains("sendFollowUpMessage"));
         assert!(html.contains("ui/notifications/tool-result"));
+        assert!(html.contains("privateContent.loomexList = { version: 1, actions: state }"));
+        assert!(html.contains("window.openai?.setWidgetState"));
+        assert!(!html.contains("window.localStorage"));
         assert!(html.contains("nodeCount"));
         assert!(html.contains("executionCount"));
         assert!(html.contains("padding: 64px 72px 80px"));

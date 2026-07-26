@@ -82,18 +82,25 @@
       const bodyEl = document.querySelector("#body");
       let rows = [];
       let listKind = "items";
-      const ACTION_STATE_KEY = "loomex-list-action-state";
+      let actionStateCache = null;
+
+      function widgetActionState() {
+        const widgetState = window.openai?.widgetState;
+        const candidate = widgetState?.privateContent?.loomexList
+          || widgetState?.loomexList;
+        return candidate?.actions && typeof candidate.actions === "object"
+          ? candidate.actions
+          : {};
+      }
 
       function actionStateId(toolName, id) {
         return `${toolName}:${id}`;
       }
 
       function readActionState() {
-        try {
-          return JSON.parse(window.localStorage?.getItem(ACTION_STATE_KEY) || "{}");
-        } catch {
-          return {};
-        }
+        if (actionStateCache) return actionStateCache;
+        actionStateCache = widgetActionState();
+        return actionStateCache;
       }
 
       function actionState(toolName, id) {
@@ -101,10 +108,19 @@
       }
 
       function saveActionState(toolName, id, label) {
+        const state = { ...readActionState() };
+        state[actionStateId(toolName, id)] = { label, updatedAt: Date.now() };
+        actionStateCache = state;
         try {
-          const state = readActionState();
-          state[actionStateId(toolName, id)] = { label, updatedAt: Date.now() };
-          window.localStorage?.setItem(ACTION_STATE_KEY, JSON.stringify(state));
+          const widgetState = window.openai?.widgetState;
+          const privateContent = widgetState?.privateContent
+            && typeof widgetState.privateContent === "object"
+            ? { ...widgetState.privateContent }
+            : {};
+          privateContent.loomexList = { version: 1, actions: state };
+          window.openai?.setWidgetState?.({
+            privateContent,
+          });
         } catch {}
       }
 
