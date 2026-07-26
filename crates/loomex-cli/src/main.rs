@@ -10651,19 +10651,19 @@ mod tests {
     fn setup_install_request_requires_a_supported_version_and_channel() {
         let request = SetupInstallRequest::parse(&[
             "--version".to_string(),
-            "0.1.31".to_string(),
+            "0.1.32".to_string(),
             "--channel".to_string(),
             "stable".to_string(),
         ])
         .unwrap();
-        assert_eq!(request.version, "0.1.31");
+        assert_eq!(request.version, "0.1.32");
         assert_eq!(request.channel, "stable");
         assert!(SetupInstallRequest::parse(&[])
             .unwrap_err()
             .contains("VERSION_REQUIRED"));
         assert!(SetupInstallRequest::parse(&[
             "--version".to_string(),
-            "0.1.31".to_string(),
+            "0.1.32".to_string(),
             "--channel".to_string(),
             "nightly".to_string(),
         ])
