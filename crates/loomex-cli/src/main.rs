@@ -1988,9 +1988,12 @@ fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<Stri
             .and_then(Value::as_bool)
             == Some(true);
     if already_current {
+        let refreshed = request.refresh_agent_executables
+            && refresh_agent_executables_for_install(&cli_config_path())?;
         return Ok(json!({
             "schemaVersion": "loomex.cli.setupInstall/v1",
             "updated": false,
+            "agentExecutablesRefreshed": refreshed,
             "version": request.version,
             "channel": request.channel,
             "setupStatus": status,
@@ -2020,6 +2023,8 @@ fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<Stri
         }),
         options,
     )?;
+    let refreshed = request.refresh_agent_executables
+        && refresh_agent_executables_for_install(&cli_config_path())?;
     Ok(json!({
         "schemaVersion": "loomex.cli.setupInstall/v1",
         "updated": true,
@@ -2027,8 +2032,19 @@ fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<Stri
         "channel": request.channel,
         "plan": plan,
         "apply": applied,
+        "agentExecutablesRefreshed": refreshed,
     })
     .to_string())
+}
+
+fn refresh_agent_executables_for_install(config_path: &Path) -> Result<bool, String> {
+    AgentExecutableConfig::refresh_and_save_from_interactive_path(
+        &agent_executable_config_path(config_path),
+        env::var_os("PATH").as_deref(),
+        current_epoch_ms()?,
+    )
+    .map(|_| true)
+    .map_err(format_core_error)
 }
 
 fn run_runner(args: &[String], options: &GlobalOptions) -> Result<String, String> {
@@ -12668,6 +12684,7 @@ struct ParsedArgs {
 struct SetupInstallRequest {
     version: String,
     channel: String,
+    refresh_agent_executables: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12725,6 +12742,7 @@ impl SetupInstallRequest {
     fn parse(args: &[String]) -> Result<Self, String> {
         let mut version = None;
         let mut channel = "stable".to_string();
+        let mut refresh_agent_executables = false;
         let mut index = 0;
         while index < args.len() {
             match args[index].as_str() {
@@ -12736,6 +12754,7 @@ impl SetupInstallRequest {
                     index += 1;
                     channel = required_value(args, index, "--channel")?;
                 }
+                "--refresh-agent-executables" => refresh_agent_executables = true,
                 "--help" | "-h" => return Err(SETUP_HELP.to_string()),
                 value => {
                     return Err(format!(
@@ -12753,7 +12772,11 @@ impl SetupInstallRequest {
                 "PLUGIN_SETUP_INSTALL_CHANNEL_INVALID: channel must be stable or beta".to_string(),
             );
         }
-        Ok(Self { version, channel })
+        Ok(Self {
+            version,
+            channel,
+            refresh_agent_executables,
+        })
     }
 }
 
@@ -12909,7 +12932,7 @@ usage:
   loomex profile list|current|use NAME
   loomex org list|select ORG_ID
   loomex project list|select PROJECT_ID
-  loomex setup install --version VERSION [--channel stable|beta]
+  loomex setup install --version VERSION [--channel stable|beta] [--refresh-agent-executables]
   loomex bind .|--project PROJECT_ID --workspace PATH|list|revoke BINDING_ID
   loomex workflow list|show WORKFLOW_ID|run WORKFLOW_ID --input JSON [--follow]
   loomex runner start|stop|status|logs|doctor|service|release|ops
@@ -12937,7 +12960,7 @@ usage:
 
 const SETUP_HELP: &str = "\
 usage:
-  loomex setup install --version VERSION [--channel stable|beta] [--json --non-interactive]
+  loomex setup install --version VERSION [--channel stable|beta] [--refresh-agent-executables] [--json --non-interactive]
   loomex setup agents refresh --confirm [--provider codex|claude|agy --path ABSOLUTE_CANONICAL_PATH] [--json]";
 
 const PROFILE_HELP: &str = "\
@@ -13992,6 +14015,16 @@ mod tests {
         .unwrap();
         assert_eq!(request.version, "0.2.0");
         assert_eq!(request.channel, "stable");
+        assert!(!request.refresh_agent_executables);
+        assert!(
+            SetupInstallRequest::parse(&[
+                "--version".to_string(),
+                "0.2.0".to_string(),
+                "--refresh-agent-executables".to_string(),
+            ])
+            .unwrap()
+            .refresh_agent_executables
+        );
         assert!(SetupInstallRequest::parse(&[])
             .unwrap_err()
             .contains("VERSION_REQUIRED"));

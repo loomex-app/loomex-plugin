@@ -547,6 +547,7 @@ def update_durable_runner(marketplace_root, version):
             version,
             "--channel",
             "stable",
+            "--refresh-agent-executables",
         ],
         text=True,
         capture_output=True,

@@ -809,6 +809,37 @@ fn process_runner_bounds_output_and_redacts_diagnostics() {
 }
 
 #[test]
+fn process_runner_launches_node_shebang_cli_without_service_path() {
+    let temp = TempDir::new();
+    let package_bin = temp.0.join("lib/node_modules/codex/bin");
+    fs::create_dir_all(&package_bin).unwrap();
+    fs::create_dir_all(temp.0.join("bin")).unwrap();
+    let node = temp.script(
+        "bin/node",
+        "script=$1
+shift
+printf 'node=%s args=%s\n' \"$script\" \"$*\"",
+    );
+    let codex = package_bin.join("codex.js");
+    fs::write(&codex, "#!/usr/bin/env node\n").unwrap();
+    let mut permissions = fs::metadata(&codex).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&codex, permissions).unwrap();
+
+    let output = ProcessRunner::new(["HOME", "PATH"])
+        .run(
+            &CommandSpec::new(&codex, ["--version"]),
+            &ProcessLimits::default(),
+            &CancellationToken::default(),
+        )
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.contains("codex.js"));
+    assert!(output.stdout.contains("--version"));
+    assert!(node.exists());
+}
+
+#[test]
 fn process_runner_times_out_and_cancels_process_groups() {
     let temp = TempDir::new();
     let script = temp.script("slow", "sleep 10");
