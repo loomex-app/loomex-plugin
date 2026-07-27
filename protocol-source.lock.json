@@ -54,13 +54,13 @@
   },
   "schemaVersion": "loomex.protocol-source-lock/v1",
   "source": {
-    "commit": null,
-    "publicationBlocker": "loomex-protocol v0.2.0 is not available from a clean, tagged, repository-verified source commit. Commit the authoritative contract, merge it, and create tag v0.2.0 before recording release provenance.",
-    "publicationStatus": "blocked",
+    "commit": "f598245116e304b3fd38530835a74b198b416727",
+    "publicationBlocker": null,
+    "publicationStatus": "published",
     "repository": "https://github.com/loomex-app/loomex-protocol",
     "repositoryVerified": true,
-    "tag": null,
-    "workingTreeBaseCommit": "1a9783cf449e6cf9f6877e4eadb1f7f1ee4bbe33",
-    "workingTreeDirty": true
+    "tag": "v0.2.0",
+    "workingTreeBaseCommit": "f598245116e304b3fd38530835a74b198b416727",
+    "workingTreeDirty": false
   }
 }
