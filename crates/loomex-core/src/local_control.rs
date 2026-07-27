@@ -450,8 +450,9 @@ impl<C: ManagementApiClient + Clone + Send + 'static> LocalControlDispatcher<C> 
             }
             "agent.respond" => {
                 let request_id = required_string(params, "requestId")?;
-                self.validate_legacy_agent_response_request(request_id)?;
-                let payload = human_resolution_payload("agent.respond", params)?;
+                let request = self.validate_legacy_agent_response_request(request_id)?;
+                let mut payload = human_resolution_payload("agent.respond", params)?;
+                enrich_legacy_agent_response_identity(&mut payload, &request)?;
                 self.with_client(|client| {
                     human_resolution_value(client.resolve_human_request_idempotent(
                         &self.credential,
@@ -1453,7 +1454,10 @@ impl<C: ManagementApiClient + Clone + Send + 'static> LocalControlDispatcher<C> 
         })
     }
 
-    fn validate_legacy_agent_response_request(&self, request_id: &str) -> CoreResult<()> {
+    fn validate_legacy_agent_response_request(
+        &self,
+        request_id: &str,
+    ) -> CoreResult<crate::management::HumanRequestSummary> {
         if self.legacy_agent_task_mode == LegacyAgentTaskMode::Disabled {
             return Err(CoreError::new(
                 "AGENT_LEGACY_TASKS_DISABLED",
@@ -1506,7 +1510,7 @@ impl<C: ManagementApiClient + Clone + Send + 'static> LocalControlDispatcher<C> 
             ))
         })?;
         match classify_agent_task_schema(&summary.extra) {
-            AgentTaskSchemaKind::V1 => Ok(()),
+            AgentTaskSchemaKind::V1 => Ok(summary),
             AgentTaskSchemaKind::V2 => Err(CoreError::new(
                 "AGENT_LEGACY_RESPONSE_FORBIDDEN",
                 "legacy agent.respond is allowed only for plugin agent task v1",
@@ -3432,6 +3436,49 @@ fn human_resolution_payload(method: &str, params: &Value) -> CoreResult<Value> {
         "human"
     };
     Ok(json!({"answer": response, "requestType": request_type}))
+}
+
+/// Legacy host sub-agents return only their result. Bind that result to the
+/// authoritative attempt fetched from Loomex before resolving the request.
+/// This prevents a generated sub-agent session id from being mistaken for the
+/// durable attempt identity required by the Backend.
+fn enrich_legacy_agent_response_identity(
+    payload: &mut Value,
+    request: &crate::management::HumanRequestSummary,
+) -> CoreResult<()> {
+    let Some(attempt) = request
+        .extra
+        .get("agentAttempt")
+        .or_else(|| request.extra.get("agent_attempt"))
+        .and_then(Value::as_object)
+    else {
+        return Ok(());
+    };
+    let answer = payload
+        .get_mut("answer")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            CoreError::new("AGENT_RESPONSE_INVALID", "agent response must be an object")
+        })?;
+    let execution_id = request
+        .execution
+        .as_ref()
+        .map(|execution| execution.id.as_str())
+        .unwrap_or_default();
+    answer.insert(
+        "executionId".to_string(),
+        Value::String(execution_id.to_string()),
+    );
+    for key in ["id", "idempotencyKey", "payloadDigest"] {
+        if let Some(value) = attempt.get(key).cloned() {
+            let output_key = if key == "id" { "attemptId" } else { key };
+            answer.insert(output_key.to_string(), value);
+        }
+    }
+    if let Some(binding) = attempt.get("binding").cloned() {
+        answer.insert("binding".to_string(), binding);
+    }
+    Ok(())
 }
 
 fn is_retryable_code(code: &str) -> bool {
