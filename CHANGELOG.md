@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Refresh local agent executable discovery during verified installer updates.
+- Launch JavaScript-based Codex CLIs with their trusted local Node runtime when
+  the Runner service has a minimal launchd PATH.
+- Improve installer diagnostics and local runtime setup guidance.
+
 ## 0.2.0
 
 - Add the durable local agent runtime for exact, automatic, and explicitly

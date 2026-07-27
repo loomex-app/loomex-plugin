@@ -1,6 +1,6 @@
 {
   "name": "loomex",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Run durable Loomex workflows and local multi-model agent tasks from natural Codex requests.",
   "author": {
     "name": "Loomex"
