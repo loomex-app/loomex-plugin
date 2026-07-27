@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "loomex.agent-process-dispatch.v2",
+  "executionId": "execution_01",
+  "attemptId": "attempt_02",
+  "attemptNumber": 2,
+  "retryKind": "resume_from_checkpoint",
+  "fromAttemptId": "attempt_01",
+  "delivery": {
+    "route": "runner_job",
+    "runnerJobId": "runner_job_02",
+    "leaseTargetRunnerId": "runner_local_01"
+  },
+  "taskIdempotencyKey": "loomex-agent-attempt-v2:29beb38bc238f5980f0268b6c9e69e1669f53a33dc56778ad996bfe795804f37",
+  "deliveryIdempotencyKey": "loomex-agent-delivery-v2:3d0b7c7f79c6c116e74370317acf5ee2ac1ed8896930e59558099cac77c2fb51",
+  "payloadDigest": "sha256:6e791754a430fe94cb48485eb6f65b49c5956f501456bba3c5418ecf5fad50c7",
+  "task": {
+    "schemaVersion": "loomex.plugin-agent-task/v2",
+    "requestId": "req_01JAGENTV2",
+    "idempotencyKey": "workflow-run-42:node-agent:attempt-1",
+    "binding": {
+      "workspaceBindingId": "binding_loomex_workspace_01",
+      "workspaceBindingGeneration": 7,
+      "runnerId": "runner_local_01"
+    },
+    "selection": {
+      "primary": {
+        "mode": "exact",
+        "target": {
+          "executor": "codex_cli",
+          "provider": "open_ai",
+          "modelKey": "openai/gpt-5.2",
+          "providerModelId": "gpt-5.2"
+        }
+      },
+      "fallback": {
+        "policy": "none"
+      }
+    },
+    "prompt": "Return a concise assessment.",
+    "outputSchema": {
+      "type": "object",
+      "required": [
+        "assessment"
+      ],
+      "properties": {
+        "assessment": {
+          "type": "string"
+        }
+      }
+    },
+    "requirements": {
+      "structuredOutput": true,
+      "sessionResume": true,
+      "cancellation": true,
+      "reasoningEffort": "high"
+    },
+    "continuation": {
+      "schemaVersion": "loomex.agent-session.v2",
+      "checkpointId": "checkpoint_01",
+      "sequence": 3,
+      "sessionId": "session_01",
+      "providerSessionId": "provider_session_01",
+      "binding": {
+        "workspaceBindingId": "binding_loomex_workspace_01",
+        "workspaceBindingGeneration": 7,
+        "runnerId": "runner_local_01"
+      },
+      "selectionIndex": 0,
+      "executor": "codex_cli",
+      "provider": "open_ai",
+      "modelKey": "openai/gpt-5.2",
+      "providerModelId": "gpt-5.2"
+    }
+  }
+}

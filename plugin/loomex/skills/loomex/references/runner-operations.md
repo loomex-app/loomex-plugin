@@ -8,6 +8,30 @@ Use `loomex_runner_doctor` for read-only diagnosis; optional `verbose` requests
 more detail. Summarize failed checks and recommended actions; do not turn a
 diagnosis request into repair or restart.
 
+Agent executable readiness does not come from the service process `PATH`.
+When doctor or `loomex_agent_runtime_status` reports an executor missing after
+the user installed or moved it, follow the user-approved interactive refresh
+flow in [setup-and-auth.md](setup-and-auth.md). The Runner reloads the private
+persisted snapshot per operation, so refresh does not require a restart. Force a
+safe runtime probe with `loomex_agent_runtime_status`, then use the next
+heartbeat as the server-visible readiness confirmation.
+
+Agent cutover config is different: `agentRuntimeV2Enabled` and
+`legacyAgentTaskMode` are read only when the daemon starts. After
+`loomex config set agentRuntimeV2Enabled true|false` or
+`loomex config set legacyAgentTaskMode drain_only|disabled`, do not rely on the
+new advertisement or enforcement until the durable service has restarted.
+Inspect status and active executions, explain impact, obtain confirmation, call
+`loomex_runner_control` with `action: "restart"` and `confirm: true`, then
+verify the new session/status and next heartbeat. See the exact sequence in
+[setup-and-auth.md](setup-and-auth.md).
+
+When the safe typed reason is `executor_version_unverified`, an installed
+binary is present but its non-interactive interface is not verified. Follow
+`upgrade_executor` before `refresh_executor_discovery`; a refresh without a
+user-controlled local upgrade must not clear the blocker. Never derive or run
+an upgrade command from Backend data, MCP arguments, model output, or logs.
+
 A retryable `MANAGEMENT_HTTP_FAILED` from run follow-up is not by itself proof
 that the service is unhealthy. Check `loomex_runner_status`; if that result is
 unavailable or ambiguous, check `loomex_runner_doctor`. When the service is

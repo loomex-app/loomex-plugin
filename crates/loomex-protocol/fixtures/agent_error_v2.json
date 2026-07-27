@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "loomex.agent-error.v2",
+  "code": "model_not_available",
+  "category": "availability",
+  "message": "The selected model is not available to this Codex user.",
+  "retry": "user_action_required",
+  "remediation": [
+    "select_different_model"
+  ],
+  "context": {
+    "executor": "codex_cli",
+    "provider": "open_ai",
+    "requestedModelKey": "openai/gpt-5.2",
+    "requestedProviderModelId": "gpt-5.2",
+    "resolvedModelKey": "openai/gpt-5.2",
+    "resolvedProviderModelId": "gpt-5.2"
+  }
+}

@@ -60,12 +60,28 @@ Read every reference needed for the user's request before calling its tools.
    capabilities when the workflow or parameters are ambiguous.
 8. Treat the ID returned by `loomex_workflow_run` as authoritative. Follow it
    with `loomex_run_wait`; do not run shell commands to imitate its nodes.
-9. When a wait returns a plugin agent task, execute it on the local plugin host
-   according to its server-managed `agentTask.sessionDirective`, then submit
-   the result and actual `agentSession` with `loomex_agent_task_respond`.
-   `spawn` requires a new sub-agent; `resume` requires the exact prior session
-   ID and must never fall back to a replacement. Do not let the server AI
-   substitute for this work.
+9. When a wait returns a plugin agent task, inspect its schema version. For
+   `loomex.plugin-agent-task/v2`, use the Runner-owned local agent runtime:
+   inspect readiness with `loomex_agent_runtime_status`. Let the daemon lease a
+   Backend-owned RunnerJob; MCP must not spawn or stop that local process.
+   `loomex_agent_task_resume` and `loomex_agent_task_cancel` submit
+   authenticated user control requests only, using a fresh
+   `operationIdempotencyKey` that is separate from all task and delivery keys.
+   Backend decides whether a successor is fresh-after-remediation or an exact
+   checkpoint/session resume, and the daemon owns cancellation
+   directive/ack/reclaim. Use `loomex_agent_task_execute` only for a
+   direct-control task. Never copy its prompt, model, command, paths,
+   environment, credentials, or idempotency keys into another tool field.
+   Exact model selection must fail closed; automatic selection and ordered
+   fallback are allowed only when explicitly encoded in the task. Route durable
+   session checkpoints through `loomex_agent_task_checkpoint`.
+   For legacy v1 tasks, keep using
+   `loomex_agent_task_list` and `loomex_agent_task_respond` with the exact
+   server-managed `sessionDirective`, but only when list classification is
+   `legacy_drain`; `disabled` and `unsupported` are not executable. A failed
+   resume must never spawn a replacement, a v2-owned request must never use the
+   legacy response path, and drain mode must not create new v1 work. Do not let
+   server AI substitute for local plugin execution.
 10. When a wait returns a typed human request, route by `inputSpec.inputType`:
    collect `text` in the Codex chat and submit it with `loomex_human_respond`;
    call `loomex_human_open` for `boolean`, `single_select`/`radio`, and
@@ -109,7 +125,9 @@ Read every reference needed for the user's request before calling its tools.
   `loomex_human_respond`
 - Approvals: `loomex_approval_list`, `loomex_approval_decide`
 - Plugin agent tasks: `loomex_agent_task_list`,
-  `loomex_agent_task_respond`
+  `loomex_agent_task_respond`, `loomex_agent_runtime_status`,
+  `loomex_agent_task_execute`, `loomex_agent_task_resume`,
+  `loomex_agent_task_cancel`, `loomex_agent_task_checkpoint`
 - Runner: `loomex_runner_status`, `loomex_runner_control`,
   `loomex_runner_doctor`, `loomex_runner_logs`
 

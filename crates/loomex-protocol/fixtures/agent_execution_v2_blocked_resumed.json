@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "loomex.agent-execution.v2",
+  "executionId": "execution_01",
+  "requestId": "req_01JAGENTV2",
+  "idempotencyKey": "workflow-run-42:node-agent:attempt-1",
+  "sequence": 5,
+  "binding": {
+    "workspaceBindingId": "binding_loomex_workspace_01",
+    "workspaceBindingGeneration": 7,
+    "runnerId": "runner_local_01"
+  },
+  "state": "running",
+  "activeAttemptId": "attempt_02",
+  "attempts": [
+    {
+      "attemptId": "attempt_01",
+      "attemptNumber": 1,
+      "taskIdempotencyKey": "loomex-agent-attempt-v2:4964b29d5b9db3debba337b6b6b6028164ff4a1345417a64407fefe5559915b8",
+      "deliveryIdempotencyKey": "loomex-agent-delivery-v2:f131485b376d57bfb6b4e798bab5077801f522c1a0e76f6f54058e6a2dddf657",
+      "payloadDigest": "sha256:dcb768e86d66c93fb0f03a379bf7c985b4b6b659b88ebb509f3cb43f81f23be7",
+      "state": "blocked",
+      "startedSequence": 1,
+      "finishedSequence": 4,
+      "delivery": {
+        "route": "runner_job",
+        "runnerJobId": "runner_job_01",
+        "leaseTargetRunnerId": "runner_local_01"
+      },
+      "selectionIndex": 0,
+      "executor": "codex_cli",
+      "provider": "open_ai",
+      "requestedModelKey": "openai/gpt-5.2",
+      "requestedProviderModelId": "gpt-5.2",
+      "resolvedModelKey": "openai/gpt-5.2",
+      "resolvedProviderModelId": "gpt-5.2",
+      "startedAt": "2026-07-26T10:31:00Z",
+      "finishedAt": "2026-07-26T10:31:12Z",
+      "session": {
+        "schemaVersion": "loomex.agent-session.v2",
+        "checkpointId": "checkpoint_01",
+        "sequence": 3,
+        "sessionId": "session_01",
+        "providerSessionId": "provider_session_01",
+        "binding": {
+          "workspaceBindingId": "binding_loomex_workspace_01",
+          "workspaceBindingGeneration": 7,
+          "runnerId": "runner_local_01"
+        },
+        "executionId": "execution_01",
+        "attemptId": "attempt_01",
+        "selectionIndex": 0,
+        "executor": "codex_cli",
+        "provider": "open_ai",
+        "modelKey": "openai/gpt-5.2",
+        "providerModelId": "gpt-5.2",
+        "state": "suspended",
+        "recordedAt": "2026-07-26T10:31:12Z"
+      },
+      "error": {
+        "schemaVersion": "loomex.agent-error.v2",
+        "code": "provider_not_authenticated",
+        "category": "authentication",
+        "message": "Codex authentication is no longer valid.",
+        "retry": "user_action_required",
+        "remediation": [
+          "authenticate",
+          "resume_session"
+        ],
+        "context": {
+          "executor": "codex_cli",
+          "provider": "open_ai",
+          "requestedModelKey": "openai/gpt-5.2",
+          "requestedProviderModelId": "gpt-5.2",
+          "resolvedModelKey": "openai/gpt-5.2",
+          "resolvedProviderModelId": "gpt-5.2",
+          "executionId": "execution_01",
+          "attemptId": "attempt_01",
+          "sessionId": "session_01"
+        }
+      }
+    },
+    {
+      "attemptId": "attempt_02",
+      "attemptNumber": 2,
+      "taskIdempotencyKey": "loomex-agent-attempt-v2:29beb38bc238f5980f0268b6c9e69e1669f53a33dc56778ad996bfe795804f37",
+      "deliveryIdempotencyKey": "loomex-agent-delivery-v2:3d0b7c7f79c6c116e74370317acf5ee2ac1ed8896930e59558099cac77c2fb51",
+      "payloadDigest": "sha256:6e791754a430fe94cb48485eb6f65b49c5956f501456bba3c5418ecf5fad50c7",
+      "state": "running",
+      "startedSequence": 5,
+      "delivery": {
+        "route": "runner_job",
+        "runnerJobId": "runner_job_02",
+        "leaseTargetRunnerId": "runner_local_01"
+      },
+      "selectionIndex": 0,
+      "executor": "codex_cli",
+      "provider": "open_ai",
+      "requestedModelKey": "openai/gpt-5.2",
+      "requestedProviderModelId": "gpt-5.2",
+      "resolvedModelKey": "openai/gpt-5.2",
+      "resolvedProviderModelId": "gpt-5.2",
+      "startedAt": "2026-07-26T10:32:00Z",
+      "retry": {
+        "retryKind": "resume_from_checkpoint",
+        "fromAttemptId": "attempt_01",
+        "continuation": {
+          "schemaVersion": "loomex.agent-session.v2",
+          "checkpointId": "checkpoint_01",
+          "sequence": 3,
+          "sessionId": "session_01",
+          "providerSessionId": "provider_session_01",
+          "binding": {
+            "workspaceBindingId": "binding_loomex_workspace_01",
+            "workspaceBindingGeneration": 7,
+            "runnerId": "runner_local_01"
+          },
+          "selectionIndex": 0,
+          "executor": "codex_cli",
+          "provider": "open_ai",
+          "modelKey": "openai/gpt-5.2",
+          "providerModelId": "gpt-5.2"
+        }
+      }
+    }
+  ],
+  "createdAt": "2026-07-26T10:30:59Z",
+  "startedAt": "2026-07-26T10:31:00Z",
+  "updatedAt": "2026-07-26T10:32:00Z"
+}

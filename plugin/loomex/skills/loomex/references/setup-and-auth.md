@@ -47,6 +47,114 @@ rollback as successful until the returned health state is healthy.
 The initial setup call must finish before the user closes Codex. After the
 service is healthy, long-running workflow execution no longer depends on Codex.
 
+## Refresh local agent executables
+
+Codex and other GUI-launched applications commonly inherit a smaller `PATH`
+than the user's interactive terminal. The durable Runner deliberately never
+searches its service `PATH`, and neither the Backend nor an MCP/plugin-control
+request may supply an executable path. A CLI installed or moved after Loomex
+setup therefore requires an explicit local refresh from a terminal owned by the
+user.
+
+`loomex_setup_apply` creates an initial executable snapshot only when
+`agent-executables.json` does not exist. A repeated setup/apply, repair, or
+plugin-control call preserves the existing file and never refreshes or
+overwrites it from that process's `PATH`. After the initial snapshot, only the
+local interactive refresh command below may change executable discovery.
+
+If a typed runtime error reports `executor_version_unverified`, follow its
+ordered remediation exactly: `upgrade_executor`, then
+`refresh_executor_discovery`. The upgrade happens through the selected
+executor's trusted user-local installer or package manager, under the user's
+control. Loomex does not accept or construct a remote upgrade command, and
+Backend, workflow, MCP, model output, and daemon state cannot choose an
+installer or executable path. Do not skip directly to refresh: refreshing an
+unchanged incompatible binary cannot establish compatibility.
+
+After the user confirms the local upgrade completed, run the refresh command
+below. Then call `loomex_agent_runtime_status` and wait for the next heartbeat
+before retrying the blocked task. Do not claim success from the installer exit
+alone; the new executable must pass the safe local probe.
+
+Ask the user to review and run the local interactive command:
+
+```bash
+loomex setup agents refresh --confirm
+```
+
+This captures only the `PATH` of that user-invoked process and considers the
+closed allowlist `codex`, `claude`, and `agy`. It does not inspect the daemon's
+environment and never treats a legacy Gemini executable as `agy`. The
+`--confirm` flag approves the local discovery and private persistence; it is
+not authorization for the Backend to select paths.
+
+When the executable is outside that interactive `PATH`, the user may approve
+one exact provider/path pair:
+
+```bash
+loomex setup agents refresh --confirm \
+  --provider codex|claude|agy \
+  --path ABSOLUTE_CANONICAL_PATH
+```
+
+`--provider` and `--path` must appear together; otherwise the command returns
+the typed `AGENT_EXECUTABLE_REFRESH_PATH_PAIR_REQUIRED` error. The path must be
+local, absolute, canonical, a regular executable file, and have the expected
+allowlisted filename. Do not obtain it from workflow input, Backend metadata,
+an MCP tool argument, a model suggestion, or logs. Do not use
+`--non-interactive`, edit the file manually, expose persisted paths, or ask the
+user to paste them into the chat.
+
+The command validates and merges the approved snapshot, atomically persists a
+private sibling of `config.toml` at `~/.loomex/agent-executables.json`, and
+returns only redacted provider status. No Runner restart is required: execution
+and status reload the persisted configuration, and missing executors are not
+cached. After refresh, call `loomex_agent_runtime_status` to force a fresh safe
+probe, then wait for the next Runner heartbeat to publish the updated readiness
+before retrying the blocked task. If the service is inactive, complete its
+normal authenticated binding/start flow first; never restart a healthy service
+merely to refresh executable discovery.
+
+## Configure the agent runtime cutover
+
+Config v3 has two root-level cutover fields:
+
+```toml
+configVersion = 3
+agentRuntimeV2Enabled = true
+legacyAgentTaskMode = "drain_only"
+```
+
+`agentRuntimeV2Enabled` accepts only `true` or `false` and defaults to `true`.
+`legacyAgentTaskMode` accepts only `"drain_only"` or `"disabled"` and defaults
+to `"drain_only"`. Config v1/v2 migration uses the same safe defaults: accept
+new v2 work while draining only already-issued v1 tasks. `drain_only` is a
+migration posture, not permission for Backend to emit new v1 tasks.
+
+Change one value only when the user deliberately selects a cutover or rollback:
+
+```bash
+loomex config set agentRuntimeV2Enabled false
+loomex config set legacyAgentTaskMode disabled
+```
+
+The commands persist config but do not alter the already-running daemon.
+Cutover values are read at daemon start. Their structured result therefore has
+`serviceRestartRequired: true` and
+`nextAction: "restart_runner_service"`. After either command:
+
+1. call `loomex_runner_status` and show active local executions and restart
+   impact;
+2. obtain explicit confirmation;
+3. call `loomex_runner_control` with `action: "restart"` and `confirm: true`;
+4. call `loomex_runner_status` again and wait for the new Runner
+   session/heartbeat before relying on advertisement or task enforcement.
+
+Do not claim the new cutover state from config-file persistence alone. This
+restart requirement is intentionally different from executable discovery:
+`loomex setup agents refresh --confirm` reloads per operation and does not
+require a restart.
+
 If `recommendedNextAction` is `auth.status`, do not create another setup plan,
 even when the registered service is inactive or deferred while authentication
 or binding is incomplete. Continue with authentication, organization/project

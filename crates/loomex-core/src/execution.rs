@@ -12,6 +12,21 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "agent_journal.rs"]
+pub mod agent_journal;
+pub use agent_journal::{
+    agent_journal_capacity_error_envelope, canonical_agent_task_payload_digest,
+    canonical_json_payload_digest, constant_time_digest_eq, sha256_payload_digest,
+    AgentDeliveryRoute, AgentExecutionClaim, AgentExecutionClaimOutcome, AgentExecutionJournal,
+    AgentExecutionJournalEntry, AgentExecutionReplay, AgentExecutionTombstone,
+    AgentJournalProgress, AgentJournalProgressKind, AgentPendingDelivery, AgentPendingDeliveryKind,
+    AgentProcessLoss, AgentResumeExpectation, AgentSessionCheckpointOutcome, CancelRequestOutcome,
+    AGENT_EXECUTION_JOURNAL_SCHEMA_VERSION, AGENT_EXECUTION_TOMBSTONE_SCHEMA_VERSION,
+    MAX_AGENT_JOURNAL_ATTEMPTS_PER_REQUEST, MAX_AGENT_JOURNAL_ATTEMPT_CLAIMS_PER_REQUEST,
+    MAX_AGENT_JOURNAL_BYTES, MAX_AGENT_JOURNAL_PENDING_DELIVERIES,
+    MAX_AGENT_JOURNAL_PENDING_DELIVERY_BYTES, MAX_AGENT_JOURNAL_REQUESTS,
+};
+
 pub const RUNNER_JOB_RECOVERY_JOURNAL_SCHEMA_VERSION: &str = "loomex.runner.jobRecoveryJournal/v1";
 
 /// Whether a job whose process died after it entered `running` may be executed again.
@@ -32,6 +47,8 @@ pub enum RecoverableJobPhase {
     Running,
     SucceededPendingAck,
     FailedPendingAck,
+    PrestartFailedPendingAck,
+    DeferPendingAck,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,6 +60,10 @@ pub struct RecoverableRunnerJob {
     pub kind: String,
     /// Stable server-issued key used for idempotent terminal submission after reconnect.
     pub idempotency_key: String,
+    /// Per-process terminal delivery key. Agent jobs set this from the immutable
+    /// AgentProcessDispatchV2; non-agent jobs leave it absent and use `idempotency_key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_idempotency_key: Option<String>,
     /// A stable digest of the canonical server payload. The payload itself is deliberately not
     /// persisted because it may contain credentials or other sensitive input.
     pub payload_fingerprint: String,
@@ -65,6 +86,7 @@ pub enum RemoteRunnerJobStatus {
     Running,
     Succeeded,
     Failed,
+    Deferred,
     Canceling,
     Canceled,
     Expired,
@@ -74,7 +96,7 @@ impl RemoteRunnerJobStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Succeeded | Self::Failed | Self::Canceled | Self::Expired
+            Self::Succeeded | Self::Failed | Self::Deferred | Self::Canceled | Self::Expired
         )
     }
 }
@@ -106,6 +128,8 @@ pub enum JobRecoveryAction {
     SubmitSucceeded(Value),
     /// Execution failed locally and this exact error must be submitted without re-execution.
     SubmitFailed(Value),
+    /// A blocked agent process must be submitted to the dedicated defer endpoint.
+    SubmitDeferred(Value),
     /// The daemon cannot prove that replay is safe.
     ManualReconciliation { reason: &'static str },
 }
@@ -122,8 +146,8 @@ struct RunnerJobRecoveryDocument {
 /// Callers must persist transitions in this order:
 ///
 /// 1. `record_lease` after the server lease response;
-/// 2. acknowledge start to the server, then `mark_running` **immediately before** executing
-///    locally;
+/// 2. either reject an agent dispatch before start with `record_prestart_failure`, or acknowledge
+///    start to the server and call `mark_running` **immediately before** executing locally;
 /// 3. `record_succeeded`/`record_failed` before sending the terminal server request;
 /// 4. `acknowledge_terminal` only after the server durably accepts that request.
 ///
@@ -171,6 +195,32 @@ impl RunnerJobRecoveryJournal {
 
     pub fn job(&self, job_id: &str) -> Option<&RecoverableRunnerJob> {
         self.document.jobs.iter().find(|job| job.job_id == job_id)
+    }
+
+    pub fn set_terminal_idempotency_key(
+        &mut self,
+        job_id: &str,
+        session_id: &str,
+        terminal_idempotency_key: &str,
+    ) -> CoreResult<()> {
+        if terminal_idempotency_key.trim().is_empty() {
+            return Err(CoreError::new(
+                "RUNNER_JOB_RECOVERY_IDEMPOTENCY_INVALID",
+                "terminal idempotency key must not be empty",
+            ));
+        }
+        let job = self.job_mut_for_session(job_id, session_id)?;
+        if let Some(existing) = &job.terminal_idempotency_key {
+            if existing == terminal_idempotency_key {
+                return Ok(());
+            }
+            return Err(CoreError::new(
+                "RUNNER_JOB_RECOVERY_CONFLICT",
+                "runner job terminal idempotency key changed",
+            ));
+        }
+        job.terminal_idempotency_key = Some(terminal_idempotency_key.to_string());
+        self.persist()
     }
 
     pub fn record_lease(&mut self, job: RecoverableRunnerJob) -> CoreResult<()> {
@@ -287,6 +337,110 @@ impl RunnerJobRecoveryJournal {
         )
     }
 
+    /// Persist a runner-owned agent dispatch rejection before Backend start acknowledgement or
+    /// any local provider process is spawned.
+    ///
+    /// This is deliberately distinct from [`Self::record_failed`]: the job remains truthful about
+    /// never entering `running`, while its exact failure envelope is still durable before the
+    /// idempotent terminal submission.
+    pub fn record_prestart_failure(
+        &mut self,
+        job_id: &str,
+        session_id: &str,
+        error: Value,
+        now_epoch_ms: u64,
+    ) -> CoreResult<()> {
+        let job = self.job_mut_for_session(job_id, session_id)?;
+        if job.kind != "agent.execute.v2" {
+            return Err(CoreError::new(
+                "RUNNER_JOB_RECOVERY_INVALID_TRANSITION",
+                "pre-start failure is reserved for agent.execute.v2 dispatch rejection",
+            ));
+        }
+        if job.phase != RecoverableJobPhase::Leased {
+            return Err(CoreError::new(
+                "RUNNER_JOB_RECOVERY_INVALID_TRANSITION",
+                "a pre-start failure can only be recorded for a leased agent job",
+            ));
+        }
+        if now_epoch_ms > job.leased_until_epoch_ms {
+            return Err(CoreError::new(
+                "RUNNER_JOB_LEASE_EXPIRED",
+                "runner job lease expired before the pre-start failure was recorded",
+            ));
+        }
+        job.phase = RecoverableJobPhase::PrestartFailedPendingAck;
+        job.terminal_payload = Some(error);
+        job.updated_at_epoch_ms = now_epoch_ms;
+        self.persist()
+    }
+
+    /// Replace an unacknowledged kill-switch rejection after Backend proves cancellation won the
+    /// pre-start race. The job never entered `running`; the pre-start provenance remains durable.
+    pub fn record_prestart_cancellation(
+        &mut self,
+        job_id: &str,
+        session_id: &str,
+        error: Value,
+        now_epoch_ms: u64,
+    ) -> CoreResult<()> {
+        let job = self.job_mut_for_session(job_id, session_id)?;
+        if job.phase != RecoverableJobPhase::PrestartFailedPendingAck {
+            return Err(CoreError::new(
+                "RUNNER_JOB_RECOVERY_INVALID_TRANSITION",
+                "pre-start cancellation can replace only an unacknowledged pre-start failure",
+            ));
+        }
+        job.terminal_payload = Some(error);
+        job.updated_at_epoch_ms = now_epoch_ms;
+        self.persist()
+    }
+
+    pub fn record_deferred(
+        &mut self,
+        job_id: &str,
+        session_id: &str,
+        execution: Value,
+        now_epoch_ms: u64,
+    ) -> CoreResult<()> {
+        self.record_terminal(
+            job_id,
+            session_id,
+            RecoverableJobPhase::DeferPendingAck,
+            execution,
+            now_epoch_ms,
+        )
+    }
+
+    /// Replaces a locally pending, never-acknowledged terminal submission after Backend proves a
+    /// cancellation linearized first. This never rewrites a server-acknowledged record because
+    /// acknowledged records are removed from this journal.
+    pub fn record_cancellation_race_failed(
+        &mut self,
+        job_id: &str,
+        session_id: &str,
+        error: Value,
+        now_epoch_ms: u64,
+    ) -> CoreResult<()> {
+        let job = self.job_mut_for_session(job_id, session_id)?;
+        if !matches!(
+            job.phase,
+            RecoverableJobPhase::Running
+                | RecoverableJobPhase::SucceededPendingAck
+                | RecoverableJobPhase::FailedPendingAck
+                | RecoverableJobPhase::DeferPendingAck
+        ) {
+            return Err(CoreError::new(
+                "RUNNER_JOB_RECOVERY_INVALID_TRANSITION",
+                "cancellation race can replace only an unacknowledged local terminal",
+            ));
+        }
+        job.phase = RecoverableJobPhase::FailedPendingAck;
+        job.terminal_payload = Some(error);
+        job.updated_at_epoch_ms = now_epoch_ms;
+        self.persist()
+    }
+
     pub fn acknowledge_terminal(&mut self, job_id: &str) -> CoreResult<()> {
         let index = self
             .document
@@ -301,7 +455,10 @@ impl RunnerJobRecoveryJournal {
             })?;
         if !matches!(
             self.document.jobs[index].phase,
-            RecoverableJobPhase::SucceededPendingAck | RecoverableJobPhase::FailedPendingAck
+            RecoverableJobPhase::SucceededPendingAck
+                | RecoverableJobPhase::FailedPendingAck
+                | RecoverableJobPhase::PrestartFailedPendingAck
+                | RecoverableJobPhase::DeferPendingAck
         ) {
             return Err(CoreError::new(
                 "RUNNER_JOB_RECOVERY_INVALID_TRANSITION",
@@ -454,6 +611,22 @@ impl RunnerJobRecoveryJournal {
                     )
                 })?,
             )),
+            RecoverableJobPhase::PrestartFailedPendingAck => Ok(JobRecoveryAction::SubmitFailed(
+                local.terminal_payload.clone().ok_or_else(|| {
+                    CoreError::new(
+                        "RUNNER_JOB_RECOVERY_CORRUPT",
+                        "pre-start failed recovery record has no terminal payload",
+                    )
+                })?,
+            )),
+            RecoverableJobPhase::DeferPendingAck => Ok(JobRecoveryAction::SubmitDeferred(
+                local.terminal_payload.clone().ok_or_else(|| {
+                    CoreError::new(
+                        "RUNNER_JOB_RECOVERY_CORRUPT",
+                        "deferred recovery record has no blocked execution payload",
+                    )
+                })?,
+            )),
         }
     }
 
@@ -493,6 +666,43 @@ impl RunnerJobRecoveryJournal {
                 "reclaimed server job did not include a lease expiry",
             )
         })?;
+        job.updated_at_epoch_ms = now_epoch_ms;
+        self.persist()
+    }
+
+    /// Persists a Backend-authorized cancellation handoff to a fresh daemon session. The
+    /// canceling job remains nonterminal until the new session acknowledges the cancellation and
+    /// submits the exact agent terminal outcome.
+    pub fn adopt_reclaimed_cancellation_lease(
+        &mut self,
+        job_id: &str,
+        remote: &RemoteRunnerJobSnapshot,
+        current_session_id: &str,
+        now_epoch_ms: u64,
+    ) -> CoreResult<()> {
+        let local = self.job(job_id).ok_or_else(|| {
+            CoreError::new(
+                "RUNNER_JOB_RECOVERY_NOT_FOUND",
+                "runner job recovery record was not found",
+            )
+        })?;
+        if remote.job_id != local.job_id
+            || remote.payload_fingerprint != local.payload_fingerprint
+            || remote.attempt_count < local.attempt_count
+            || remote.lease_version <= local.lease_version
+            || remote.session_id.as_deref() != Some(current_session_id)
+            || remote.status != RemoteRunnerJobStatus::Canceling
+        {
+            return Err(CoreError::new(
+                "RUNNER_JOB_CANCELLATION_RECLAIM_NOT_OWNED",
+                "server did not return a matching canceling lease owned by the current session",
+            ));
+        }
+        let job = self.job_mut_for_id(job_id)?;
+        job.session_id = current_session_id.to_string();
+        job.attempt_count = remote.attempt_count;
+        job.lease_version = remote.lease_version;
+        job.leased_until_epoch_ms = remote.leased_until_epoch_ms.unwrap_or(now_epoch_ms);
         job.updated_at_epoch_ms = now_epoch_ms;
         self.persist()
     }
@@ -634,9 +844,33 @@ fn validate_recoverable_job(job: &RecoverableRunnerJob) -> CoreResult<()> {
             "runner job recovery record is incomplete",
         ));
     }
+    if job.kind == "agent.execute.v2"
+        && job.terminal_idempotency_key.as_deref().is_none_or(|key| {
+            loomex_protocol::agent_runtime_v2::validate_agent_attempt_delivery_idempotency_key(key)
+                .is_err()
+        })
+    {
+        return Err(CoreError::new(
+            "RUNNER_JOB_RECOVERY_CORRUPT",
+            "agent runner job recovery requires its trusted delivery idempotency key",
+        ));
+    }
+    if job
+        .terminal_idempotency_key
+        .as_deref()
+        .is_some_and(str::is_empty)
+    {
+        return Err(CoreError::new(
+            "RUNNER_JOB_RECOVERY_CORRUPT",
+            "runner job terminal idempotency key must not be empty",
+        ));
+    }
     let terminal = matches!(
         job.phase,
-        RecoverableJobPhase::SucceededPendingAck | RecoverableJobPhase::FailedPendingAck
+        RecoverableJobPhase::SucceededPendingAck
+            | RecoverableJobPhase::FailedPendingAck
+            | RecoverableJobPhase::PrestartFailedPendingAck
+            | RecoverableJobPhase::DeferPendingAck
     );
     if terminal != job.terminal_payload.is_some() {
         return Err(CoreError::new(
@@ -869,6 +1103,7 @@ mod tests {
             session_id: "session_old".to_string(),
             kind: "shell.exec".to_string(),
             idempotency_key: "job_123:terminal".to_string(),
+            terminal_idempotency_key: None,
             payload_fingerprint: "sha256:abc".to_string(),
             attempt_count: 1,
             lease_version: 1,
@@ -878,6 +1113,13 @@ mod tests {
             terminal_payload: None,
             updated_at_epoch_ms: 1_000,
         }
+    }
+
+    fn recoverable_agent_job() -> RecoverableRunnerJob {
+        let mut job = recoverable_job(JobReplaySafety::ManualReconciliation);
+        job.kind = "agent.execute.v2".to_string();
+        job.terminal_idempotency_key = Some(format!("loomex-agent-delivery-v2:{}", "a".repeat(64)));
+        job
     }
 
     fn remote_job(
@@ -915,6 +1157,122 @@ mod tests {
         assert_eq!(1, restored.attempt_count);
         assert_eq!(None, restored.terminal_payload);
 
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn prestart_agent_failure_is_durable_without_running_provenance() {
+        let path = recovery_path("prestart-failure");
+        let failure = json!({
+            "code": "unsupported_capability",
+            "message": "agent runtime v2 is disabled",
+            "execution": {"schemaVersion": "loomex.agent-execution/v2"}
+        });
+        let mut journal = RunnerJobRecoveryJournal::open(&path).unwrap();
+        journal.record_lease(recoverable_agent_job()).unwrap();
+        journal
+            .record_prestart_failure("job_123", "session_old", failure.clone(), 1_100)
+            .unwrap();
+
+        let reopened = RunnerJobRecoveryJournal::open(&path).unwrap();
+        let restored = reopened.job("job_123").unwrap();
+        assert_eq!(
+            RecoverableJobPhase::PrestartFailedPendingAck,
+            restored.phase
+        );
+        assert_eq!(Some(&failure), restored.terminal_payload.as_ref());
+        assert_eq!(
+            JobRecoveryAction::SubmitFailed(failure),
+            reopened
+                .recovery_action(
+                    "job_123",
+                    Some(&remote_job(
+                        Some("session_old"),
+                        RemoteRunnerJobStatus::Leased,
+                        1,
+                        Some(2_000),
+                    )),
+                    "session_old",
+                    1_200,
+                )
+                .unwrap()
+        );
+
+        let replacement = json!({
+            "code": "cancelled",
+            "execution": {"state": "cancelled", "sequence": 1}
+        });
+        let mut reopened = RunnerJobRecoveryJournal::open(&path).unwrap();
+        reopened
+            .record_prestart_cancellation("job_123", "session_old", replacement.clone(), 1_300)
+            .unwrap();
+        let replaced = RunnerJobRecoveryJournal::open(&path).unwrap();
+        assert_eq!(
+            RecoverableJobPhase::PrestartFailedPendingAck,
+            replaced.job("job_123").unwrap().phase
+        );
+        assert_eq!(
+            Some(&replacement),
+            replaced.job("job_123").unwrap().terminal_payload.as_ref()
+        );
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn prestart_failure_rejects_non_agent_running_and_expired_jobs() {
+        let path = recovery_path("prestart-failure-invalid");
+        let mut journal = RunnerJobRecoveryJournal::open(&path).unwrap();
+        journal
+            .record_lease(recoverable_job(JobReplaySafety::ManualReconciliation))
+            .unwrap();
+        assert_eq!(
+            "RUNNER_JOB_RECOVERY_INVALID_TRANSITION",
+            journal
+                .record_prestart_failure(
+                    "job_123",
+                    "session_old",
+                    json!({"code": "rejected"}),
+                    1_100,
+                )
+                .unwrap_err()
+                .code
+        );
+        fs::remove_file(&path).unwrap();
+
+        let mut journal = RunnerJobRecoveryJournal::open(&path).unwrap();
+        journal.record_lease(recoverable_agent_job()).unwrap();
+        journal
+            .mark_running("job_123", "session_old", 1_100)
+            .unwrap();
+        assert_eq!(
+            "RUNNER_JOB_RECOVERY_INVALID_TRANSITION",
+            journal
+                .record_prestart_failure(
+                    "job_123",
+                    "session_old",
+                    json!({"code": "rejected"}),
+                    1_200,
+                )
+                .unwrap_err()
+                .code
+        );
+        fs::remove_file(&path).unwrap();
+
+        let mut journal = RunnerJobRecoveryJournal::open(&path).unwrap();
+        journal.record_lease(recoverable_agent_job()).unwrap();
+        assert_eq!(
+            "RUNNER_JOB_LEASE_EXPIRED",
+            journal
+                .record_prestart_failure(
+                    "job_123",
+                    "session_old",
+                    json!({"code": "rejected"}),
+                    2_001,
+                )
+                .unwrap_err()
+                .code
+        );
         fs::remove_file(path).unwrap();
     }
 

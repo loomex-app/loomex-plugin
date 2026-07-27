@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "loomex.agent-terminal-payload-limits/v1",
+  "backendRequestMaxBytes": 8000000,
+  "submissionMaxBytes": 7900000,
+  "executionMaxBytes": 7750000,
+  "outputMaxBytes": 7000000,
+  "backendSafetyReserveBytes": 100000,
+  "wrapperReserveBytes": 150000,
+  "executionEnvelopeReserveBytes": 750000
+}

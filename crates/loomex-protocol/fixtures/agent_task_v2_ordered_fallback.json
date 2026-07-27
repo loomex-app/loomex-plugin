@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "loomex.plugin-agent-task/v2",
+  "requestId": "req_01JAGENTV2_FALLBACK",
+  "idempotencyKey": "workflow-run-43:node-agent:attempt-1",
+  "binding": {
+    "workspaceBindingId": "binding_loomex_workspace_01",
+    "workspaceBindingGeneration": 7,
+    "runnerId": "runner_local_01"
+  },
+  "selection": {
+    "primary": {
+      "mode": "exact",
+      "target": {
+        "executor": "codex_cli",
+        "provider": "open_ai",
+        "modelKey": "openai/gpt-5.2",
+        "providerModelId": "gpt-5.2"
+      }
+    },
+    "fallback": {
+      "policy": "ordered",
+      "targets": [
+        {
+          "executor": "claude_cli",
+          "provider": "anthropic",
+          "modelKey": "anthropic/claude-sonnet-4.6",
+          "providerModelId": "claude-sonnet-4-6"
+        },
+        {
+          "executor": "agy_cli",
+          "provider": "google",
+          "modelKey": "google/gemini-2.5-pro",
+          "providerModelId": "gemini-2.5-pro"
+        }
+      ]
+    }
+  },
+  "prompt": "Return a concise assessment.",
+  "requirements": {
+    "structuredOutput": false,
+    "sessionResume": true,
+    "cancellation": true
+  }
+}

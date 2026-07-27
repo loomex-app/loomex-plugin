@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "loomex.agent-process-dispatch.v2",
+  "executionId": "execution_01",
+  "attemptId": "attempt_01",
+  "attemptNumber": 1,
+  "retryKind": "initial",
+  "delivery": {
+    "route": "runner_job",
+    "runnerJobId": "runner_job_01",
+    "leaseTargetRunnerId": "runner_local_01"
+  },
+  "taskIdempotencyKey": "loomex-agent-attempt-v2:4964b29d5b9db3debba337b6b6b6028164ff4a1345417a64407fefe5559915b8",
+  "deliveryIdempotencyKey": "loomex-agent-delivery-v2:f131485b376d57bfb6b4e798bab5077801f522c1a0e76f6f54058e6a2dddf657",
+  "payloadDigest": "sha256:dcb768e86d66c93fb0f03a379bf7c985b4b6b659b88ebb509f3cb43f81f23be7",
+  "task": {
+    "schemaVersion": "loomex.plugin-agent-task/v2",
+    "requestId": "req_01JAGENTV2",
+    "idempotencyKey": "workflow-run-42:node-agent:attempt-1",
+    "binding": {
+      "workspaceBindingId": "binding_loomex_workspace_01",
+      "workspaceBindingGeneration": 7,
+      "runnerId": "runner_local_01"
+    },
+    "selection": {
+      "primary": {
+        "mode": "exact",
+        "target": {
+          "executor": "codex_cli",
+          "provider": "open_ai",
+          "modelKey": "openai/gpt-5.2",
+          "providerModelId": "gpt-5.2"
+        }
+      },
+      "fallback": {
+        "policy": "none"
+      }
+    },
+    "prompt": "Return a concise assessment.",
+    "outputSchema": {
+      "type": "object",
+      "required": [
+        "assessment"
+      ],
+      "properties": {
+        "assessment": {
+          "type": "string"
+        }
+      }
+    },
+    "requirements": {
+      "structuredOutput": true,
+      "sessionResume": true,
+      "cancellation": true,
+      "reasoningEffort": "high"
+    }
+  }
+}

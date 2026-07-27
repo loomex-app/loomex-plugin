@@ -15,15 +15,144 @@ const tools = [
   "loomex_run_list", "loomex_run_get", "loomex_run_wait", "loomex_run_cancel",
   "loomex_human_list", "loomex_human_open", "loomex_human_respond",
   "loomex_agent_task_list", "loomex_agent_task_respond",
+  "loomex_agent_runtime_status", "loomex_agent_task_execute",
+  "loomex_agent_task_resume", "loomex_agent_task_cancel",
+  "loomex_agent_task_checkpoint",
   "loomex_approval_list", "loomex_approval_decide",
   "loomex_runner_status", "loomex_runner_control", "loomex_runner_doctor", "loomex_runner_logs",
 ];
 
 test("skill exposes the settled MCP tool contract exactly", async () => {
   const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
-  assert.equal(tools.length, 33);
+  assert.equal(tools.length, 38);
   for (const name of tools) assert.match(skill, new RegExp(`\\b${name}\\b`), name);
   assert.doesNotMatch(skill, /loomex_organization_|loomex_human_request_/);
+});
+
+test("local agent runtime documentation is exact, safe, and migration compatible", async () => {
+  const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
+  const runs = await readFile(
+    path.join(root, "skills", "loomex", "references", "workflows-and-runs.md"),
+    "utf8",
+  );
+  const architecture = await readFile(
+    path.join(root, "skills", "loomex", "references", "architecture.md"),
+    "utf8",
+  );
+  const readme = await readFile(path.join(root, "README.md"), "utf8");
+  const packaging = await readFile(path.join(root, "packaging", "README.md"), "utf8");
+  const manifest = JSON.parse(
+    await readFile(path.join(root, ".codex-plugin", "plugin.json"), "utf8"),
+  );
+
+  assert.match(skill, /`loomex\.plugin-agent-task\/v2`/);
+  assert.match(skill, /legacy v1 tasks/);
+  assert.match(runs, /`open_ai` \/ `codex_cli`/);
+  assert.match(runs, /`anthropic` \/ `claude_cli`/);
+  assert.match(runs, /`google` \/ `agy_cli`/);
+  assert.match(runs, /Gemini-compatible models must be launched through `agy`/);
+  assert.match(runs, /`exact`[\s\S]*`auto`[\s\S]*ordered fallback/);
+  assert.match(runs, /`provider_not_installed`/);
+  assert.match(runs, /`provider_not_authenticated`/);
+  assert.match(runs, /`model_unknown` or `model_not_available`/);
+  assert.match(runs, /`executor_version_unverified`/);
+  assert.match(runs, /`upgrade_executor`, then `refresh_executor_discovery`/);
+  assert.match(runs, /genuine workflow feature mismatch[\s\S]*`reconfigure_workflow`/);
+  assert.match(runs, /`execution_indeterminate`/);
+  assert.match(runs, /`session_not_found` or `session_mismatch`/);
+  assert.match(runs, /Continue to list and respond to v1 tasks/);
+  assert.match(architecture, /passes `requestId` plus an\s+idempotency key/);
+  assert.doesNotMatch(`${skill}\n${runs}\n${architecture}\n${readme}`, /`gemini_cli` as supported/);
+  assert.ok(manifest.interface.capabilities.includes("Local AI agent runtimes"));
+  assert.match(manifest.interface.longDescription, /Codex, Claude, or agy CLI/);
+  assert.match(readme, /Codex sees exactly 38 tools/);
+  assert.match(readme, /`runner\.v1` transport/);
+  assert.match(packaging, /publication is blocked until that authoritative source\s+is merged and tagged `v0\.2\.0`/);
+});
+
+test("runner-owned agent successor and cancellation guidance matches the durable control boundary", async () => {
+  const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
+  const child = await readFile(path.join(root, "skills", "workflow", "SKILL.md"), "utf8");
+  const runs = await readFile(
+    path.join(root, "skills", "loomex", "references", "workflows-and-runs.md"),
+    "utf8",
+  );
+  const architecture = await readFile(
+    path.join(root, "skills", "loomex", "references", "architecture.md"),
+    "utf8",
+  );
+  const readme = await readFile(path.join(root, "README.md"), "utf8");
+  const combined = `${skill}\n${child}\n${runs}\n${architecture}\n${readme}`;
+
+  assert.match(runs, /For a Backend-owned `runner_job`, do not call an MCP tool to spawn or stop/);
+  assert.match(runs, /`AGENT_RUNNER_JOB_OWNED`/);
+  assert.match(runs, /`operationIdempotencyKey` identifies one user-authorized resume or cancel/);
+  assert.match(runs, /Never copy, derive, or reuse a task or delivery key as an\s+`operationIdempotencyKey`/);
+  assert.match(runs, /`taskIdempotencyKey`[\s\S]*`deliveryIdempotencyKey`[\s\S]*`operationIdempotencyKey`/);
+  assert.match(runs, /`resume_exact_session`[\s\S]*`retry_same_selection`[\s\S]*`retry_unresolved_selection`/);
+  assert.match(runs, /`fresh_after_remediation`/);
+  assert.match(runs, /`resume_from_checkpoint`/);
+  assert.match(runs, /successful resume receipt has `controlState: queued`/);
+  assert.match(runs, /job remains `deferred`, cancellation `completed`/);
+  assert.match(runs, /may become `cancelled`[\s\S]*may already have `completed`[\s\S]*may become `indeterminate`/);
+  assert.match(runs, /`PLUGIN_AGENT_DIRECT_CONTROL_UNSUPPORTED`[\s\S]*`redispatch_via_runner_job`/);
+  assert.match(runs, /durably reserves it before signaling[\s\S]*runner\s+authentication/);
+  assert.match(runs, /atomic lease reclaim[\s\S]*incremented lease fence/);
+  assert.match(combined, /authenticated user/);
+  assert.match(combined, /MCP (?:never|does not|must not) spawn/);
+  assert.doesNotMatch(combined, /MCP (?:kills|signals) Backend-owned/);
+});
+
+test("agent cutover documentation pins config v3, advertisement, and legacy drain semantics", async () => {
+  const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
+  const child = await readFile(path.join(root, "skills", "workflow", "SKILL.md"), "utf8");
+  const setupChild = await readFile(path.join(root, "skills", "setup", "SKILL.md"), "utf8");
+  const setup = await readFile(
+    path.join(root, "skills", "loomex", "references", "setup-and-auth.md"),
+    "utf8",
+  );
+  const runner = await readFile(
+    path.join(root, "skills", "loomex", "references", "runner-operations.md"),
+    "utf8",
+  );
+  const runs = await readFile(
+    path.join(root, "skills", "loomex", "references", "workflows-and-runs.md"),
+    "utf8",
+  );
+  const architecture = await readFile(
+    path.join(root, "skills", "loomex", "references", "architecture.md"),
+    "utf8",
+  );
+  const readme = await readFile(path.join(root, "README.md"), "utf8");
+  const combined = `${skill}\n${child}\n${setupChild}\n${setup}\n${runner}\n${runs}\n${architecture}\n${readme}`;
+
+  assert.match(setup, /configVersion = 3/);
+  assert.match(setup, /agentRuntimeV2Enabled = true/);
+  assert.match(setup, /legacyAgentTaskMode = "drain_only"/);
+  assert.match(setup, /defaults to `true`/);
+  assert.match(setup, /defaults\s+to `"drain_only"`/);
+  assert.match(setup, /loomex config set agentRuntimeV2Enabled false/);
+  assert.match(setup, /loomex config set legacyAgentTaskMode disabled/);
+  assert.match(setup, /`serviceRestartRequired: true`/);
+  assert.match(setup, /`nextAction: "restart_runner_service"`/);
+  assert.match(setup, /`action: "restart"` and `confirm: true`/);
+  assert.match(setup, /new Runner\s+session\/heartbeat/);
+  assert.match(architecture, /loomex\.runner-agent-advertisement\/v1/);
+  assert.match(architecture, /`true` \| `drain_only`[\s\S]*`true` \| `disabled`[\s\S]*`false` \| `drain_only`[\s\S]*`false` \| `disabled`/);
+  assert.match(architecture, /`agent\.runtime\.v2`/);
+  assert.match(architecture, /`agent\.task\.v1\.drain`/);
+  assert.match(architecture, /`agentRuntimes` field is not JSON `null`/);
+  assert.match(architecture, /remains inside `runner\.v1`/);
+  assert.match(runs, /v1 with `legacyAgentTaskMode: "drain_only"` is `legacy_drain`/);
+  assert.match(runs, /v1 with legacy mode `disabled` is `disabled`/);
+  assert.match(runs, /missing or unknown schema is `unsupported`/);
+  assert.match(runs, /`AGENT_LEGACY_TASKS_DISABLED`/);
+  assert.match(runs, /`AGENT_V2_EXECUTION_OWNED`/);
+  assert.match(runs, /`AGENT_LEGACY_RESPONSE_FORBIDDEN`/);
+  assert.match(runs, /`AGENT_TASK_SCHEMA_UNSUPPORTED`/);
+  assert.match(runs, /`AGENT_RUNTIME_V2_DISABLED`/);
+  assert.match(combined, /Drain mode never authorizes\s+new v1 emission|`drain_only` never permits Backend to create new v1 tasks/);
+  assert.match(combined, /Executable refresh remains\s+restart-free|executable discovery[\s\S]*does not\s+require a restart/);
 });
 
 test("plugin exposes only the supported focused child skills", async () => {
@@ -96,6 +225,47 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.doesNotMatch(human, /answer in the public `payload`/);
   assert.match(runner, /optional `level`/);
   assert.match(runner, /does not accept time-range or run-ID filters/);
+});
+
+test("agent executable refresh is local, approved, canonical, and PATH-safe", async () => {
+  const setup = await readFile(
+    path.join(root, "skills", "loomex", "references", "setup-and-auth.md"),
+    "utf8",
+  );
+  const runs = await readFile(
+    path.join(root, "skills", "loomex", "references", "workflows-and-runs.md"),
+    "utf8",
+  );
+  const runner = await readFile(
+    path.join(root, "skills", "loomex", "references", "runner-operations.md"),
+    "utf8",
+  );
+  const child = await readFile(path.join(root, "skills", "setup", "SKILL.md"), "utf8");
+  const readme = await readFile(path.join(root, "README.md"), "utf8");
+  const combined = `${setup}\n${runs}\n${runner}\n${child}\n${readme}`;
+
+  assert.match(setup, /loomex setup agents refresh --confirm/);
+  assert.match(setup, /--provider codex\|claude\|agy/);
+  assert.match(setup, /--path ABSOLUTE_CANONICAL_PATH/);
+  assert.match(setup, /`--provider` and `--path` must appear together/);
+  assert.match(setup, /`AGENT_EXECUTABLE_REFRESH_PATH_PAIR_REQUIRED`/);
+  assert.match(setup, /creates an initial executable snapshot only when\s+`agent-executables\.json` does not exist/);
+  assert.match(setup, /repeated setup\/apply, repair, or\s+plugin-control call preserves the existing file/);
+  assert.match(setup, /only the\s+local interactive refresh command below may change executable discovery/);
+  assert.match(setup, /Do not use\s+`--non-interactive`/);
+  assert.match(setup, /~\/\.loomex\/agent-executables\.json/);
+  assert.match(setup, /No Runner restart is required/);
+  assert.match(setup, /call `loomex_agent_runtime_status`[\s\S]*next Runner heartbeat/);
+  assert.match(runs, /`refresh_executor_discovery`/);
+  assert.match(setup, /`executor_version_unverified`/);
+  assert.match(setup, /`upgrade_executor`, then\s+`refresh_executor_discovery`/);
+  assert.match(setup, /Do not skip directly to refresh/);
+  assert.match(setup, /installer exit\s+alone[\s\S]*safe local probe/);
+  assert.match(combined, /never accepts an upgrade command or executable path from Backend, MCP/);
+  assert.match(combined, /GUI[\s\S]*`PATH`/);
+  assert.match(combined, /Runner never searches its daemon `PATH`/);
+  assert.match(combined, /Backend\/MCP requests cannot provide\s+executable paths/);
+  assert.doesNotMatch(combined, /Backend-supplied executable path|daemon PATH discovery/);
 });
 
 test("retryable management failures recover state before considering restart", async () => {
@@ -189,7 +359,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.37");
+  assert.equal(manifest.version, "0.2.0");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);

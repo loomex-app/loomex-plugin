@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "loomex.agent-session.v2",
+  "checkpointId": "checkpoint_auto_01",
+  "sequence": 1,
+  "sessionId": "session_auto_01",
+  "providerSessionId": "provider_session_auto_01",
+  "binding": {
+    "workspaceBindingId": "binding_loomex_workspace_01",
+    "workspaceBindingGeneration": 7,
+    "runnerId": "runner_local_01"
+  },
+  "selectionIndex": 0,
+  "executor": "agy_cli",
+  "provider": "google"
+}
