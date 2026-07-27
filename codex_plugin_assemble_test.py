@@ -11,7 +11,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 import zipfile
 from pathlib import Path
@@ -470,77 +469,10 @@ else:
         skill = (ROOT / "plugin/loomex/skills/loomex/SKILL.md").read_text(
             encoding="utf-8"
         )
-        definitions = rust[
-            rust.index("pub fn definitions") : rust.index("pub fn route")
-        ]
-        implemented = set(re.findall(r'"(loomex_[a-z_]+)"', definitions))
+        implemented = set(re.findall(r'"(loomex_[a-z_]+)"', rust))
         advertised = set(re.findall(r"`(loomex_[a-z_]+)`", skill))
-        runtime_tools = {
-            "loomex_agent_runtime_status",
-            "loomex_agent_task_execute",
-            "loomex_agent_task_resume",
-            "loomex_agent_task_cancel",
-            "loomex_agent_task_checkpoint",
-        }
-        self.assertEqual(len(implemented), 38)
-        self.assertTrue(runtime_tools.issubset(implemented))
+        self.assertEqual(len(implemented), 33)
         self.assertEqual(advertised, implemented)
-        self.assertIn(
-            'enum_string(&["codex_cli", "claude_cli", "agy_cli"])',
-            rust,
-        )
-        self.assertNotIn(
-            'enum_string(&["codex_cli", "claude_cli", "gemini_cli"])',
-            rust,
-        )
-
-    def test_public_runtime_v2_release_version_is_coherent(self) -> None:
-        expected = "0.2.1"
-        plugin = json.loads(
-            (ROOT / "plugin/loomex/.codex-plugin/plugin.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        runtime_template = json.loads(
-            (ROOT / "plugin/loomex/packaging/runtime-manifest.template.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        manifests = [
-            ROOT / "crates/loomex-core/Cargo.toml",
-            ROOT / "crates/loomex-cli/Cargo.toml",
-            ROOT / "crates/loomex-mcp/Cargo.toml",
-        ]
-        cargo_versions = {
-            manifest.relative_to(ROOT).as_posix(): tomllib.loads(
-                manifest.read_text(encoding="utf-8")
-            )["package"]["version"]
-            for manifest in manifests
-        }
-        lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
-        locked_versions = {
-            package["name"]: package["version"]
-            for package in lock["package"]
-            if package["name"] in {"loomex-core", "loomex-cli", "loomex-mcp"}
-        }
-        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        first_release = re.search(r"^## ([0-9]+\.[0-9]+\.[0-9]+)$", changelog, re.MULTILINE)
-        readme = (ROOT / "plugin/loomex/README.md").read_text(encoding="utf-8")
-
-        self.assertEqual(plugin["version"], expected)
-        self.assertEqual(runtime_template["runtimeVersion"], expected)
-        self.assertEqual(set(cargo_versions.values()), {expected}, cargo_versions)
-        self.assertEqual(
-            locked_versions,
-            {
-                "loomex-core": expected,
-                "loomex-cli": expected,
-                "loomex-mcp": expected,
-            },
-        )
-        self.assertIsNotNone(first_release)
-        self.assertEqual(first_release.group(1), expected)
-        self.assertIn(f"/releases/download/v{expected}/install-codex.sh", readme)
 
     def test_auth_skill_forbids_direct_cli_fallback_and_obeys_retryability(self) -> None:
         guidance = (
@@ -563,7 +495,6 @@ else:
             [
                 "Interactive",
                 "Local workspace",
-                "Local AI agent runtimes",
                 "Long-running workflows",
                 "Human-in-the-loop",
             ],
@@ -1349,7 +1280,7 @@ else:
                     "--marketplace-installer",
                     str(temp / "loomex-install-marketplace.sh"),
                     "--version",
-                    "0.2.1",
+                    "0.1.37",
                 ],
                 text=True,
                 capture_output=True,
@@ -1371,7 +1302,7 @@ else:
             shutil.copytree(ROOT / "plugin/loomex", source)
             plugin_json = source / ".codex-plugin/plugin.json"
             plugin = json.loads(plugin_json.read_text())
-            plugin["version"] = "0.2.1+codex.local-20260723-120000"
+            plugin["version"] = "0.1.37+codex.local-20260723-120000"
             plugin_json.write_text(json.dumps(plugin))
             artifacts = temp / "artifacts"
             self.write_artifacts(artifacts)
@@ -1389,7 +1320,7 @@ else:
             self.assertEqual(result.returncode, 0, result.stderr)
             manifest = json.loads((temp / "dist/loomex/packaging/runtime-manifest.json").read_text())
             self.assertEqual(manifest["pluginVersion"], plugin["version"])
-            self.assertEqual(manifest["runtimeVersion"], "0.2.1")
+            self.assertEqual(manifest["runtimeVersion"], "0.1.37")
             self.assertEqual(validate_runtime_integrity(temp / "dist/loomex"), [])
 
 

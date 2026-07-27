@@ -27,7 +27,7 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.2.1/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.37/install-codex.sh | sh
 ```
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
@@ -142,94 +142,6 @@ side panel and submit directly to the durable request. `text` requests are
 answered in the Codex chat and submitted with `loomex_human_respond`. Legacy
 human requests remain available through the chat-based response flow.
 
-AI/person nodes using `loomex.plugin-agent-task/v2` are executed by the durable
-local Runner through the user's installed agent CLI. Supported canonical pairs
-are `open_ai`/`codex_cli`, `anthropic`/`claude_cli`, and
-`google`/`agy_cli`. Gemini-compatible models use `agy` exclusively; the older
-Gemini executable is not part of the plugin runtime contract.
-
-The MCP surface exposes a redacted runtime-capability snapshot plus durable
-execute, resume, cancel, and checkpoint operations. Prompt text, commands,
-paths, model flags, environment values, and credentials are loaded and
-validated by the Runner rather than accepted from a model tool call. Exact
-models fail closed when unavailable; automatic model choice and ordered
-fallback run only when explicitly encoded by the backend task. Missing
-executors, missing authentication, unavailable models, rate limits, continuity
-failures, invalid output, and indeterminate execution are returned as typed,
-redacted errors with retry and remediation guidance. Legacy v1 task
-list/respond remains available during migration.
-
-Backend-owned agent work is delivered as a durable RunnerJob. MCP never spawns
-or stops its local process: the daemon leases the initial job, while
-`loomex_agent_task_resume` and `loomex_agent_task_cancel` only submit
-authenticated user control requests to Backend. Resume creates a new successor
-RunnerJob, either `fresh_after_remediation` against the frozen selection or
-`resume_from_checkpoint` for the exact durable session. Its fresh
-`operationIdempotencyKey` is a separate control identity and must never be
-copied from the task's `idempotencyKey`, `taskIdempotencyKey`, or
-`deliveryIdempotencyKey`.
-
-Active cancellation is cooperative and race-aware: Backend first returns
-`canceling`, then authoritative execution truth may be `cancelled`, `completed`,
-or `indeterminate`. A blocked process stays immutable and its RunnerJob remains
-`deferred` even when the logical cancellation completes. Direct-control
-cancellation is typed unsupported with `redispatch_via_runner_job`. The daemon
-durably records each Backend directive before signaling, acknowledges it with
-runner authentication, and after restart uses atomic lease reclaim and the new
-lease fence before replaying the exact directive, acknowledgement, or terminal
-submission.
-
-Config v3 makes the migration posture explicit with root fields
-`agentRuntimeV2Enabled` (default `true`) and `legacyAgentTaskMode` (default
-`"drain_only"`, alternatively `"disabled"`). The Runner advertises these under
-`agentAdvertisementSchemaVersion:
-"loomex.runner-agent-advertisement/v1"`. Enabled v2 requires the
-`agent.runtime.v2` capability and a valid `agentRuntimes` snapshot; disabled v2
-omits both. Legacy drain mode requires `agent.task.v1.drain`; legacy disabled
-omits it. False capabilities, a null snapshot, unknown schemas or modes, and
-inconsistent field presence fail closed.
-
-Legacy tasks remain visible in list results during cutover. Only an
-already-issued v1 task classified `legacy_drain` may use the v1 response tool,
-and only when its request ID has no active or tombstoned v2 ownership. Disabled
-tasks cannot respond, v2 tasks cannot cross into the v1 response path, and
-missing or unknown task schemas are `unsupported`. Drain mode never authorizes
-new v1 emission.
-
-The daemon reads both cutover fields at startup. After
-`loomex config set agentRuntimeV2Enabled true|false` or
-`loomex config set legacyAgentTaskMode drain_only|disabled`, inspect active
-work, obtain confirmation, restart the Runner service, and verify its new
-session/heartbeat before relying on the new advertisement or enforcement.
-Executable refresh remains restart-free.
-
-GUI-launched Codex may not inherit the same `PATH` as the user's terminal. The
-Runner never searches its daemon `PATH`, and Backend/MCP requests cannot provide
-executable paths. If Codex, Claude, or `agy` is installed or moved after setup,
-the user explicitly refreshes the private local snapshot from an interactive
-terminal with `loomex setup agents refresh --confirm`. An out-of-`PATH`
-executable may be approved with the paired `--provider codex|claude|agy` and
-`--path ABSOLUTE_CANONICAL_PATH` options. The refresh validates and atomically
-persists canonical allowlisted executables, returns redacted status, and
-requires no Runner restart. A fresh runtime-status probe followed by the next
-heartbeat confirms readiness.
-
-Setup creates the initial snapshot when the executable config is absent. The
-verified curl installer also passes an explicit
-`--refresh-agent-executables` install intent, so reinstalling/upgrading from
-that installer refreshes the snapshot from the user-invoked install process's
-PATH. Ordinary setup/apply, repair, and plugin-control calls preserve the
-snapshot; only that installer intent or the approved local interactive refresh
-command can change it.
-
-An installed executor whose version cannot be verified remains blocked with
-`executor_version_unverified`. Its typed remediation is ordered:
-`upgrade_executor`, then `refresh_executor_discovery`. The user upgrades the
-selected CLI through its trusted local installation mechanism, then runs the
-approved refresh, runtime-status probe, and heartbeat verification. Loomex
-never accepts an upgrade command or executable path from Backend, MCP,
-workflow, or model data.
-
 Every tool publishes a tool-specific `outputSchema` and returns the same
 discriminated structured envelope. Successful calls have
 `{schemaVersion: "loomex.mcp/v1", ok: true, tool, data, meta}`; failed calls
@@ -286,13 +198,6 @@ packages never need these variables.
 The dependency-free `/bin/sh` launcher used by packaged macOS/Linux releases
 ignores development overrides whenever a release runtime manifest is present.
 
-The checked-in shared agent-task v2 contracts are a deterministic mirror of the
-authoritative `loomex-protocol` v0.2.0 source. They do not change the established
-`runner.v1` transport. Production publication remains blocked until the
-authoritative protocol repository is merged and tagged `v0.2.0`, then mirrored
-from that immutable tag with matching lock metadata. A locally green package or
-discovery smoke does not waive this publication gate.
-
 ## Development validation
 
 From this plugin directory:
@@ -324,9 +229,8 @@ This release-mode smoke installs `loomex@loomex` into a temporary, isolated
 `CODEX_HOME`, exercising the marketplace, plugin cache, `.mcp.json`, launcher,
 runtime manifest, platform selection, and checksum verification. It starts no
 model turn and calls no Loomex tool. It asserts the installed and MCP-advertised
-versions match the assembled manifest, and that Codex sees exactly 38 tools,
-including setup, workflow discovery, legacy plugin agent-task tools, and the
-five local agent-runtime v2 tools.
+versions match the assembled manifest, and that Codex sees exactly 33 tools,
+including setup, workflow discovery, and plugin agent-task tools.
 
 For a faster development-only check before assembling all native targets, pass
 `--loomex-mcp /absolute/path/to/loomex-mcp --expected-version <version>`. That

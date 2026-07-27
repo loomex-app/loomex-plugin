@@ -24,18 +24,13 @@ from pathlib import Path
 from typing import Any, TextIO
 
 
-EXPECTED_TOOL_COUNT = 38
+EXPECTED_TOOL_COUNT = 33
 REQUIRED_TOOLS = {
     "loomex_setup_status",
     "loomex_workflow_list",
     "loomex_human_open",
     "loomex_agent_task_list",
     "loomex_agent_task_respond",
-    "loomex_agent_runtime_status",
-    "loomex_agent_task_execute",
-    "loomex_agent_task_resume",
-    "loomex_agent_task_cancel",
-    "loomex_agent_task_checkpoint",
 }
 
 

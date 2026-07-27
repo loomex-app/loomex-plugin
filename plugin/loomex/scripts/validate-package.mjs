@@ -20,66 +20,13 @@ async function json(relative) {
   }
 }
 
-async function text(relative) {
-  try {
-    return await readFile(path.join(root, relative), "utf8");
-  } catch (error) {
-    failures.push(`${relative}: ${error.message}`);
-    return "";
-  }
-}
-
 const plugin = await json(".codex-plugin/plugin.json");
 const mcp = await json(".mcp.json");
 const targets = await json("packaging/targets.json");
 const template = await json("packaging/runtime-manifest.template.json");
-const agentRunGuide = await text("skills/loomex/references/workflows-and-runs.md");
-const setupGuide = await text("skills/loomex/references/setup-and-auth.md");
-const architectureGuide = await text("skills/loomex/references/architecture.md");
 
 if (plugin?.name !== "loomex" || plugin?.mcpServers !== "./.mcp.json") {
   failures.push("plugin.json must identify loomex and reference ./.mcp.json");
-}
-if (
-  !plugin?.interface?.capabilities?.includes("Local AI agent runtimes") ||
-  !plugin?.interface?.longDescription?.includes("Codex, Claude, or agy CLI") ||
-  plugin?.interface?.longDescription?.includes("Gemini CLI")
-) {
-  failures.push("plugin.json must advertise the canonical Codex, Claude, and agy local agent runtimes");
-}
-if (
-  !agentRunGuide.includes("`executor_version_unverified`") ||
-  !agentRunGuide.includes("`upgrade_executor`, then `refresh_executor_discovery`") ||
-  !agentRunGuide.includes("genuine workflow feature mismatch") ||
-  !setupGuide.includes("Do not skip directly to refresh") ||
-  !setupGuide.includes("safe local probe")
-) {
-  failures.push("agent runtime guidance must preserve the ordered local upgrade, refresh, probe, and heartbeat remediation");
-}
-if (
-  !agentRunGuide.includes("For a Backend-owned `runner_job`, do not call an MCP tool to spawn or stop") ||
-  !agentRunGuide.includes("`operationIdempotencyKey` identifies one user-authorized resume or cancel") ||
-  !agentRunGuide.includes("`resume_exact_session`") ||
-  !agentRunGuide.includes("`fresh_after_remediation`") ||
-  !agentRunGuide.includes("job remains `deferred`, cancellation `completed`") ||
-  !agentRunGuide.includes("`redispatch_via_runner_job`") ||
-  !agentRunGuide.includes("atomic lease reclaim")
-) {
-  failures.push("agent control guidance must preserve Backend authorization, separate operation idempotency, successor modes, and daemon cancellation recovery");
-}
-if (
-  !setupGuide.includes("configVersion = 3") ||
-  !setupGuide.includes("agentRuntimeV2Enabled = true") ||
-  !setupGuide.includes('legacyAgentTaskMode = "drain_only"') ||
-  !setupGuide.includes("restart_runner_service") ||
-  !agentRunGuide.includes("`legacy_drain`") ||
-  !agentRunGuide.includes("`AGENT_V2_EXECUTION_OWNED`") ||
-  !agentRunGuide.includes("`AGENT_TASK_SCHEMA_UNSUPPORTED`") ||
-  !architectureGuide.includes("loomex.runner-agent-advertisement/v1") ||
-  !architectureGuide.includes("`agent.task.v1.drain`") ||
-  !architectureGuide.includes("`agentRuntimes` field is not JSON `null`")
-) {
-  failures.push("agent cutover guidance must preserve config v3 defaults, restart activation, advertisement omission rules, and fail-closed legacy draining");
 }
 if (
   mcp?.mcpServers?.loomex?.command !== "/bin/sh" ||

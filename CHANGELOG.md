@@ -1,26 +1,5 @@
 # Changelog
 
-## 0.2.1
-
-- Refresh local agent executable discovery during verified installer updates.
-- Launch JavaScript-based Codex CLIs with their trusted local Node runtime when
-  the Runner service has a minimal launchd PATH.
-- Improve installer diagnostics and local runtime setup guidance.
-
-## 0.2.0
-
-- Add the durable local agent runtime for exact, automatic, and explicitly
-  ordered model selection through `codex_cli`, `claude_cli`, and `agy_cli`.
-- Add runtime status, execute, resume, cancel, and checkpoint MCP tools while
-  retaining the legacy v1 task list/respond compatibility path.
-- Add typed, redacted model/provider/session remediation and user-approved
-  canonical executable discovery that never trusts Backend paths or daemon
-  `PATH`.
-- Keep the Runner transport at `runner.v1` while mirroring the shared
-  `loomex-protocol` v0.2.0 contracts.
-- Require published authoritative protocol v0.2.0 provenance before any
-  production or tag release.
-
 ## 0.1.37
 
 - Remove the standalone Runs, Human, and Scope sub-skills from the Codex plugin.
