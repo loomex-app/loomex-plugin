@@ -1511,15 +1511,27 @@ fn default_model_target(capability: &AgentExecutorCapability) -> Option<ModelTar
         })
 }
 
+fn executable_name(executor: ExecutorKind) -> &'static str {
+    match executor {
+        ExecutorKind::CodexCli => "codex",
+        ExecutorKind::ClaudeCli => "claude",
+        ExecutorKind::AgyCli => "agy",
+    }
+}
+
 fn not_installed(candidate: &Candidate) -> AgentRuntimeErrorEnvelopeV2 {
+    let command = executable_name(candidate.executor);
     runtime_error(
         AgentErrorCode::ProviderNotInstalled,
-        "The selected local agent executable is not configured. Install it, then run `loomex setup agents refresh --confirm` in a local interactive terminal.",
+        &format!(
+            "The selected local agent executable `{command}` is not configured. Install it, then run `loomex setup agents refresh --confirm` in a local interactive terminal."
+        ),
         candidate.context(),
     )
 }
 
 fn not_installed_capability(adapter: &dyn AgentAdapter) -> AgentExecutorCapability {
+    let command = adapter.executable_name();
     let features = AdapterFeatures {
         model_selection: false,
         structured_output: false,
@@ -1540,7 +1552,9 @@ fn not_installed_capability(adapter: &dyn AgentAdapter) -> AgentExecutorCapabili
         features: features.into(),
         last_error: Some(runtime_error(
             AgentErrorCode::ProviderNotInstalled,
-            "The local agent executable is not configured. Install it, then run `loomex setup agents refresh --confirm` in a local interactive terminal.",
+            &format!(
+                "The local agent executable `{command}` is not configured. Install it, then run `loomex setup agents refresh --confirm` in a local interactive terminal."
+            ),
             RuntimeErrorContext {
                 executor: Some(adapter.executor()),
                 ..Default::default()
@@ -1554,9 +1568,12 @@ fn unsupported_cli_capability(
     version: Option<String>,
     features: AdapterFeatures,
 ) -> AgentExecutorCapability {
+    let command = adapter.executable_name();
     let mut error = runtime_error(
         AgentErrorCode::UnsupportedCapability,
-        "The installed local agent revision does not have a verified non-interactive model and machine-readable execution interface. Update the local agent, then refresh executable discovery.",
+        &format!(
+            "The installed local agent `{command}` does not have a verified non-interactive model and machine-readable execution interface. Update the local agent, then refresh executable discovery."
+        ),
         RuntimeErrorContext {
             executor: Some(adapter.executor()),
             ..Default::default()
