@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "loomex.agent-error.v2",
+  "code": "agent_runtime_v2_disabled",
+  "category": "availability",
+  "message": "Local agent runtime v2 execution is disabled.",
+  "retry": "never",
+  "context": {
+    "executor": "codex_cli",
+    "provider": "open_ai",
+    "requestedModelKey": "openai/gpt-5.2",
+    "requestedProviderModelId": "gpt-5.2",
+    "executionId": "execution_01",
+    "attemptId": "attempt_01",
+    "safeDetails": {
+      "reasonCode": "agent_runtime_v2_disabled"
+    }
+  }
+}

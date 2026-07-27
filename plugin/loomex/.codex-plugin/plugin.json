@@ -1,7 +1,7 @@
 {
   "name": "loomex",
-  "version": "0.1.37",
-  "description": "Run durable Loomex workflows from natural Codex requests with guided first-use setup.",
+  "version": "0.2.0",
+  "description": "Run durable Loomex workflows and local multi-model agent tasks from natural Codex requests.",
   "author": {
     "name": "Loomex"
   },
@@ -10,6 +10,8 @@
   "keywords": [
     "workflow",
     "automation",
+    "ai-agent",
+    "multi-model",
     "local-workspace",
     "human-in-the-loop"
   ],
@@ -17,12 +19,13 @@
   "interface": {
     "displayName": "Loomex",
     "shortDescription": "Ask naturally; Codex guides setup and runs workflows.",
-    "longDescription": "Ask for any Loomex task in natural language. Codex automatically checks first-use readiness, previews durable per-user Runner setup when needed, guides authentication and workspace binding, then resumes the original workflow request. The verified Runner runtime is bundled, and the Tauri app remains available as an alternative client.",
+    "longDescription": "Ask for any Loomex task in natural language. Codex automatically checks first-use readiness, previews durable per-user Runner setup when needed, guides authentication and workspace binding, then resumes the original workflow request. The verified Runner runtime is bundled and can execute trusted workflow agent tasks through the user's Codex, Claude, or agy CLI with explicit model policy and typed remediation. The Tauri app remains available as an alternative client.",
     "developerName": "Loomex",
     "category": "Productivity",
     "capabilities": [
       "Interactive",
       "Local workspace",
+      "Local AI agent runtimes",
       "Long-running workflows",
       "Human-in-the-loop"
     ],

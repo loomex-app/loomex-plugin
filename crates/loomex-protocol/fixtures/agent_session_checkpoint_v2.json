@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "loomex.agent-session.v2",
+  "checkpointId": "checkpoint_01",
+  "sequence": 3,
+  "sessionId": "session_01",
+  "providerSessionId": "provider_session_01",
+  "binding": {
+    "workspaceBindingId": "binding_loomex_workspace_01",
+    "workspaceBindingGeneration": 7,
+    "runnerId": "runner_local_01"
+  },
+  "executionId": "execution_01",
+  "attemptId": "attempt_01",
+  "selectionIndex": 0,
+  "executor": "codex_cli",
+  "provider": "open_ai",
+  "modelKey": "openai/gpt-5.2",
+  "providerModelId": "gpt-5.2",
+  "state": "active",
+  "recordedAt": "2026-07-26T10:31:12Z"
+}

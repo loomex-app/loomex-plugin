@@ -1,0 +1,10 @@
+{
+  "agentAdvertisementSchemaVersion": "loomex.runner-agent-advertisement/v1",
+  "agentRuntimeV2Enabled": false,
+  "legacyAgentTasks": {
+    "mode": "disabled"
+  },
+  "capabilities": {
+    "file.read": true
+  }
+}
