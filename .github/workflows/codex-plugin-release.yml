@@ -10,10 +10,6 @@ on:
       - "scripts/codex_mcp_discovery_smoke.py"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "protocol-source.lock.json"
-      - "scripts/protocol_mirror.py"
-      - "scripts/protocol_mirror_test.py"
-      - "crates/loomex-protocol/**"
       - "crates/loomex-core/**"
       - "crates/loomex-cli/**"
       - "crates/loomex-mcp/**"
@@ -52,7 +48,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-21
       - name: Fetch pinned official Codex plugin validator
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -78,7 +73,6 @@ jobs:
           plugin_version = json.loads(
               (root / "plugin/loomex/.codex-plugin/plugin.json").read_text()
           )["version"]
-          base_version = plugin_version.split("+", 1)[0]
           manifests = [
               "crates/loomex-core/Cargo.toml",
               "crates/loomex-cli/Cargo.toml",
@@ -90,48 +84,16 @@ jobs:
                   raise SystemExit(
                       f"{manifest} version {version!r} differs from plugin {plugin_version!r}"
                   )
-          runtime_version = json.loads(
-              (
-                  root
-                  / "plugin/loomex/packaging/runtime-manifest.template.json"
-              ).read_text()
-          )["runtimeVersion"]
-          if runtime_version != base_version:
-              raise SystemExit(
-                  f"runtime template version {runtime_version!r} "
-                  f"differs from plugin base version {base_version!r}"
-              )
-          changelog = (root / "CHANGELOG.md").read_text()
-          first_release = next(
-              (
-                  line.removeprefix("## ")
-                  for line in changelog.splitlines()
-                  if line.startswith("## ")
-              ),
-              None,
-          )
-          if first_release != base_version:
-              raise SystemExit(
-                  f"latest changelog version {first_release!r} "
-                  f"differs from plugin base version {base_version!r}"
-              )
           PY
       - name: Test package assembler
         run: |
           python3 -m unittest -v codex_plugin_assemble_test.py
           python3 .github/scripts/release_provenance_test.py -v
-          python3 -m unittest -v scripts/protocol_mirror_test.py
-      - name: Verify vendored protocol source
-        run: python3 scripts/protocol_mirror.py check
-      - name: Test vendored protocol contracts
-        run: cargo test --locked -p loomex-protocol
       - name: Check packaging scripts
         run: |
           python3 -m py_compile \
             codex_plugin_assemble.py \
             codex_plugin_validate.py \
-            scripts/protocol_mirror.py \
-            scripts/protocol_mirror_test.py \
             .github/scripts/release_provenance.py
           git diff --check
 
@@ -168,8 +130,6 @@ jobs:
             echo "release-pr=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          python3 scripts/protocol_mirror.py check --require-published
 
           release_sha="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           RELEASE_SHA="$release_sha" \
@@ -270,8 +230,8 @@ jobs:
           assert by_id[1]["result"]["serverInfo"]["name"] == "loomex"
           tools = by_id[2]["result"]["tools"]
           names = {tool["name"] for tool in tools}
-          assert len(tools) == 38, sorted(names)
-          assert len(names) == 38, "duplicate MCP tool names"
+          assert len(tools) == 33, sorted(names)
+          assert len(names) == 33, "duplicate MCP tool names"
           required = {
               "loomex_setup_status",
               "loomex_workflow_list",

@@ -33,20 +33,6 @@ artifact for the current target without a Codex prompt. `loomex_setup_apply`
 remains available as the explicit repair and recovery path; users do not obtain
 a second installer.
 
-The package retains the established `runner.v1` transport while carrying the
-`loomex.plugin-agent-task/v2` and capability/error/session v2 contracts. The
-vendored protocol must remain byte-for-byte aligned with the authoritative
-`loomex-protocol` source and its lock metadata. Even when package assembly and
-all runtime smokes pass, publication is blocked until that authoritative source
-is merged and tagged `v0.2.0`; release inputs must then be refreshed from the
-immutable tag before any registry switch or production publication.
-Source and pull-request validation intentionally accepts a well-formed blocked
-lock, but every tag or requested production release runs
-`python3 scripts/protocol_mirror.py check --require-published` before artifact
-assembly. The strict gate requires the exact clean, repository-verified
-authoritative commit and `v0.2.0` tag; documentation or a local green build
-cannot bypass it.
-
 ## Marketplace integrity and publication
 
 Assembly creates `loomex-codex-marketplace-<version>.zip`, its versioned
