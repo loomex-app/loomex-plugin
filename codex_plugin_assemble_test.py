@@ -495,7 +495,7 @@ else:
         )
 
     def test_public_runtime_v2_release_version_is_coherent(self) -> None:
-        expected = "0.2.0"
+        expected = "0.2.1"
         plugin = json.loads(
             (ROOT / "plugin/loomex/.codex-plugin/plugin.json").read_text(
                 encoding="utf-8"
@@ -1349,7 +1349,7 @@ else:
                     "--marketplace-installer",
                     str(temp / "loomex-install-marketplace.sh"),
                     "--version",
-                    "0.2.0",
+                    "0.2.1",
                 ],
                 text=True,
                 capture_output=True,
@@ -1371,7 +1371,7 @@ else:
             shutil.copytree(ROOT / "plugin/loomex", source)
             plugin_json = source / ".codex-plugin/plugin.json"
             plugin = json.loads(plugin_json.read_text())
-            plugin["version"] = "0.2.0+codex.local-20260723-120000"
+            plugin["version"] = "0.2.1+codex.local-20260723-120000"
             plugin_json.write_text(json.dumps(plugin))
             artifacts = temp / "artifacts"
             self.write_artifacts(artifacts)
@@ -1389,7 +1389,7 @@ else:
             self.assertEqual(result.returncode, 0, result.stderr)
             manifest = json.loads((temp / "dist/loomex/packaging/runtime-manifest.json").read_text())
             self.assertEqual(manifest["pluginVersion"], plugin["version"])
-            self.assertEqual(manifest["runtimeVersion"], "0.2.0")
+            self.assertEqual(manifest["runtimeVersion"], "0.2.1")
             self.assertEqual(validate_runtime_integrity(temp / "dist/loomex"), [])
 
 
