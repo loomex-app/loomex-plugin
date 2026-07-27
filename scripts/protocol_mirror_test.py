@@ -82,13 +82,36 @@ class ProtocolMirrorTest(unittest.TestCase):
     def test_blocked_provenance_must_keep_the_publication_blocker(self) -> None:
         lock_path = self.root / protocol_mirror.LOCK_RELATIVE_PATH
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        lock["source"]["publicationBlocker"] = None
+        lock["source"].update(
+            {
+                "commit": None,
+                "tag": None,
+                "workingTreeDirty": True,
+                "repositoryVerified": False,
+                "publicationStatus": "blocked",
+                "publicationBlocker": None,
+            }
+        )
         lock_path.write_text(json.dumps(lock), encoding="utf-8")
 
         with self.assertRaisesRegex(protocol_mirror.MirrorError, "commit/tag blocker"):
             protocol_mirror.check(self.root)
 
     def test_blocked_provenance_is_allowed_for_validation_but_not_release(self) -> None:
+        lock_path = self.root / protocol_mirror.LOCK_RELATIVE_PATH
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["source"].update(
+            {
+                "commit": None,
+                "tag": None,
+                "workingTreeDirty": True,
+                "repositoryVerified": False,
+                "publicationStatus": "blocked",
+                "publicationBlocker": "test commit/tag blocker",
+            }
+        )
+        lock_path.write_text(json.dumps(lock), encoding="utf-8")
+
         protocol_mirror.check(self.root)
 
         with self.assertRaisesRegex(
