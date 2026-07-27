@@ -1,5 +1,7 @@
 #![allow(clippy::large_enum_variant)]
 
+pub mod agent_execution_service;
+pub mod agent_runtime;
 pub mod approval;
 pub mod auth;
 pub mod binding;
@@ -7,6 +9,7 @@ pub mod capability;
 pub mod config;
 pub mod device;
 pub mod enterprise_acceptance;
+pub mod executable_config;
 pub mod execution;
 pub mod grpc;
 pub mod lifecycle;
@@ -32,6 +35,12 @@ pub use loomex_protocol::{
     RunnerSurface, MINIMUM_SUPPORTED_PROTOCOL_VERSION,
 };
 
+pub use agent_execution_service::{
+    AgentCancellationRegistry, AgentCancellationResult, AgentClaimedExecution,
+    AgentExecutionIdentity, AgentExecutionPreparation, AgentExecutionProgress,
+    AgentExecutionProgressPayload, AgentExecutionProgressPhase, AgentExecutionProgressSink,
+    AgentExecutionService, AgentExecutionServiceOutcome,
+};
 pub use approval::{
     ApprovalAuditEvent, ApprovalChannel, ApprovalDecision, ApprovalDecisionInput,
     ApprovalDecisionOutcome, ApprovalPayload, ApprovalPolicySnapshot, ApprovalPrompt,
@@ -45,7 +54,10 @@ pub use binding::{
     RunnerSessionStatus, WorkspacePath,
 };
 pub use capability::{CapabilityExecutor, CapabilityRequest, CapabilityResult};
-pub use config::{CliConfig, CliConfigOverrides, CliProfile, ResolvedCliSettings, RunnerConfig};
+pub use config::{
+    CliConfig, CliConfigOverrides, CliProfile, LegacyAgentTaskMode, ResolvedCliSettings,
+    RunnerConfig,
+};
 pub use device::{RunnerDeviceMetadata, RunnerDeviceRecord, TokenScope};
 pub use enterprise_acceptance::{
     evaluate_enterprise_acceptance_report, official_acceptance_checks, official_compliance_package,
@@ -72,8 +84,9 @@ pub use local_capabilities::{
 pub use local_control::UnixLocalControlServer;
 pub use local_control::{
     handle_local_control_request, prepare_local_control_paths, read_local_control_token,
-    LocalControlDispatcher, LocalControlError, LocalControlPaths, LocalControlRequest,
-    LocalControlResponse, LOCAL_CONTROL_PROTOCOL_VERSION,
+    reconcile_pending_agent_progress, reconcile_pending_agent_progress_with_journal,
+    reconcile_stale_agent_executions_at_startup, LocalControlDispatcher, LocalControlError,
+    LocalControlPaths, LocalControlRequest, LocalControlResponse, LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 pub use logs::{
     read_recent_log_entries, redact_log_entry_for_local_output, FileLogSink, LogEntry, LogSink,
@@ -84,13 +97,18 @@ pub use management::{
     CredentialStorageBackend, CredentialStorageOutcome, CredentialStore, DeviceLoginChallenge,
     HttpManagementApiClient, HumanRequestExecution, HumanRequestResolveResponse,
     HumanRequestSummary, LocalCredentialStore, ManagementApiClient, ManagementCredential,
-    ManagementProjectRunnerBinding, Organization, Project, ProjectRunnerBindingCreateRequest,
-    Runner, RunnerHumanRequestListQuery, RunnerHumanRequestListResponse,
-    RunnerJobEventCreateResponse, RunnerJobResponse, RunnerSessionResponse, RunnerUpsertRequest,
-    RunnerWorkflowExecutionListResponse, RunnerWorkflowExecutionResponse,
-    RunnerWorkflowExecutionStartOptions, RunnerWorkflowInputSchemaResponse, RunnerWorkflowSummary,
-    StreamCredentialRequest, StreamCredentialResponse, SystemCredentialStore,
-    WorkflowRunStartRequest, WorkflowRunStartResponse, WorkspaceLoginResult,
+    ManagementProjectRunnerBinding, Organization, PluginAgentCancellationJob,
+    PluginAgentCancellationReceipt, PluginAgentCancellationRequest,
+    PluginAgentCancellationResource, PluginAgentSuccessorPredecessor, PluginAgentSuccessorProcess,
+    PluginAgentSuccessorReceipt, PluginAgentSuccessorRequest, Project,
+    ProjectRunnerBindingCreateRequest, Runner, RunnerHumanRequestListQuery,
+    RunnerHumanRequestListResponse, RunnerJobCancellationAckResponse,
+    RunnerJobCancellationDirective, RunnerJobEventCreateResponse, RunnerJobResponse,
+    RunnerSessionResponse, RunnerUpsertRequest, RunnerWorkflowExecutionListResponse,
+    RunnerWorkflowExecutionResponse, RunnerWorkflowExecutionStartOptions,
+    RunnerWorkflowInputSchemaResponse, RunnerWorkflowSummary, StreamCredentialRequest,
+    StreamCredentialResponse, SystemCredentialStore, WorkflowRunStartRequest,
+    WorkflowRunStartResponse, WorkspaceLoginResult,
 };
 pub use operational_readiness::{
     capacity_plan_for_runner_connections, evaluate_operational_alerts, evaluate_release_gate,

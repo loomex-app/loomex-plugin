@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "loomex.agent-error.v2",
+  "code": "runtime_unavailable",
+  "category": "availability",
+  "message": "The installed executor is no longer available at its discovered location.",
+  "retry": "user_action_required",
+  "remediation": [
+    "refresh_executor_discovery"
+  ],
+  "context": {
+    "executor": "agy_cli",
+    "provider": "google",
+    "safeDetails": {
+      "reasonCode": "executor_location_stale"
+    }
+  }
+}

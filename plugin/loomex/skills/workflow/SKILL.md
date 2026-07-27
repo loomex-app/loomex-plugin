@@ -15,6 +15,13 @@ Browse and start only Loomex workflows with execution model `plugin`. Read [work
 - Use `loomex_workflow_show` when a workflow name collides, inputs are unclear, a version is selected, or local capabilities/approval points need explanation.
 - Before `loomex_workflow_run`, confirm workflow ID/version, selected project, exact binding, inputs, capabilities, and known approval points. Use a fresh `idempotencyKey` for a new run.
 - Treat the returned execution ID and status as authoritative. A queued or submitted response is not completion; continue with bounded `loomex_run_wait` calls and recover uncertain state with `loomex_run_get`.
+- For a v2 Backend-owned agent task, let the daemon lease its RunnerJob. MCP
+  must not spawn or stop the process. Resume/cancel are authenticated Backend
+  control requests with a fresh `operationIdempotencyKey`; the Backend selects
+  the successor mode and the daemon owns cancellation directive/ack/reclaim.
+- Obey the task list's `executionSupport` classifier. Drain only already-issued
+  v1 tasks marked `legacy_drain`; never respond to `disabled`, `unsupported`, or
+  v2-owned requests through the legacy response path.
 - Never pass credentials, tokens, or unrelated environment variables as inputs. Never execute workflow nodes with shell commands.
 
 If run input is ambiguous, stop and ask rather than guessing IDs, versions, or schema fields.

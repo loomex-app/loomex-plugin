@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "loomex.agent-process-dispatch.v2",
+  "executionId": "execution_direct_01",
+  "attemptId": "attempt_direct_01",
+  "attemptNumber": 1,
+  "retryKind": "initial",
+  "delivery": {
+    "route": "direct_control"
+  },
+  "taskIdempotencyKey": "loomex-agent-attempt-v2:a337f03e535308b3baeb2ed3354de5399e4c4af68839a3f819912d2b73845d60",
+  "deliveryIdempotencyKey": "loomex-agent-delivery-v2:dbba0c8b588ee3e559eec877b38ae08a2080ac3cb6de8b7bc610fc707f579c91",
+  "payloadDigest": "sha256:ee7749b1f1553fddaf3857ce18d9e98af4f95e5cca4c8542dcaf472b70f3f6ec",
+  "task": {
+    "schemaVersion": "loomex.plugin-agent-task/v2",
+    "requestId": "req_direct_jcs_01",
+    "idempotencyKey": "direct:execution_direct_01",
+    "binding": {
+      "workspaceBindingId": "binding_loomex_workspace_01",
+      "workspaceBindingGeneration": 7,
+      "runnerId": "runner_local_01"
+    },
+    "selection": {
+      "primary": {
+        "mode": "exact",
+        "target": {
+          "executor": "codex_cli",
+          "provider": "open_ai",
+          "modelKey": "openai/gpt-5.2",
+          "providerModelId": "gpt-5.2"
+        }
+      },
+      "fallback": {
+        "policy": "none"
+      }
+    },
+    "prompt": "Canonicalize é, 雪, and 😀.",
+    "outputSchema": {
+      "type": "object",
+      "x-jcsProbe": {
+        "one": 1.0,
+        "small": 1e-7,
+        "negativeZero": -0.0,
+        "threshold": 1e-6,
+        "large": 1e21,
+        "": "bmp-private",
+        "😀": "astral",
+        "unicode": "é雪"
+      }
+    },
+    "requirements": {
+      "structuredOutput": true,
+      "sessionResume": true,
+      "cancellation": true,
+      "reasoningEffort": "high"
+    }
+  }
+}

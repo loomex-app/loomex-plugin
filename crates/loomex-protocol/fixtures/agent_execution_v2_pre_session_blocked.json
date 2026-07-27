@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "loomex.agent-execution.v2",
+  "executionId": "execution_01",
+  "requestId": "req_01JAGENTV2",
+  "idempotencyKey": "workflow-run-42:node-agent:attempt-1",
+  "sequence": 2,
+  "binding": {
+    "workspaceBindingId": "binding_loomex_workspace_01",
+    "workspaceBindingGeneration": 7,
+    "runnerId": "runner_local_01"
+  },
+  "state": "blocked",
+  "attempts": [
+    {
+      "attemptId": "attempt_01",
+      "attemptNumber": 1,
+      "taskIdempotencyKey": "loomex-agent-attempt-v2:4964b29d5b9db3debba337b6b6b6028164ff4a1345417a64407fefe5559915b8",
+      "deliveryIdempotencyKey": "loomex-agent-delivery-v2:f131485b376d57bfb6b4e798bab5077801f522c1a0e76f6f54058e6a2dddf657",
+      "payloadDigest": "sha256:dcb768e86d66c93fb0f03a379bf7c985b4b6b659b88ebb509f3cb43f81f23be7",
+      "state": "blocked",
+      "startedSequence": 1,
+      "finishedSequence": 2,
+      "delivery": {
+        "route": "runner_job",
+        "runnerJobId": "runner_job_01",
+        "leaseTargetRunnerId": "runner_local_01"
+      },
+      "selectionIndex": 0,
+      "executor": "codex_cli",
+      "provider": "open_ai",
+      "requestedModelKey": "openai/gpt-5.2",
+      "requestedProviderModelId": "gpt-5.2",
+      "resolvedModelKey": "openai/gpt-5.2",
+      "resolvedProviderModelId": "gpt-5.2",
+      "startedAt": "2026-07-26T10:31:00Z",
+      "finishedAt": "2026-07-26T10:31:01Z",
+      "error": {
+        "schemaVersion": "loomex.agent-error.v2",
+        "code": "provider_not_installed",
+        "category": "availability",
+        "message": "The selected executor is not installed.",
+        "retry": "user_action_required",
+        "remediation": [
+          "install_executor",
+          "refresh_executor_discovery"
+        ],
+        "context": {
+          "executor": "codex_cli",
+          "provider": "open_ai",
+          "requestedModelKey": "openai/gpt-5.2",
+          "requestedProviderModelId": "gpt-5.2",
+          "resolvedModelKey": "openai/gpt-5.2",
+          "resolvedProviderModelId": "gpt-5.2",
+          "executionId": "execution_01",
+          "attemptId": "attempt_01"
+        }
+      }
+    }
+  ],
+  "error": {
+    "schemaVersion": "loomex.agent-error.v2",
+    "code": "provider_not_installed",
+    "category": "availability",
+    "message": "The selected executor is not installed.",
+    "retry": "user_action_required",
+    "remediation": [
+      "install_executor",
+      "refresh_executor_discovery"
+    ],
+    "context": {
+      "executor": "codex_cli",
+      "provider": "open_ai",
+      "requestedModelKey": "openai/gpt-5.2",
+      "requestedProviderModelId": "gpt-5.2",
+      "resolvedModelKey": "openai/gpt-5.2",
+      "resolvedProviderModelId": "gpt-5.2",
+      "executionId": "execution_01",
+      "attemptId": "attempt_01"
+    }
+  },
+  "createdAt": "2026-07-26T10:30:59Z",
+  "startedAt": "2026-07-26T10:31:00Z",
+  "updatedAt": "2026-07-26T10:31:01Z"
+}

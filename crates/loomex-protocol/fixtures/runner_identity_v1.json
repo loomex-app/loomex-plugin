@@ -1,0 +1,11 @@
+{
+  "surface": "plugin",
+  "runnerVersion": "0.1.0",
+  "protocolVersion": "runner.v1",
+  "capabilities": [
+    "fs.read",
+    "shell.execute"
+  ],
+  "platform": "macos",
+  "architecture": "arm64"
+}
