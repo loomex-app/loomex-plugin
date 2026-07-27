@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
+    fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
@@ -207,8 +208,16 @@ impl ProcessRunner {
 
         validate_command(spec)?;
 
-        let mut command = Command::new(&spec.executable);
+        // Some supported CLIs (notably the Homebrew Codex package) are
+        // executable JavaScript files with `#!/usr/bin/env node`.  The
+        // launchd service intentionally has a minimal PATH, so letting the
+        // kernel invoke `/usr/bin/env` would make an installed CLI look like
+        // a failed/missing executor.  Resolve only the trusted interpreter
+        // declared by that shebang and invoke it by its absolute path.
+        let (program, interpreter_args) = command_launcher(&spec.executable);
+        let mut command = Command::new(program);
         command
+            .args(interpreter_args)
             .args(&spec.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -560,6 +569,65 @@ fn validate_command(spec: &CommandSpec) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn command_launcher(executable: &Path) -> (PathBuf, Vec<OsString>) {
+    #[cfg(unix)]
+    if let Some(interpreter) = script_interpreter(executable) {
+        return (interpreter, vec![executable.as_os_str().to_owned()]);
+    }
+    (executable.to_path_buf(), Vec::new())
+}
+
+#[cfg(unix)]
+fn script_interpreter(executable: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let first_line = fs::read(executable)
+        .ok()?
+        .split(|byte| *byte == b'\n')
+        .next()
+        .map(|line| {
+            String::from_utf8_lossy(line)
+                .trim_end_matches('\r')
+                .to_string()
+        })?;
+    let shebang = first_line.strip_prefix("#!")?.trim();
+    let mut parts = shebang.split_whitespace();
+    let interpreter = parts.next()?;
+    let interpreter_name = if interpreter == "/usr/bin/env" {
+        let name = parts.next()?;
+        // Only resolve the interpreter used by the supported JS CLIs.  Do not
+        // turn arbitrary user-provided shebangs into executable search paths.
+        if name != "node" {
+            return None;
+        }
+        name
+    } else {
+        return None;
+    };
+
+    let mut candidates = Vec::new();
+    // Homebrew/npm installs put a JS package below <prefix>/lib/node_modules;
+    // derive that prefix from the already-approved executable instead of
+    // trusting the Runner's PATH or accepting a path from Backend/MCP.
+    for ancestor in executable.ancestors() {
+        candidates.push(ancestor.join("bin").join(interpreter_name));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates
+            .extend(std::env::split_paths(&path).map(|directory| directory.join(interpreter_name)));
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/node"),
+        PathBuf::from("/usr/local/bin/node"),
+        PathBuf::from("/usr/bin/node"),
+    ]);
+    candidates.into_iter().find_map(|candidate| {
+        let canonical = fs::canonicalize(candidate).ok()?;
+        let metadata = fs::metadata(&canonical).ok()?;
+        (metadata.is_file() && metadata.permissions().mode() & 0o111 != 0).then_some(canonical)
+    })
 }
 
 fn read_bounded(mut reader: impl Read, limit: usize) -> (Vec<u8>, bool) {
