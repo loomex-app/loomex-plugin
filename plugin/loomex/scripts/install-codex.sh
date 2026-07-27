@@ -200,6 +200,7 @@ step "Verified release signatures and provenance"
 )
 
 step "Installation complete: Loomex Codex plugin $version and matching durable Runner are installed"
+step "Manual diagnostics command (only if an agent CLI is installed later): $HOME/.loomex/runtime/current/bin/loomex setup agents refresh --confirm"
 step "Restart Codex or open a new task, then ask for any Loomex workflow naturally"
 }
 

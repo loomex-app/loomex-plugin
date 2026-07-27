@@ -128,6 +128,12 @@ The only canonical provider/executor pairs are:
   authentication. Gemini-compatible models must be launched through `agy`;
   the legacy Gemini executable and a `gemini_cli` executor are unsupported.
 
+The executor names above are protocol identifiers, not shell commands. The
+actual user-local executables are `codex`, `claude`, and `agy`, respectively.
+When explaining a readiness error, show both values (for example, “OpenAI
+Codex (`codex`, executor `codex_cli`)”) so an internal identifier is never
+mistaken for the command the user must install.
+
 Before accepting work, call `loomex_agent_runtime_status`. Treat its
 `loomex.agent-capabilities.v2` snapshot as time-bounded by `observedAt` and
 `ttlSeconds`; refresh an expired or unknown snapshot. It is safe and redacted:
@@ -144,6 +150,11 @@ Model selection is server-owned and has three explicit behaviors:
 - ordered fallback: try only the exact targets encoded in the fallback list,
   in order. Never reorder, expand, infer, or cross to another provider outside
   that list. No fallback is permitted when the policy is `none`.
+
+Capability snapshots contain all local providers, but only the executor fixed
+by the task selection can block that task. Do not report an unauthenticated
+Claude or degraded agy runtime as a blocker for an OpenAI/Codex task unless
+that task explicitly includes one of them in its ordered fallback list.
 
 The idempotency domains are deliberately separate:
 

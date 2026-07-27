@@ -214,10 +214,13 @@ persists canonical allowlisted executables, returns redacted status, and
 requires no Runner restart. A fresh runtime-status probe followed by the next
 heartbeat confirms readiness.
 
-Setup creates the initial snapshot only when the executable config is absent.
-Later setup/apply, repair, and plugin-control calls preserve it and cannot
-refresh or overwrite it from their `PATH`; only the approved local interactive
-refresh command changes the persisted snapshot.
+Setup creates the initial snapshot when the executable config is absent. The
+verified curl installer also passes an explicit
+`--refresh-agent-executables` install intent, so reinstalling/upgrading from
+that installer refreshes the snapshot from the user-invoked install process's
+PATH. Ordinary setup/apply, repair, and plugin-control calls preserve the
+snapshot; only that installer intent or the approved local interactive refresh
+command can change it.
 
 An installed executor whose version cannot be verified remains blocked with
 `executor_version_unverified`. Its typed remediation is ordered:
