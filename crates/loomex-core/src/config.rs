@@ -3,18 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{CoreError, CoreResult};
-pub use loomex_protocol::runner_advertisement_v1::LegacyAgentTaskMode;
-
-pub use crate::executable_config::{
-    agent_executable_config_path, AgentExecutableConfig, AgentExecutableProvider,
-    AgentExecutablePublicStatus, AGENT_EXECUTABLE_CONFIG_FILE_NAME,
-    AGENT_EXECUTABLE_CONFIG_VERSION,
-};
 
 pub const CONFIG_DIR_NAME: &str = ".loomex";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 pub const LEGACY_CONFIG_DIR_NAME: &str = ".loomex-runner";
-pub const CLI_CONFIG_VERSION: u32 = 3;
+pub const CLI_CONFIG_VERSION: u32 = 2;
 pub const DEFAULT_PROFILE_NAME: &str = "default";
 pub const DEFAULT_SERVER_URL: &str = "https://loomex.app";
 pub const STAGE_SERVER_URL: &str = "https://stage.loomex.app";
@@ -35,8 +28,6 @@ pub struct RunnerConfig {
 pub struct CliConfig {
     pub config_version: u32,
     pub selected_profile: String,
-    pub agent_runtime_v2_enabled: bool,
-    pub legacy_agent_task_mode: LegacyAgentTaskMode,
     pub profiles: BTreeMap<String, CliProfile>,
 }
 
@@ -63,8 +54,6 @@ pub struct ResolvedCliSettings {
     pub profile: String,
     pub server_url: String,
     pub host_header: Option<String>,
-    pub agent_runtime_v2_enabled: bool,
-    pub legacy_agent_task_mode: LegacyAgentTaskMode,
     pub organization_id: Option<String>,
     pub project_id: Option<String>,
     pub runner_id: Option<String>,
@@ -207,8 +196,6 @@ impl Default for CliConfig {
         Self {
             config_version: CLI_CONFIG_VERSION,
             selected_profile: DEFAULT_PROFILE_NAME.to_string(),
-            agent_runtime_v2_enabled: true,
-            legacy_agent_task_mode: LegacyAgentTaskMode::DrainOnly,
             profiles,
         }
     }
@@ -249,10 +236,7 @@ impl CliConfig {
         let mut config = Self::default();
         let mut current_profile: Option<String> = None;
         let mut saw_config_version = false;
-        let mut saw_agent_runtime_v2_enabled = false;
-        let mut saw_legacy_agent_task_mode = false;
         let mut saw_profile = false;
-        let mut root_keys = std::collections::BTreeSet::new();
 
         for raw_line in content.lines() {
             let line = raw_line.trim();
@@ -277,17 +261,6 @@ impl CliConfig {
                 config.set_profile_key(profile_name, key, parsed)?;
                 continue;
             }
-            let canonical_root_key = match key {
-                "configVersion" | "config_version" => "configVersion",
-                "selectedProfile" | "defaultProfile" | "selected_profile" => "selectedProfile",
-                other => other,
-            };
-            if !root_keys.insert(canonical_root_key.to_string()) {
-                return Err(CoreError::new(
-                    "CONFIG_DUPLICATE_KEY",
-                    format!("duplicate root config key: {canonical_root_key}"),
-                ));
-            }
             match key {
                 "configVersion" | "config_version" => {
                     saw_config_version = true;
@@ -297,15 +270,6 @@ impl CliConfig {
                 }
                 "selectedProfile" | "defaultProfile" | "selected_profile" => {
                     config.selected_profile = unquote(value)?;
-                }
-                "agentRuntimeV2Enabled" => {
-                    saw_agent_runtime_v2_enabled = true;
-                    config.agent_runtime_v2_enabled =
-                        parse_toml_bool(value, "agentRuntimeV2Enabled must be true or false")?;
-                }
-                "legacyAgentTaskMode" => {
-                    saw_legacy_agent_task_mode = true;
-                    config.legacy_agent_task_mode = parse_legacy_agent_task_mode(&unquote(value)?)?;
                 }
                 _ => {
                     return Err(CoreError::new(
@@ -321,22 +285,6 @@ impl CliConfig {
         } else {
             1
         };
-        if source_config_version > CLI_CONFIG_VERSION {
-            return Err(CoreError::new(
-                "CONFIG_VERSION_UNSUPPORTED",
-                format!(
-                    "configVersion {source_config_version} is newer than supported version {CLI_CONFIG_VERSION}"
-                ),
-            ));
-        }
-        if source_config_version == CLI_CONFIG_VERSION
-            && (!saw_agent_runtime_v2_enabled || !saw_legacy_agent_task_mode)
-        {
-            return Err(CoreError::new(
-                "CONFIG_CUTOVER_CONTROLS_REQUIRED",
-                "configVersion 3 requires agentRuntimeV2Enabled and legacyAgentTaskMode",
-            ));
-        }
         if source_config_version > 0 && source_config_version < CLI_CONFIG_VERSION {
             config.migrate_from_version(source_config_version);
         }
@@ -358,12 +306,6 @@ impl CliConfig {
                 }
             }
         }
-        // Versions 1 and 2 did not have runtime cutover controls. Their only
-        // safe compatible migration is the explicit v2-on, v1-drain posture.
-        if source_version < 3 {
-            self.agent_runtime_v2_enabled = true;
-            self.legacy_agent_task_mode = LegacyAgentTaskMode::DrainOnly;
-        }
         self.config_version = CLI_CONFIG_VERSION;
     }
 
@@ -371,14 +313,6 @@ impl CliConfig {
         let mut document = String::new();
         document.push_str(&format!("configVersion = {}\n", self.config_version));
         document.push_str(&toml_line("selectedProfile", &self.selected_profile));
-        document.push_str(&format!(
-            "agentRuntimeV2Enabled = {}\n",
-            self.agent_runtime_v2_enabled
-        ));
-        document.push_str(&toml_line(
-            "legacyAgentTaskMode",
-            legacy_agent_task_mode_as_str(self.legacy_agent_task_mode),
-        ));
         for (name, profile) in &self.profiles {
             document.push('\n');
             document.push_str(&format!("[profiles.\"{}\"]\n", escape_toml_string(name)));
@@ -442,8 +376,6 @@ impl CliConfig {
             profile,
             server_url,
             host_header,
-            agent_runtime_v2_enabled: self.agent_runtime_v2_enabled,
-            legacy_agent_task_mode: self.legacy_agent_task_mode,
             organization_id: base.organization_id,
             project_id: base.project_id,
             runner_id: base.runner_id,
@@ -458,14 +390,6 @@ impl CliConfig {
         }
         if key == "selectedProfile" {
             return Ok(Some(self.selected_profile.clone()));
-        }
-        if key == "agentRuntimeV2Enabled" {
-            return Ok(Some(self.agent_runtime_v2_enabled.to_string()));
-        }
-        if key == "legacyAgentTaskMode" {
-            return Ok(Some(
-                legacy_agent_task_mode_as_str(self.legacy_agent_task_mode).to_string(),
-            ));
         }
         let Some((profile_name, profile_key)) = parse_profile_key(key) else {
             return Ok(None);
@@ -496,15 +420,6 @@ impl CliConfig {
             self.selected_profile = value;
             return self.validate();
         }
-        if key == "agentRuntimeV2Enabled" {
-            self.agent_runtime_v2_enabled =
-                parse_toml_bool(&value, "agentRuntimeV2Enabled must be true or false")?;
-            return self.validate();
-        }
-        if key == "legacyAgentTaskMode" {
-            self.legacy_agent_task_mode = parse_legacy_agent_task_mode(value.trim())?;
-            return self.validate();
-        }
         let Some((profile_name, profile_key)) = parse_profile_key(key) else {
             return Err(CoreError::new("CONFIG_KEY_UNSUPPORTED", key));
         };
@@ -516,14 +431,6 @@ impl CliConfig {
         let mut entries = vec![
             ("configVersion".to_string(), self.config_version.to_string()),
             ("selectedProfile".to_string(), self.selected_profile.clone()),
-            (
-                "agentRuntimeV2Enabled".to_string(),
-                self.agent_runtime_v2_enabled.to_string(),
-            ),
-            (
-                "legacyAgentTaskMode".to_string(),
-                legacy_agent_task_mode_as_str(self.legacy_agent_task_mode).to_string(),
-            ),
         ];
         for (name, profile) in &self.profiles {
             entries.push((
@@ -578,12 +485,10 @@ impl CliConfig {
     }
 
     fn validate(&self) -> CoreResult<()> {
-        if self.config_version == 0 || self.config_version > CLI_CONFIG_VERSION {
+        if self.config_version == 0 {
             return Err(CoreError::new(
                 "CONFIG_VERSION_UNSUPPORTED",
-                format!(
-                    "configVersion must be between 1 and supported version {CLI_CONFIG_VERSION}"
-                ),
+                "configVersion must be positive",
             ));
         }
         if self.selected_profile.trim().is_empty() {
@@ -740,32 +645,6 @@ fn unquote(value: &str) -> CoreResult<String> {
     Ok(value[1..value.len() - 1].replace("\\\"", "\""))
 }
 
-fn parse_toml_bool(value: &str, message: &'static str) -> CoreResult<bool> {
-    match value.trim() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(CoreError::new("CONFIG_PARSE_FAILED", message)),
-    }
-}
-
-fn legacy_agent_task_mode_as_str(mode: LegacyAgentTaskMode) -> &'static str {
-    match mode {
-        LegacyAgentTaskMode::DrainOnly => "drain_only",
-        LegacyAgentTaskMode::Disabled => "disabled",
-    }
-}
-
-fn parse_legacy_agent_task_mode(value: &str) -> CoreResult<LegacyAgentTaskMode> {
-    match value {
-        "drain_only" => Ok(LegacyAgentTaskMode::DrainOnly),
-        "disabled" => Ok(LegacyAgentTaskMode::Disabled),
-        _ => Err(CoreError::new(
-            "CONFIG_VALUE_INVALID",
-            "legacyAgentTaskMode must be drain_only or disabled",
-        )),
-    }
-}
-
 fn toml_line(key: &str, value: &str) -> String {
     format!("{key} = \"{}\"\n", escape_toml_string(value))
 }
@@ -861,11 +740,6 @@ mod tests {
 
         assert_eq!(CLI_CONFIG_VERSION, config.config_version);
         assert_eq!(DEFAULT_PROFILE_NAME, config.selected_profile);
-        assert!(config.agent_runtime_v2_enabled);
-        assert_eq!(
-            LegacyAgentTaskMode::DrainOnly,
-            config.legacy_agent_task_mode
-        );
         assert_eq!(DEFAULT_SERVER_URL, config.profiles["default"].server_url);
         assert_eq!(STAGE_SERVER_URL, config.profiles["stage"].server_url);
         assert_eq!(LOCAL_SERVER_URL, config.profiles["local"].server_url);
@@ -988,11 +862,6 @@ hostHeader = "loomex.localhost"
         let config = CliConfig::parse(&document).unwrap();
 
         assert_eq!("local", config.selected_profile);
-        assert!(config.agent_runtime_v2_enabled);
-        assert_eq!(
-            LegacyAgentTaskMode::DrainOnly,
-            config.legacy_agent_task_mode
-        );
         assert_eq!(
             "org_123",
             config.profiles["local"].organization_id.as_deref().unwrap()
@@ -1155,7 +1024,7 @@ hostHeader = "loomex.localhost"
         .unwrap();
 
         assert_eq!(CLI_CONFIG_VERSION, config.config_version);
-        assert!(config.to_document().starts_with("configVersion = 3\n"));
+        assert!(config.to_document().starts_with("configVersion = 2\n"));
     }
 
     #[test]
@@ -1174,12 +1043,6 @@ hostHeader = "loomex.localhost"
         config
             .set_key("selectedProfile", "dev".to_string())
             .unwrap();
-        config
-            .set_key("agentRuntimeV2Enabled", "false".to_string())
-            .unwrap();
-        config
-            .set_key("legacyAgentTaskMode", "disabled".to_string())
-            .unwrap();
 
         assert_eq!(
             Some("loomex.localhost".to_string()),
@@ -1189,136 +1052,5 @@ hostHeader = "loomex.localhost"
             "profiles.dev.serverUrl".to_string(),
             "http://127.0.0.1:28000".to_string()
         )));
-        assert_eq!(
-            Some("false".to_string()),
-            config.get_key("agentRuntimeV2Enabled").unwrap()
-        );
-        assert_eq!(
-            Some("disabled".to_string()),
-            config.get_key("legacyAgentTaskMode").unwrap()
-        );
-    }
-
-    #[test]
-    fn cli_config_strictly_parses_and_serializes_cutover_controls() {
-        let config = CliConfig::parse(
-            r#"configVersion = 3
-selectedProfile = "default"
-agentRuntimeV2Enabled = false
-legacyAgentTaskMode = "disabled"
-
-[profiles."default"]
-serverUrl = "https://loomex.app"
-"#,
-        )
-        .unwrap();
-
-        assert!(!config.agent_runtime_v2_enabled);
-        assert_eq!(LegacyAgentTaskMode::Disabled, config.legacy_agent_task_mode);
-        let document = config.to_document();
-        assert!(document.contains("agentRuntimeV2Enabled = false\n"));
-        assert!(document.contains("legacyAgentTaskMode = \"disabled\"\n"));
-        assert_eq!(config, CliConfig::parse(&document).unwrap());
-    }
-
-    #[test]
-    fn cli_config_rejects_invalid_cutover_control_values() {
-        let invalid_bool = CliConfig::parse(
-            r#"configVersion = 3
-selectedProfile = "default"
-agentRuntimeV2Enabled = "false"
-
-[profiles."default"]
-serverUrl = "https://loomex.app"
-"#,
-        )
-        .unwrap_err();
-        assert_eq!("CONFIG_PARSE_FAILED", invalid_bool.code);
-
-        let invalid_mode = CliConfig::parse(
-            r#"configVersion = 3
-selectedProfile = "default"
-legacyAgentTaskMode = "compat"
-
-[profiles."default"]
-serverUrl = "https://loomex.app"
-"#,
-        )
-        .unwrap_err();
-        assert_eq!("CONFIG_VALUE_INVALID", invalid_mode.code);
-    }
-
-    #[test]
-    fn cli_config_v3_requires_both_cutover_controls() {
-        let profile = r#"
-[profiles."default"]
-serverUrl = "https://loomex.app"
-"#;
-        for root in [
-            "configVersion = 3\nselectedProfile = \"default\"\n",
-            "configVersion = 3\nselectedProfile = \"default\"\nagentRuntimeV2Enabled = true\n",
-            "configVersion = 3\nselectedProfile = \"default\"\nlegacyAgentTaskMode = \"drain_only\"\n",
-        ] {
-            let error = CliConfig::parse(&format!("{root}{profile}")).unwrap_err();
-            assert_eq!("CONFIG_CUTOVER_CONTROLS_REQUIRED", error.code);
-        }
-    }
-
-    #[test]
-    fn cli_config_rejects_duplicate_root_cutover_controls() {
-        for duplicate in [
-            "configVersion = 3\n",
-            "agentRuntimeV2Enabled = false\n",
-            "legacyAgentTaskMode = \"disabled\"\n",
-        ] {
-            let document = format!(
-                r#"configVersion = 3
-selectedProfile = "default"
-agentRuntimeV2Enabled = true
-legacyAgentTaskMode = "drain_only"
-{duplicate}
-[profiles."default"]
-serverUrl = "https://loomex.app"
-"#
-            );
-            let error = CliConfig::parse(&document).unwrap_err();
-            assert_eq!("CONFIG_DUPLICATE_KEY", error.code);
-        }
-    }
-
-    #[test]
-    fn cli_config_v2_migration_uses_explicit_safe_cutover_defaults() {
-        let config = CliConfig::parse(
-            r#"configVersion = 2
-selectedProfile = "default"
-
-[profiles."default"]
-serverUrl = "https://loomex.app"
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(3, config.config_version);
-        assert!(config.agent_runtime_v2_enabled);
-        assert_eq!(
-            LegacyAgentTaskMode::DrainOnly,
-            config.legacy_agent_task_mode
-        );
-        assert!(config.to_document().starts_with("configVersion = 3\n"));
-    }
-
-    #[test]
-    fn cli_config_rejects_unknown_future_version() {
-        let error = CliConfig::parse(
-            r#"configVersion = 4
-selectedProfile = "default"
-
-[profiles."default"]
-serverUrl = "https://loomex.app"
-"#,
-        )
-        .unwrap_err();
-
-        assert_eq!("CONFIG_VERSION_UNSUPPORTED", error.code);
     }
 }

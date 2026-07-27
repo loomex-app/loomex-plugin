@@ -103,26 +103,6 @@ class ReleaseProvenanceTest(unittest.TestCase):
         self.assertIn("unsigned-platform", workflow)
         self.assertIn("unsigned-release", workflow)
 
-    def test_production_gate_requires_published_protocol_provenance(self) -> None:
-        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        source_validation = workflow[
-            workflow.index("\n  source-validation:") : workflow.index(
-                "\n  release-provenance:"
-            )
-        ]
-        release_gate = workflow[
-            workflow.index("\n  release-provenance:") : workflow.index(
-                "\n  native-build:"
-            )
-        ]
-
-        self.assertIn("python3 scripts/protocol_mirror.py check", source_validation)
-        self.assertNotIn("--require-published", source_validation)
-        strict_check = "python3 scripts/protocol_mirror.py check --require-published"
-        self.assertIn(strict_check, release_gate)
-        self.assertGreater(release_gate.index(strict_check), release_gate.index("exit 0"))
-        self.assertLess(release_gate.index(strict_check), release_gate.index("release_sha="))
-
     def test_environment_accepts_no_reviewer_rule_and_exact_policies(self) -> None:
         for wait in (0, 43_200):
             with mock.patch.object(

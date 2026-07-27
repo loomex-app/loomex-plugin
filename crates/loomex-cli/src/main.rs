@@ -1,19 +1,16 @@
 mod setup_transaction;
 
 use std::{
-    collections::{hash_map::DefaultHasher, BTreeMap, HashSet},
+    collections::{hash_map::DefaultHasher, HashSet},
     env, fs,
     fs::OpenOptions,
     hash::{Hash, Hasher},
-    io::{self, BufRead, BufReader, IsTerminal, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{self, Command},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex, OnceLock,
-    },
+    sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use loomex_core::release_security::sha256_hex;
@@ -21,62 +18,31 @@ use loomex_core::release_security::sha256_hex;
 use loomex_core::UnixLocalControlServer;
 use loomex_core::{
     acquire_runner_runtime_guard,
-    agent_execution_service::{
-        AgentCancellationRegistry, AgentExecutionIdentity, AgentExecutionProgress,
-        AgentExecutionProgressPayload, AgentExecutionProgressPhase, AgentExecutionProgressSink,
-        AgentExecutionService, AgentExecutionServiceOutcome,
-    },
     config::default_config_path,
     enforce_policy_decision,
     execution::{
-        AgentDeliveryRoute, AgentPendingDeliveryKind, JobRecoveryAction, JobReplaySafety,
-        RecoverableJobPhase, RecoverableRunnerJob, RemoteRunnerJobSnapshot, RemoteRunnerJobStatus,
-        RunnerJobRecoveryJournal,
+        JobRecoveryAction, JobReplaySafety, RecoverableJobPhase, RecoverableRunnerJob,
+        RemoteRunnerJobSnapshot, RemoteRunnerJobStatus, RunnerJobRecoveryJournal,
     },
     grpc::{GrpcClientConfig, StreamCredential},
-    protocol::{StreamIdentity, AGENT_RUNTIME_CAPABILITY_V2, PROTOCOL_VERSION},
-    read_local_control_token, read_recent_log_entries,
-    reconcile_pending_agent_progress_with_journal, reconcile_stale_agent_executions_at_startup,
-    release_runner_runtime_guard_for_surface, runner_runtime_guard_path, user_credential_profile,
-    AuthTokenResponse, BindingStatus, BindingValidationContext, BundledRuntimeInstall,
-    CapabilityExecutor, CapabilityRequest, CliConfig, CliConfigOverrides, CredentialKind,
-    CredentialStorageBackend, CredentialStore, DeviceLoginChallenge, FileLogSink, FsListInput,
-    FsReadInput, FsWriteInput, HttpManagementApiClient, HumanRequestSummary,
-    LocalCapabilityExecutor, LocalControlDispatcher, LocalControlPaths, LocalControlRequest,
-    LocalControlResponse, LogEntry, ManagementApiClient, ManagementCredential,
-    ManagementProjectRunnerBinding, Organization, PolicyDecision, PolicyEngine,
-    PolicyEvaluationInput, PolicyLayer, PolicyRule, PolicySource, Project, ProjectRunnerBinding,
-    ProjectRunnerBindingCreateRequest, Runner, RunnerCapabilityGrant,
-    RunnerJobCancellationDirective, RunnerServiceManifest, RunnerServicePlatform,
-    RunnerServiceSpec, RunnerSession, RunnerSessionStatus, RunnerTransportRuntime,
-    RunnerUpsertRequest, RuntimeInstaller, SbomPackage, ShellCancellationToken, ShellExecInput,
-    StreamCredentialRequest, StreamCredentialResponse, StreamSupervisor, StreamSupervisorConfig,
-    SystemCredentialStore, TransportClientConfig, TransportConnector, TransportNegotiationPolicy,
-    WebSocketClientConfig, WebSocketProxyConfig, WorkflowRunStartRequest, WorkspacePath,
-    LOCAL_CONTROL_PROTOCOL_VERSION,
+    protocol::{StreamIdentity, PROTOCOL_VERSION},
+    read_local_control_token, read_recent_log_entries, release_runner_runtime_guard_for_surface,
+    runner_runtime_guard_path, user_credential_profile, AuthTokenResponse, BindingStatus,
+    BindingValidationContext, BundledRuntimeInstall, CapabilityExecutor, CapabilityRequest,
+    CliConfig, CliConfigOverrides, CredentialKind, CredentialStorageBackend, CredentialStore,
+    DeviceLoginChallenge, FileLogSink, FsListInput, FsReadInput, FsWriteInput,
+    HttpManagementApiClient, HumanRequestSummary, LocalCapabilityExecutor, LocalControlDispatcher,
+    LocalControlPaths, LocalControlRequest, LocalControlResponse, LogEntry, ManagementApiClient,
+    ManagementCredential, ManagementProjectRunnerBinding, Organization, PolicyDecision,
+    PolicyEngine, PolicyEvaluationInput, PolicyLayer, PolicyRule, PolicySource, Project,
+    ProjectRunnerBinding, ProjectRunnerBindingCreateRequest, Runner, RunnerCapabilityGrant,
+    RunnerServiceManifest, RunnerServicePlatform, RunnerServiceSpec, RunnerSession,
+    RunnerSessionStatus, RunnerTransportRuntime, RunnerUpsertRequest, RuntimeInstaller,
+    SbomPackage, ShellCancellationToken, ShellExecInput, StreamCredentialRequest,
+    StreamCredentialResponse, StreamSupervisor, StreamSupervisorConfig, SystemCredentialStore,
+    TransportClientConfig, TransportConnector, TransportNegotiationPolicy, WebSocketClientConfig,
+    WebSocketProxyConfig, WorkflowRunStartRequest, WorkspacePath, LOCAL_CONTROL_PROTOCOL_VERSION,
 };
-use loomex_core::{
-    agent_runtime::{
-        runtime_error, CancellationToken as AgentCancellationToken, LocalAgentRuntime,
-        RuntimeConfig, RuntimeErrorContext,
-    },
-    executable_config::{
-        agent_executable_config_path, AgentExecutableConfig, AgentExecutableProvider,
-    },
-};
-use loomex_protocol::agent_runtime_v2::{
-    AgentAttemptState, AgentAttemptV2, AgentErrorCode, AgentExecutionBindingV2,
-    AgentExecutionState, AgentExecutionV2, AgentProcessDispatchV2, AgentProcessRetryKindV2,
-    AgentRetryDisposition, AgentRuntimeCapabilitySnapshotV2, ExecutorKind, ModelSelectionMode,
-    AGENT_CAPABILITY_SCHEMA_V2, AGENT_EXECUTION_SCHEMA_V2, AGENT_RUNTIME_V2_DISABLED_MESSAGE,
-    AGENT_RUNTIME_V2_DISABLED_REASON_CODE,
-};
-use loomex_protocol::{
-    validate_agent_terminal_submission, LegacyAgentTasksAdvertisementV1,
-    RunnerAgentAdvertisementV1, LEGACY_AGENT_TASK_DRAIN_CAPABILITY,
-    RUNNER_AGENT_ADVERTISEMENT_SCHEMA_V1,
-};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use setup_transaction::{
     FileSnapshot, SetupTransactionJournal, SetupTransactionOperation, SetupTransactionPhase,
@@ -323,10 +289,7 @@ fn direct_cli_is_lifecycle_mutation(args: &[String]) -> bool {
             matches!(subcommand.as_str(), "install" | "uninstall")
         }
         [command, subcommand, ..] if command == "setup" => {
-            matches!(
-                subcommand.as_str(),
-                "install" | "apply" | "rollback" | "agents"
-            )
+            matches!(subcommand.as_str(), "install" | "apply" | "rollback")
         }
         _ => false,
     }
@@ -383,27 +346,15 @@ fn run_config_with_path(
                 .set_key(key, value.clone())
                 .map_err(format_core_error)?;
             config.save(&path).map_err(format_core_error)?;
-            let service_restart_required = matches!(
-                key.as_str(),
-                "agentRuntimeV2Enabled" | "legacyAgentTaskMode"
-            );
             if options.json {
                 return Ok(json!({
                     "schemaVersion": "loomex.cli.configSet/v1",
                     "key": key,
-                    "updated": true,
-                    "serviceRestartRequired": service_restart_required,
-                    "nextAction": service_restart_required.then_some("restart_runner_service")
+                    "updated": true
                 })
                 .to_string());
             }
-            if service_restart_required {
-                Ok(format!(
-                    "updated {key}; restart the runner service before relying on the cutover change"
-                ))
-            } else {
-                Ok(format!("updated {key}"))
-            }
+            Ok(format!("updated {key}"))
         }
         [subcommand, ..] => Err(format!(
             "unknown config subcommand: {subcommand}\n{CONFIG_HELP}"
@@ -1772,11 +1723,8 @@ fn format_bindings(
         .join("\n"))
 }
 
-fn default_runner_capabilities(
-    agent_runtime_v2_enabled: bool,
-    legacy_agent_task_mode: loomex_core::LegacyAgentTaskMode,
-) -> Vec<String> {
-    let mut capabilities = [
+fn default_runner_capabilities() -> Vec<String> {
+    [
         "fs.list",
         "fs.read",
         "fs.write",
@@ -1789,14 +1737,7 @@ fn default_runner_capabilities(
     ]
     .into_iter()
     .map(str::to_string)
-    .collect::<Vec<_>>();
-    if agent_runtime_v2_enabled {
-        capabilities.push(AGENT_RUNTIME_CAPABILITY_V2.to_string());
-    }
-    if legacy_agent_task_mode == loomex_core::LegacyAgentTaskMode::DrainOnly {
-        capabilities.push(LEGACY_AGENT_TASK_DRAIN_CAPABILITY.to_string());
-    }
-    capabilities
+    .collect()
 }
 
 fn local_runner_display_name() -> String {
@@ -1849,110 +1790,11 @@ fn run_setup(args: &[String], options: &GlobalOptions) -> Result<String, String>
     }
     match args {
         [subcommand, rest @ ..] if subcommand == "install" => plugin_setup_install(rest, options),
-        [subcommand, action, rest @ ..] if subcommand == "agents" && action == "refresh" => {
-            run_setup_agent_refresh(rest, options)
-        }
-        [subcommand, action, ..] if subcommand == "agents" => Err(format!(
-            "unknown setup agents action: {action}\n{SETUP_HELP}"
-        )),
         [subcommand, ..] => Err(format!(
             "unknown setup subcommand: {subcommand}\n{SETUP_HELP}"
         )),
         [] => Ok(SETUP_HELP.to_string()),
     }
-}
-
-fn run_setup_agent_refresh(args: &[String], options: &GlobalOptions) -> Result<String, String> {
-    if options.non_interactive || !io::stdin().is_terminal() {
-        return Err(
-            "AGENT_EXECUTABLE_REFRESH_INTERACTIVE_REQUIRED: executable refresh must be approved in a local interactive terminal; it is not available through Backend, task, MCP, or non-interactive plugin-control"
-                .to_string(),
-        );
-    }
-    run_setup_agent_refresh_with(
-        args,
-        options,
-        &agent_executable_config_path(&cli_config_path()),
-        env::var_os("PATH").as_deref(),
-        true,
-    )
-}
-
-fn run_setup_agent_refresh_with(
-    args: &[String],
-    options: &GlobalOptions,
-    executable_config_path: &Path,
-    interactive_path: Option<&std::ffi::OsStr>,
-    local_interactive_terminal: bool,
-) -> Result<String, String> {
-    if options.non_interactive || !local_interactive_terminal {
-        return Err(
-            "AGENT_EXECUTABLE_REFRESH_INTERACTIVE_REQUIRED: executable refresh must be approved in a local interactive terminal; it is not available through Backend, task, MCP, or non-interactive plugin-control"
-                .to_string(),
-        );
-    }
-    let request = SetupAgentRefreshRequest::parse(args)?;
-    if !request.confirm {
-        return Err(
-            "AGENT_EXECUTABLE_REFRESH_CONFIRMATION_REQUIRED: pass --confirm after reviewing the local executable refresh"
-                .to_string(),
-        );
-    }
-    let observed_at_epoch_ms = current_epoch_ms()?;
-    let (mode, provider, refreshed) = match (request.provider, request.path) {
-        (Some(provider), Some(path)) => {
-            let refreshed = AgentExecutableConfig::refresh_and_save_approved_path(
-                executable_config_path,
-                provider,
-                &path,
-                observed_at_epoch_ms,
-            )
-            .map_err(format_core_error)?;
-            ("approved_explicit_path", Some(provider), refreshed)
-        }
-        (None, None) => {
-            let refreshed = AgentExecutableConfig::refresh_and_save_from_interactive_path(
-                executable_config_path,
-                interactive_path,
-                observed_at_epoch_ms,
-            )
-            .map_err(format_core_error)?;
-            ("interactive_path", None, refreshed)
-        }
-        _ => {
-            return Err(
-                "AGENT_EXECUTABLE_REFRESH_PATH_PAIR_REQUIRED: --provider and --path must be supplied together"
-                    .to_string(),
-            )
-        }
-    };
-    let status = refreshed.public_status();
-    if options.json {
-        return Ok(json!({
-            "schemaVersion": "loomex.cli.agentExecutableRefresh/v1",
-            "refreshed": true,
-            "mode": mode,
-            "provider": provider.map(AgentExecutableProvider::as_str),
-            "observedAtEpochMs": observed_at_epoch_ms,
-            "serviceRestartRequired": false,
-            "nextHeartbeatUsesPersistedConfiguration": true,
-            "runtimes": status,
-        })
-        .to_string());
-    }
-    let configured = status
-        .iter()
-        .filter(|entry| entry.configured)
-        .map(|entry| entry.provider.as_str())
-        .collect::<Vec<_>>();
-    Ok(format!(
-        "Agent executable discovery refreshed locally. Configured: {}. No service restart is required; the next runtime status/heartbeat reloads the persisted configuration.",
-        if configured.is_empty() {
-            "none".to_string()
-        } else {
-            configured.join(", ")
-        }
-    ))
 }
 
 fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<String, String> {
@@ -1988,12 +1830,9 @@ fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<Stri
             .and_then(Value::as_bool)
             == Some(true);
     if already_current {
-        let refreshed = request.refresh_agent_executables
-            && refresh_agent_executables_for_install(&cli_config_path())?;
         return Ok(json!({
             "schemaVersion": "loomex.cli.setupInstall/v1",
             "updated": false,
-            "agentExecutablesRefreshed": refreshed,
             "version": request.version,
             "channel": request.channel,
             "setupStatus": status,
@@ -2023,8 +1862,6 @@ fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<Stri
         }),
         options,
     )?;
-    let refreshed = request.refresh_agent_executables
-        && refresh_agent_executables_for_install(&cli_config_path())?;
     Ok(json!({
         "schemaVersion": "loomex.cli.setupInstall/v1",
         "updated": true,
@@ -2032,19 +1869,8 @@ fn plugin_setup_install(args: &[String], options: &GlobalOptions) -> Result<Stri
         "channel": request.channel,
         "plan": plan,
         "apply": applied,
-        "agentExecutablesRefreshed": refreshed,
     })
     .to_string())
-}
-
-fn refresh_agent_executables_for_install(config_path: &Path) -> Result<bool, String> {
-    AgentExecutableConfig::refresh_and_save_from_interactive_path(
-        &agent_executable_config_path(config_path),
-        env::var_os("PATH").as_deref(),
-        current_epoch_ms()?,
-    )
-    .map(|_| true)
-    .map_err(format_core_error)
 }
 
 fn run_runner(args: &[String], options: &GlobalOptions) -> Result<String, String> {
@@ -3368,10 +3194,6 @@ fn plugin_setup_apply_transaction(
             .map_err(format_core_error)?;
     }
     transaction_store.update_phase(journal, SetupTransactionPhase::ConfigSaved)?;
-    discover_agent_executables_for_setup(
-        &agent_executable_config_path(&config_path),
-        env::var_os("PATH").as_deref(),
-    )?;
 
     // The stable runtime is published before service registration. If service
     // activation fails, restore the prior active pointer when one exists and
@@ -3450,25 +3272,6 @@ fn plugin_setup_apply_transaction(
         "stoppedForDeferredStart": stopped_for_deferred_start,
         "service": service,
     }))
-}
-
-fn discover_agent_executables_for_setup(
-    executable_config_path: &Path,
-    interactive_path: Option<&std::ffi::OsStr>,
-) -> Result<AgentExecutableConfig, String> {
-    // Setup/bootstrap may create the initial snapshot, but it must never act as
-    // a non-interactive refresh route. Once persisted, only the explicitly
-    // confirmed local `setup agents refresh` command may update discovery.
-    if executable_config_path.exists() {
-        return AgentExecutableConfig::load_or_default(executable_config_path)
-            .map_err(format_core_error);
-    }
-    AgentExecutableConfig::discover_and_save(
-        executable_config_path,
-        interactive_path,
-        current_epoch_ms()?,
-    )
-    .map_err(format_core_error)
 }
 
 fn plugin_begin_setup_transaction(
@@ -5705,8 +5508,6 @@ struct RunnerServiceRuntimeConfig {
     binding_id: String,
     local_root_path: String,
     runner_device_id: String,
-    agent_runtime_v2_enabled: bool,
-    legacy_agent_task_mode: loomex_core::LegacyAgentTaskMode,
     stream_credential: StreamCredentialResponse,
 }
 
@@ -6088,23 +5889,12 @@ fn run_runner_service_run(args: &[String], options: &GlobalOptions) -> Result<St
     let mut client =
         HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
             .map_err(format_core_error)?;
-    let agent_journal =
-        open_agent_execution_journal(&service_options.config_path, resolved.binding_id.as_deref())?;
-    let agent_cancellations = Arc::new(AgentCancellationRegistry::default());
     if !service_options.once {
         let credential = load_credential(&store, &resolved.profile)?;
-        let user_control_credential = store
-            .load(&user_credential_profile(&resolved.profile))
-            .ok()
-            .flatten();
         start_local_control_server(
             client.clone(),
             credential,
-            user_control_credential,
             &resolved,
-            &service_options.config_path,
-            Arc::clone(&agent_journal),
-            Arc::clone(&agent_cancellations),
             service_options.log_path.clone(),
         )?;
     }
@@ -6115,46 +5905,24 @@ fn run_runner_service_run(args: &[String], options: &GlobalOptions) -> Result<St
         &store,
         &mut client,
         &mut launcher,
-        agent_journal,
-        agent_cancellations,
     )
 }
 
 #[cfg(unix)]
-#[allow(clippy::too_many_arguments)]
 fn start_local_control_server(
     client: HttpManagementApiClient,
     credential: ManagementCredential,
-    user_control_credential: Option<ManagementCredential>,
     resolved: &loomex_core::ResolvedCliSettings,
-    config_path: &Path,
-    agent_journal: Arc<Mutex<loomex_core::execution::AgentExecutionJournal>>,
-    agent_cancellations: Arc<AgentCancellationRegistry>,
     log_path: Option<PathBuf>,
 ) -> Result<(), String> {
     let paths = LocalControlPaths::from_environment().map_err(format_core_error)?;
-    let executable_config_path = agent_executable_config_path(config_path);
-    reconcile_stale_agent_executions_at_startup(
-        client.clone(),
-        &credential,
-        &executable_config_path,
-        &agent_journal,
-    )
-    .map_err(format_core_error)?;
-    let dispatcher = LocalControlDispatcher::new(client, credential)
-        .with_user_control_credential(user_control_credential)
-        .with_context(
-            resolved.project_id.clone(),
-            resolved.runner_id.clone(),
-            resolved.binding_id.clone(),
-            resolved.workspace_path.clone(),
-            log_path.or_else(|| env::var_os(LOG_PATH_ENV).map(PathBuf::from)),
-        )
-        .with_agent_cutover(
-            resolved.agent_runtime_v2_enabled,
-            resolved.legacy_agent_task_mode,
-        )
-        .with_agent_runtime(executable_config_path, agent_journal, agent_cancellations);
+    let dispatcher = LocalControlDispatcher::new(client, credential).with_context(
+        resolved.project_id.clone(),
+        resolved.runner_id.clone(),
+        resolved.binding_id.clone(),
+        resolved.workspace_path.clone(),
+        log_path.or_else(|| env::var_os(LOG_PATH_ENV).map(PathBuf::from)),
+    );
     let server = UnixLocalControlServer::bind(paths, dispatcher).map_err(format_core_error)?;
     thread::Builder::new()
         .name("loomex-local-control".to_string())
@@ -6174,18 +5942,14 @@ fn start_local_control_server(
 fn start_local_control_server(
     _client: HttpManagementApiClient,
     _credential: ManagementCredential,
-    _user_control_credential: Option<ManagementCredential>,
     _resolved: &loomex_core::ResolvedCliSettings,
-    _config_path: &Path,
-    _agent_journal: Arc<Mutex<loomex_core::execution::AgentExecutionJournal>>,
-    _agent_cancellations: Arc<AgentCancellationRegistry>,
     _log_path: Option<PathBuf>,
 ) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(test)]
-fn run_runner_service_run_with<C: ManagementApiClient + Clone + Send + 'static>(
+fn run_runner_service_run_with<C: ManagementApiClient>(
     args: &[String],
     options: &GlobalOptions,
     store: &dyn CredentialStore,
@@ -6204,31 +5968,16 @@ fn run_runner_service_run_with<C: ManagementApiClient + Clone + Send + 'static>(
             |key| env::var(key).ok(),
         )
         .map_err(format_core_error)?;
-    let agent_journal =
-        open_agent_execution_journal(&service_options.config_path, resolved.binding_id.as_deref())?;
-    let agent_cancellations = Arc::new(AgentCancellationRegistry::default());
-    run_runner_service_run_parsed(
-        service_options,
-        options,
-        &resolved,
-        store,
-        client,
-        launcher,
-        agent_journal,
-        agent_cancellations,
-    )
+    run_runner_service_run_parsed(service_options, options, &resolved, store, client, launcher)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_runner_service_run_parsed<C: ManagementApiClient + Clone + Send + 'static>(
+fn run_runner_service_run_parsed<C: ManagementApiClient>(
     mut service_options: RunnerServiceOptions,
     options: &GlobalOptions,
     resolved: &loomex_core::ResolvedCliSettings,
     store: &dyn CredentialStore,
     client: &mut C,
     _launcher: &mut dyn RunnerServiceRuntimeLauncher,
-    agent_journal: Arc<Mutex<loomex_core::execution::AgentExecutionJournal>>,
-    agent_cancellations: Arc<AgentCancellationRegistry>,
 ) -> Result<String, String> {
     let log_path = service_options
         .log_path
@@ -6254,23 +6003,13 @@ fn run_runner_service_run_parsed<C: ManagementApiClient + Clone + Send + 'static
             .map_err(format_core_error)?;
     let recovery_path = runner_job_recovery_path(guard.path());
     let mut recovery = RunnerJobRecoveryJournal::open(&recovery_path).map_err(format_core_error)?;
-    let progress_outbox =
-        RunnerJobAgentProgressOutbox::open(recovery_path.with_extension("agent-events.json"))?;
-    let agent_context = RunnerAgentExecutionContext {
-        config_path: service_options.config_path.clone(),
-        journal: agent_journal,
-        cancellations: agent_cancellations,
-        progress_outbox: Arc::new(Mutex::new(progress_outbox)),
-    };
     if service_options.once {
         let start = run_runner_control_service_once(
             client,
             &credential,
             resolved,
             binding_id,
-            &service_options.config_path,
             &mut recovery,
-            &agent_context,
         )?;
         append_runner_service_log(
             &log_path,
@@ -6304,787 +6043,28 @@ fn run_runner_service_run_parsed<C: ManagementApiClient + Clone + Send + 'static
         &credential,
         resolved,
         binding_id,
-        &service_options.config_path,
         &mut recovery,
-        &agent_context,
         &log_path,
     )?;
     drop(guard);
     Ok(String::new())
 }
 
-#[derive(Clone)]
-struct RunnerAgentExecutionContext {
-    config_path: PathBuf,
-    journal: Arc<Mutex<loomex_core::execution::AgentExecutionJournal>>,
-    cancellations: Arc<AgentCancellationRegistry>,
-    progress_outbox: Arc<Mutex<RunnerJobAgentProgressOutbox>>,
-}
-
-const RUNNER_JOB_AGENT_PROGRESS_OUTBOX_SCHEMA: &str = "loomex.runner-job-agent-progress-outbox/v1";
-const RUNNER_JOB_AGENT_PROGRESS_OUTBOX_MAX_ENTRIES: usize = 256;
-const RUNNER_JOB_AGENT_PROGRESS_OUTBOX_MAX_BYTES: usize = 96 * 1024 * 1024;
-const RUNNER_JOB_AGENT_PROGRESS_SEND_ATTEMPTS: usize = 3;
-#[cfg(not(test))]
-const RUNNER_AGENT_CANCELLATION_CONVERGENCE_BUDGET: Duration = Duration::from_secs(15);
-#[cfg(test)]
-const RUNNER_AGENT_CANCELLATION_CONVERGENCE_BUDGET: Duration = Duration::from_millis(100);
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RunnerJobAgentProgressOutboxDocument {
-    schema_version: String,
-    pending: Vec<PendingRunnerJobAgentProgress>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PendingRunnerJobAgentProgress {
-    job_id: String,
-    request_id: String,
-    sequence: u64,
-    event: Value,
-}
-
-struct RunnerJobAgentProgressOutbox {
-    path: PathBuf,
-    document: RunnerJobAgentProgressOutboxDocument,
-}
-
-impl RunnerJobAgentProgressOutbox {
-    fn open(path: PathBuf) -> Result<Self, String> {
-        let document = if path.exists() {
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_READ_FAILED".to_string())?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(
-                    "AGENT_JOB_PROGRESS_OUTBOX_INSECURE: outbox must be a regular file".to_string(),
-                );
-            }
-            validate_cli_private_file(&metadata)?;
-            if metadata.len() > RUNNER_JOB_AGENT_PROGRESS_OUTBOX_MAX_BYTES as u64 {
-                return Err("AGENT_JOB_PROGRESS_OUTBOX_TOO_LARGE".to_string());
-            }
-            serde_json::from_slice(
-                &fs::read(&path)
-                    .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_READ_FAILED".to_string())?,
-            )
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_CORRUPT".to_string())?
-        } else {
-            RunnerJobAgentProgressOutboxDocument {
-                schema_version: RUNNER_JOB_AGENT_PROGRESS_OUTBOX_SCHEMA.to_string(),
-                pending: Vec::new(),
-            }
-        };
-        if document.schema_version != RUNNER_JOB_AGENT_PROGRESS_OUTBOX_SCHEMA
-            || document.pending.len() > RUNNER_JOB_AGENT_PROGRESS_OUTBOX_MAX_ENTRIES
-        {
-            return Err("AGENT_JOB_PROGRESS_OUTBOX_CORRUPT".to_string());
-        }
-        Ok(Self { path, document })
-    }
-
-    fn enqueue(&mut self, pending: PendingRunnerJobAgentProgress) -> loomex_core::CoreResult<()> {
-        if pending.job_id.is_empty()
-            || pending.request_id.is_empty()
-            || pending.sequence == 0
-            || !pending.event.is_object()
-        {
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_INVALID",
-                "runner job agent progress identity is invalid",
-            ));
-        }
-        if let Some(existing) = self.document.pending.iter().find(|existing| {
-            existing.job_id == pending.job_id && existing.sequence == pending.sequence
-        }) {
-            if existing == &pending {
-                return Ok(());
-            }
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_CONFLICT",
-                "runner job agent progress sequence has a different durable payload",
-            ));
-        }
-        if self.document.pending.len() >= RUNNER_JOB_AGENT_PROGRESS_OUTBOX_MAX_ENTRIES {
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_FULL",
-                "runner job agent progress outbox is full",
-            ));
-        }
-        self.document.pending.push(pending);
-        self.document
-            .pending
-            .sort_by_key(|item| (item.job_id.clone(), item.sequence));
-        self.persist().map_err(|_| {
-            loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED",
-                "runner job agent progress could not be durably persisted",
-            )
-        })
-    }
-
-    fn pending_for_job(&self, job_id: &str) -> Vec<PendingRunnerJobAgentProgress> {
-        self.document
-            .pending
-            .iter()
-            .filter(|pending| {
-                pending.job_id == job_id && !runner_job_agent_progress_is_terminal(pending)
-            })
-            .cloned()
-            .collect()
-    }
-
-    fn terminal_for_job(&self, job_id: &str) -> Result<Option<(u64, Value)>, String> {
-        let mut terminal = self.document.pending.iter().filter(|pending| {
-            pending.job_id == job_id && runner_job_agent_progress_is_terminal(pending)
-        });
-        let Some(pending) = terminal.next() else {
-            return Ok(None);
-        };
-        if terminal.next().is_some() {
-            return Err("AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_CONFLICT".to_string());
-        }
-        let value = pending
-            .event
-            .pointer("/payload/value")
-            .cloned()
-            .ok_or_else(|| "AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_INVALID".to_string())?;
-        Ok(Some((pending.sequence, value)))
-    }
-
-    fn supersede_terminal(
-        &mut self,
-        pending: PendingRunnerJobAgentProgress,
-    ) -> loomex_core::CoreResult<()> {
-        let terminal_indexes = self
-            .document
-            .pending
-            .iter()
-            .enumerate()
-            .filter(|(_, existing)| {
-                existing.job_id == pending.job_id && runner_job_agent_progress_is_terminal(existing)
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        if terminal_indexes.is_empty() {
-            return self.enqueue(pending);
-        }
-        if terminal_indexes.len() != 1 {
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_CONFLICT",
-                "runner job has multiple durable terminal progress records",
-            ));
-        }
-        let index = terminal_indexes[0];
-        let existing = &self.document.pending[index];
-        if existing == &pending {
-            return Ok(());
-        }
-        if existing.request_id != pending.request_id || existing.sequence >= pending.sequence {
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_CONFLICT",
-                "runner job terminal can only be superseded by a newer terminal for the same request",
-            ));
-        }
-        self.document.pending[index] = pending;
-        self.persist().map_err(|_| {
-            loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED",
-                "superseding runner job terminal progress could not be persisted",
-            )
-        })
-    }
-
-    fn replace_prestart_terminal(
-        &mut self,
-        pending: PendingRunnerJobAgentProgress,
-        request: &loomex_protocol::AgentTaskRequestV2,
-    ) -> loomex_core::CoreResult<()> {
-        let terminal_indexes = self
-            .document
-            .pending
-            .iter()
-            .enumerate()
-            .filter(|(_, existing)| {
-                existing.job_id == pending.job_id && runner_job_agent_progress_is_terminal(existing)
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        if terminal_indexes.len() != 1 {
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID",
-                "pre-start cancellation requires exactly one durable terminal",
-            ));
-        }
-        let index = terminal_indexes[0];
-        let existing = &self.document.pending[index];
-        if existing == &pending {
-            return Ok(());
-        }
-        if existing.job_id != pending.job_id
-            || existing.request_id != pending.request_id
-            || existing.sequence != pending.sequence
-        {
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID",
-                "pre-start cancellation terminal identity changed",
-            ));
-        }
-        let rejected: AgentExecutionV2 =
-            serde_json::from_value(existing.event["payload"]["value"].clone()).map_err(|_| {
-                loomex_core::CoreError::new(
-                    "AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID",
-                    "durable pre-start rejection is invalid",
-                )
-            })?;
-        let cancelled: AgentExecutionV2 =
-            serde_json::from_value(pending.event["payload"]["value"].clone()).map_err(|_| {
-                loomex_core::CoreError::new(
-                    "AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID",
-                    "pre-start cancellation terminal is invalid",
-                )
-            })?;
-        rejected
-            .validate_prestart_cancellation_replacement(&cancelled, request)
-            .map_err(|_| {
-                loomex_core::CoreError::new(
-                    "AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID",
-                    "pre-start cancellation is not an authoritative replacement",
-                )
-            })?;
-        self.document.pending[index] = pending;
-        self.persist().map_err(|_| {
-            loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED",
-                "replacing pre-start terminal progress could not be durably persisted",
-            )
-        })
-    }
-
-    fn acknowledge(&mut self, job_id: &str, sequence: u64) -> loomex_core::CoreResult<()> {
-        let before = self.document.pending.len();
-        self.document
-            .pending
-            .retain(|pending| pending.job_id != job_id || pending.sequence != sequence);
-        if self.document.pending.len() == before {
-            return Err(loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_INCONSISTENT",
-                "acknowledged runner job agent progress was not pending",
-            ));
-        }
-        self.persist().map_err(|_| {
-            loomex_core::CoreError::new(
-                "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED",
-                "runner job agent progress acknowledgement could not be persisted",
-            )
-        })
-    }
-
-    fn persist(&self) -> Result<(), String> {
-        let bytes = serde_json::to_vec(&self.document)
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_SERIALIZATION_FAILED".to_string())?;
-        if bytes.len() > RUNNER_JOB_AGENT_PROGRESS_OUTBOX_MAX_BYTES {
-            return Err("AGENT_JOB_PROGRESS_OUTBOX_TOO_LARGE".to_string());
-        }
-        let parent = self
-            .path
-            .parent()
-            .ok_or_else(|| "AGENT_JOB_PROGRESS_OUTBOX_PATH_INVALID".to_string())?;
-        fs::create_dir_all(parent)
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED".to_string())?;
-        set_cli_private_dir(parent)?;
-        let mut random = [0_u8; 8];
-        getrandom::fill(&mut random)
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED".to_string())?;
-        let suffix = random
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let temporary = self
-            .path
-            .with_extension(format!("tmp-{}-{suffix}", process::id()));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary)
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED".to_string())?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED".to_string())?;
-        set_cli_private_file(&temporary)?;
-        fs::rename(&temporary, &self.path).map_err(|_| {
-            let _ = fs::remove_file(&temporary);
-            "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED".to_string()
-        })?;
-        set_cli_private_file(&self.path)?;
-        #[cfg(unix)]
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_WRITE_FAILED".to_string())?;
-        Ok(())
-    }
-}
-
-struct RunnerJobAgentProgressSink<C> {
-    client: Mutex<C>,
-    credential: ManagementCredential,
-    session_id: String,
-    job_id: String,
-    predecessor_job_id: Option<String>,
-    job_idempotency_key: String,
-    lease_version: Arc<AtomicU64>,
-    outbox: Arc<Mutex<RunnerJobAgentProgressOutbox>>,
-}
-
-impl<C: ManagementApiClient + Send> AgentExecutionProgressSink for RunnerJobAgentProgressSink<C> {
-    fn delivery_route(&self) -> AgentDeliveryRoute {
-        AgentDeliveryRoute::RunnerJob {
-            job_id: self.job_id.clone(),
-            predecessor_job_id: self.predecessor_job_id.clone(),
-        }
-    }
-
-    fn on_progress(&self, progress: AgentExecutionProgress) -> loomex_core::CoreResult<()> {
-        let job_terminal = matches!(
-            progress.phase,
-            AgentExecutionProgressPhase::Completed
-                | AgentExecutionProgressPhase::Failed
-                | AgentExecutionProgressPhase::Cancelled
-                | AgentExecutionProgressPhase::Indeterminate
-        );
-        // Blocked is nonterminal for the logical agent execution, but terminal for this runner
-        // job process. Keep its exact envelope in the durable private spool until the dedicated
-        // Backend defer endpoint accepts it; never downgrade it to an ordinary progress event.
-        let spooled_for_job_terminal =
-            job_terminal || progress.phase == AgentExecutionProgressPhase::Blocked;
-        let payload = match progress.payload {
-            AgentExecutionProgressPayload::Execution(execution) => serde_json::to_value(execution)
-                .map_err(|_| {
-                    loomex_core::CoreError::new(
-                        "AGENT_PROGRESS_SERIALIZATION_FAILED",
-                        "agent execution progress could not be serialized",
-                    )
-                })?,
-            AgentExecutionProgressPayload::SessionCheckpoint(checkpoint) => {
-                serde_json::to_value(checkpoint).map_err(|_| {
-                    loomex_core::CoreError::new(
-                        "AGENT_PROGRESS_SERIALIZATION_FAILED",
-                        "agent checkpoint progress could not be serialized",
-                    )
-                })?
-            }
-        };
-        let phase = runner_agent_progress_phase(progress.phase);
-        let event = json!({
-            "eventType": format!("agent.{phase}"),
-            "stream": "",
-            "message": format!("agent execution {phase}"),
-            "payload": {
-                "requestId": progress.request_id,
-                "sequence": progress.sequence,
-                "phase": phase,
-                "value": payload,
-            }
-        });
-        let pending = PendingRunnerJobAgentProgress {
-            job_id: self.job_id.clone(),
-            request_id: progress.request_id,
-            sequence: progress.sequence,
-            event,
-        };
-        if job_terminal {
-            let execution: AgentExecutionV2 = serde_json::from_value(
-                pending.event["payload"]["value"].clone(),
-            )
-            .map_err(|_| {
-                loomex_core::CoreError::new(
-                    "AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_INVALID",
-                    "runner job terminal agent execution is invalid",
-                )
-            })?;
-            let submission = match agent_job_service_outcome(
-                AgentExecutionServiceOutcome::Executed(execution),
-            ) {
-                Ok(result) => json!({
-                    "sessionId": self.session_id,
-                    "leaseVersion": self.lease_version.load(Ordering::Acquire),
-                    "idempotencyKey": self.job_idempotency_key,
-                    "result": result,
-                }),
-                Err(error) => json!({
-                    "sessionId": self.session_id,
-                    "leaseVersion": self.lease_version.load(Ordering::Acquire),
-                    "idempotencyKey": self.job_idempotency_key,
-                    "error": error,
-                }),
-            };
-            validate_agent_terminal_submission(&submission).map_err(|_| {
-                loomex_core::CoreError::new(
-                    "AGENT_TERMINAL_SUBMISSION_TOO_LARGE",
-                    "runner job terminal submission exceeds the bounded Backend limit",
-                )
-            })?;
-        }
-        self.outbox
-            .lock()
-            .map_err(|_| {
-                loomex_core::CoreError::new(
-                    "AGENT_JOB_PROGRESS_OUTBOX_POISONED",
-                    "runner job agent progress outbox lock is poisoned",
-                )
-            })?
-            .enqueue(pending.clone())?;
-        // The Backend deliberately rejects terminal agent events. Keeping the exact terminal
-        // envelope in this private durable spool closes the service-result -> job-terminal gap;
-        // only the complete/fail endpoint may consume it.
-        if spooled_for_job_terminal {
-            return Ok(());
-        }
-        send_runner_job_agent_progress_bounded(
-            &self.client,
-            &self.credential,
-            &self.session_id,
-            self.lease_version.load(Ordering::Acquire),
-            &pending,
-        )?;
-        self.outbox
-            .lock()
-            .map_err(|_| {
-                loomex_core::CoreError::new(
-                    "AGENT_JOB_PROGRESS_OUTBOX_POISONED",
-                    "runner job agent progress outbox lock is poisoned",
-                )
-            })?
-            .acknowledge(&pending.job_id, pending.sequence)?;
-        Ok(())
-    }
-
-    fn backend_acknowledged(&self, phase: AgentExecutionProgressPhase) -> bool {
-        !matches!(
-            phase,
-            AgentExecutionProgressPhase::Blocked
-                | AgentExecutionProgressPhase::Completed
-                | AgentExecutionProgressPhase::Failed
-                | AgentExecutionProgressPhase::Cancelled
-                | AgentExecutionProgressPhase::Indeterminate
-        )
-    }
-}
-
-fn runner_job_agent_progress_is_terminal(pending: &PendingRunnerJobAgentProgress) -> bool {
-    matches!(
-        pending
-            .event
-            .pointer("/payload/phase")
-            .and_then(Value::as_str),
-        Some("blocked" | "completed" | "failed" | "cancelled" | "indeterminate")
-    )
-}
-
-fn send_runner_job_agent_progress_bounded<C: ManagementApiClient + Send>(
-    client: &Mutex<C>,
-    credential: &ManagementCredential,
-    session_id: &str,
-    lease_version: u64,
-    pending: &PendingRunnerJobAgentProgress,
-) -> loomex_core::CoreResult<()> {
-    for _ in 0..RUNNER_JOB_AGENT_PROGRESS_SEND_ATTEMPTS {
-        let result = client
-            .lock()
-            .map_err(|_| {
-                loomex_core::CoreError::new(
-                    "RUNNER_JOB_CLIENT_POISONED",
-                    "runner job progress client lock is poisoned",
-                )
-            })?
-            .append_runner_job_events_leased(
-                credential,
-                session_id,
-                &pending.job_id,
-                lease_version,
-                vec![pending.event.clone()],
-            );
-        if result.is_ok() {
-            return Ok(());
-        }
-    }
-    Err(loomex_core::CoreError::new(
-        "AGENT_JOB_PROGRESS_DELIVERY_UNAVAILABLE",
-        "runner job agent progress exhausted its bounded delivery retry budget",
-    ))
-}
-
-fn materialize_runner_job_agent_progress(
-    job_id: &str,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<(), String> {
-    let pending = agent_context
-        .journal
-        .lock()
-        .map_err(|_| "AGENT_JOURNAL_POISONED".to_string())?
-        .entries()
-        .iter()
-        .filter_map(|entry| {
-            let route_matches = matches!(
-                &entry.delivery_route,
-                AgentDeliveryRoute::RunnerJob {
-                    job_id: owned_job_id,
-                    ..
-                } if owned_job_id == job_id
-            );
-            route_matches
-                .then(|| {
-                    entry
-                        .pending_delivery
-                        .as_ref()
-                        .map(|delivery| (entry.request_id.clone(), delivery.clone()))
-                })
-                .flatten()
-        })
-        .collect::<Vec<_>>();
-
-    for (request_id, delivery) in pending {
-        let (phase, value) = match delivery.kind {
-            AgentPendingDeliveryKind::Checkpoint => {
-                ("session_checkpointed", delivery.payload.clone())
-            }
-            AgentPendingDeliveryKind::Execution
-            | AgentPendingDeliveryKind::Deferred
-            | AgentPendingDeliveryKind::Terminal => {
-                let execution: AgentExecutionV2 = serde_json::from_value(delivery.payload.clone())
-                    .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_JOURNAL_PAYLOAD_INVALID".to_string())?;
-                let kind_matches_state = match delivery.kind {
-                    AgentPendingDeliveryKind::Execution => {
-                        !execution.state.is_terminal()
-                            && execution.state != AgentExecutionState::Blocked
-                    }
-                    AgentPendingDeliveryKind::Deferred => {
-                        execution.state == AgentExecutionState::Blocked
-                    }
-                    AgentPendingDeliveryKind::Terminal => execution.state.is_terminal(),
-                    AgentPendingDeliveryKind::Checkpoint => unreachable!(),
-                };
-                if execution.request_id != request_id || !kind_matches_state {
-                    return Err("AGENT_JOB_PROGRESS_OUTBOX_JOURNAL_PAYLOAD_INVALID".to_string());
-                }
-                let phase = match execution.state {
-                    AgentExecutionState::Queued => "queued",
-                    AgentExecutionState::Probing => "probing",
-                    AgentExecutionState::Blocked => "blocked",
-                    AgentExecutionState::Running => "running",
-                    AgentExecutionState::Completed => "completed",
-                    AgentExecutionState::Failed => "failed",
-                    AgentExecutionState::Cancelled => "cancelled",
-                    AgentExecutionState::Indeterminate => "indeterminate",
-                };
-                (phase, delivery.payload.clone())
-            }
-        };
-        let event = json!({
-            "eventType": format!("agent.{phase}"),
-            "stream": "",
-            "message": format!("agent execution {phase}"),
-            "payload": {
-                "requestId": request_id.clone(),
-                "sequence": delivery.sequence,
-                "phase": phase,
-                "value": value,
-            }
-        });
-        let pending = PendingRunnerJobAgentProgress {
-            job_id: job_id.to_string(),
-            request_id,
-            sequence: delivery.sequence,
-            event,
-        };
-        let mut outbox = agent_context
-            .progress_outbox
-            .lock()
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?;
-        if delivery.kind == AgentPendingDeliveryKind::Terminal {
-            outbox
-                .supersede_terminal(pending)
-                .map_err(format_core_error)?;
-        } else {
-            outbox.enqueue(pending).map_err(format_core_error)?;
-        }
-    }
-    Ok(())
-}
-
-fn drain_runner_job_agent_progress<C: ManagementApiClient + Send>(
-    client: &mut C,
-    credential: &ManagementCredential,
-    session_id: &str,
-    lease_version: u64,
-    job_id: &str,
-    outbox: &Arc<Mutex<RunnerJobAgentProgressOutbox>>,
-    journal: &Arc<Mutex<loomex_core::execution::AgentExecutionJournal>>,
-) -> Result<(), String> {
-    let pending = outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .pending_for_job(job_id);
-    for update in pending {
-        let mut delivered = false;
-        for _ in 0..RUNNER_JOB_AGENT_PROGRESS_SEND_ATTEMPTS {
-            if client
-                .append_runner_job_events_leased(
-                    credential,
-                    session_id,
-                    job_id,
-                    lease_version,
-                    vec![update.event.clone()],
-                )
-                .is_ok()
-            {
-                delivered = true;
-                break;
-            }
-        }
-        if !delivered {
-            return Err("AGENT_JOB_PROGRESS_DELIVERY_UNAVAILABLE".to_string());
-        }
-        {
-            let mut journal = journal
-                .lock()
-                .map_err(|_| "AGENT_JOURNAL_POISONED".to_string())?;
-            if journal
-                .pending_delivery(&update.request_id)
-                .map_err(format_core_error)?
-                .is_some_and(|pending| pending.sequence == update.sequence)
-            {
-                journal
-                    .acknowledge_delivery(&update.request_id, update.sequence)
-                    .map_err(format_core_error)?;
-            }
-        }
-        outbox
-            .lock()
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-            .acknowledge(job_id, update.sequence)
-            .map_err(format_core_error)?;
-    }
-    Ok(())
-}
-
-fn drain_runner_job_agent_nonterminal_progress<C: ManagementApiClient + Send>(
-    client: &mut C,
-    credential: &ManagementCredential,
-    session_id: &str,
-    lease_version: u64,
-    job_id: &str,
-    outbox: &Arc<Mutex<RunnerJobAgentProgressOutbox>>,
-    journal: &Arc<Mutex<loomex_core::execution::AgentExecutionJournal>>,
-) -> Result<(), String> {
-    let pending = outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .pending_for_job(job_id)
-        .into_iter()
-        .filter(|update| !runner_job_agent_progress_is_terminal(update))
-        .collect::<Vec<_>>();
-    for update in pending {
-        let mut delivered = false;
-        for _ in 0..RUNNER_JOB_AGENT_PROGRESS_SEND_ATTEMPTS {
-            if client
-                .append_runner_job_events_leased(
-                    credential,
-                    session_id,
-                    job_id,
-                    lease_version,
-                    vec![update.event.clone()],
-                )
-                .is_ok()
-            {
-                delivered = true;
-                break;
-            }
-        }
-        if !delivered {
-            return Err("AGENT_JOB_PROGRESS_DELIVERY_UNAVAILABLE".to_string());
-        }
-        {
-            let mut journal = journal
-                .lock()
-                .map_err(|_| "AGENT_JOURNAL_POISONED".to_string())?;
-            if journal
-                .pending_delivery(&update.request_id)
-                .map_err(format_core_error)?
-                .is_some_and(|pending| pending.sequence == update.sequence)
-            {
-                journal
-                    .acknowledge_delivery(&update.request_id, update.sequence)
-                    .map_err(format_core_error)?;
-            }
-        }
-        outbox
-            .lock()
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-            .acknowledge(job_id, update.sequence)
-            .map_err(format_core_error)?;
-    }
-    Ok(())
-}
-
-fn runner_agent_progress_phase(phase: AgentExecutionProgressPhase) -> &'static str {
-    match phase {
-        AgentExecutionProgressPhase::Queued => "queued",
-        AgentExecutionProgressPhase::Probing => "probing",
-        AgentExecutionProgressPhase::Running => "running",
-        AgentExecutionProgressPhase::SessionCheckpointed => "session_checkpointed",
-        AgentExecutionProgressPhase::Blocked => "blocked",
-        AgentExecutionProgressPhase::Completed => "completed",
-        AgentExecutionProgressPhase::Failed => "failed",
-        AgentExecutionProgressPhase::Cancelled => "cancelled",
-        AgentExecutionProgressPhase::Indeterminate => "indeterminate",
-    }
-}
-
-fn run_runner_control_service_once<C: ManagementApiClient + Clone + Send + 'static>(
+fn run_runner_control_service_once<C: ManagementApiClient>(
     client: &mut C,
     credential: &ManagementCredential,
     resolved: &loomex_core::ResolvedCliSettings,
     binding_id: &str,
-    config_path: &Path,
     recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
 ) -> Result<RunnerServiceRuntimeStart, String> {
-    let session =
-        create_runner_control_session(client, credential, resolved, binding_id, config_path)?;
+    let session = create_runner_control_session(client, credential, resolved, binding_id)?;
     let session_id = session_id_from_response(&session)?;
-    reconcile_pending_agent_progress_with_journal(
-        client.clone(),
-        credential,
-        &agent_executable_config_path(config_path),
-        &agent_context.journal,
-    )
-    .map_err(format_core_error)?;
     write_runner_session_marker(&session_id);
-    let recovered = recover_pending_runner_jobs(
-        client,
-        credential,
-        resolved,
-        &session_id,
-        recovery,
-        agent_context,
-    )?;
+    let recovered =
+        recover_pending_runner_jobs(client, credential, resolved, &session_id, recovery)?;
     let event = if recovered {
         "job.recovered"
-    } else if process_one_runner_control_job(
-        client,
-        credential,
-        resolved,
-        &session_id,
-        recovery,
-        agent_context,
-    )? {
+    } else if process_one_runner_control_job(client, credential, resolved, &session_id, recovery)? {
         "job.processed"
     } else {
         "idle"
@@ -7096,15 +6076,12 @@ fn run_runner_control_service_once<C: ManagementApiClient + Clone + Send + 'stat
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_runner_control_service_loop<C: ManagementApiClient + Clone + Send + 'static>(
+fn run_runner_control_service_loop<C: ManagementApiClient>(
     client: &mut C,
     credential: &ManagementCredential,
     resolved: &loomex_core::ResolvedCliSettings,
     binding_id: &str,
-    config_path: &Path,
     recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
     log_path: &Path,
 ) -> Result<(), String> {
     let mut backoff = RunnerControlReconnectBackoff::new();
@@ -7115,9 +6092,7 @@ fn run_runner_control_service_loop<C: ManagementApiClient + Clone + Send + 'stat
             credential,
             resolved,
             binding_id,
-            config_path,
             recovery,
-            agent_context,
             log_path,
             &mut || session_healthy = true,
         );
@@ -7173,28 +6148,17 @@ impl RunnerControlReconnectBackoff {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_runner_control_session<C: ManagementApiClient + Clone + Send + 'static>(
+fn run_runner_control_session<C: ManagementApiClient>(
     client: &mut C,
     credential: &ManagementCredential,
     resolved: &loomex_core::ResolvedCliSettings,
     binding_id: &str,
-    config_path: &Path,
     recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
     log_path: &Path,
     on_session_healthy: &mut dyn FnMut(),
 ) -> Result<(), String> {
-    let session =
-        create_runner_control_session(client, credential, resolved, binding_id, config_path)?;
+    let session = create_runner_control_session(client, credential, resolved, binding_id)?;
     let session_id = session_id_from_response(&session)?;
-    reconcile_pending_agent_progress_with_journal(
-        client.clone(),
-        credential,
-        &agent_executable_config_path(config_path),
-        &agent_context.journal,
-    )
-    .map_err(format_core_error)?;
     write_runner_session_marker(&session_id);
     let _ = append_runner_service_log(
         log_path,
@@ -7205,25 +6169,12 @@ fn run_runner_control_session<C: ManagementApiClient + Clone + Send + 'static>(
         json!({"sessionId": session_id}),
     );
     eprintln!("runner control session connected: {session_id}");
-    recover_pending_runner_jobs(
-        client,
-        credential,
-        resolved,
-        &session_id,
-        recovery,
-        agent_context,
-    )?;
+    recover_pending_runner_jobs(client, credential, resolved, &session_id, recovery)?;
     let mut idle_ticks = 0usize;
     let mut session_health_confirmed = false;
     loop {
-        let processed = process_one_runner_control_job(
-            client,
-            credential,
-            resolved,
-            &session_id,
-            recovery,
-            agent_context,
-        )?;
+        let processed =
+            process_one_runner_control_job(client, credential, resolved, &session_id, recovery)?;
         if !session_health_confirmed {
             on_session_healthy();
             session_health_confirmed = true;
@@ -7238,16 +6189,9 @@ fn run_runner_control_session<C: ManagementApiClient + Clone + Send + 'static>(
                 .heartbeat_runner_session(
                     credential,
                     &session_id,
-                    runner_control_manifest(resolved, binding_id, config_path)?,
+                    runner_control_manifest(resolved, binding_id),
                 )
                 .map_err(format_core_error)?;
-            reconcile_pending_agent_progress_with_journal(
-                client.clone(),
-                credential,
-                &agent_executable_config_path(config_path),
-                &agent_context.journal,
-            )
-            .map_err(format_core_error)?;
         }
         thread::sleep(Duration::from_millis(500));
     }
@@ -7275,141 +6219,41 @@ fn create_runner_control_session<C: ManagementApiClient>(
     credential: &ManagementCredential,
     resolved: &loomex_core::ResolvedCliSettings,
     binding_id: &str,
-    config_path: &Path,
 ) -> Result<loomex_core::RunnerSessionResponse, String> {
-    resolved.workspace_path.as_deref().ok_or_else(|| {
+    let workspace_root = resolved.workspace_path.as_deref().ok_or_else(|| {
         "RUNNER_SERVICE_WORKSPACE_REQUIRED: selected profile has no workspacePath".to_string()
     })?;
     client
         .create_runner_session(
             credential,
-            "",
-            runner_control_manifest(resolved, binding_id, config_path)?,
+            workspace_root,
+            runner_control_manifest(resolved, binding_id),
             "long_poll",
         )
         .map_err(format_core_error)
 }
 
-fn runner_control_manifest(
-    resolved: &loomex_core::ResolvedCliSettings,
-    binding_id: &str,
-    config_path: &Path,
-) -> Result<Value, String> {
-    let runner_id = resolved.runner_id.as_deref().ok_or_else(|| {
-        "RUNNER_SERVICE_RUNNER_REQUIRED: selected profile has no runnerId".to_string()
-    })?;
-    let workspace = PathBuf::from(resolved.workspace_path.as_deref().ok_or_else(|| {
-        "RUNNER_SERVICE_WORKSPACE_REQUIRED: selected profile has no workspacePath".to_string()
-    })?);
-    if !workspace.is_absolute() {
-        return Err(
-            "RUNNER_SERVICE_WORKSPACE_INVALID: selected workspacePath must be absolute".to_string(),
-        );
-    }
-    let agent_runtimes = if resolved.agent_runtime_v2_enabled {
-        let runtime = runner_agent_runtime();
-        let runtime_config = runner_agent_runtime_config(config_path)?;
-        let cancellation = AgentCancellationToken::default();
-        let executors = runtime.probe_all(&runtime_config, &workspace, &cancellation);
-        Some(AgentRuntimeCapabilitySnapshotV2 {
-            schema_version: AGENT_CAPABILITY_SCHEMA_V2.to_string(),
-            runner_id: runner_id.to_string(),
-            observed_at: current_rfc3339_timestamp()?,
-            ttl_seconds: runtime_config.probe_ttl.as_secs().clamp(1, 300),
-            executors,
-        })
-    } else {
-        None
-    };
-    let mut capabilities = default_runner_capabilities(
-        resolved.agent_runtime_v2_enabled,
-        resolved.legacy_agent_task_mode,
-    )
-    .into_iter()
-    .map(|capability| (capability, true))
-    .collect::<BTreeMap<_, _>>();
-    for capability in ["file.list", "file.read_many", "file.write_many"] {
-        capabilities.insert(capability.to_string(), true);
-    }
-    let advertisement = RunnerAgentAdvertisementV1 {
-        agent_advertisement_schema_version: RUNNER_AGENT_ADVERTISEMENT_SCHEMA_V1.to_string(),
-        agent_runtime_v2_enabled: resolved.agent_runtime_v2_enabled,
-        legacy_agent_tasks: LegacyAgentTasksAdvertisementV1 {
-            mode: resolved.legacy_agent_task_mode,
-        },
-        capabilities,
-        agent_runtimes,
-    };
-    advertisement
-        .validate_for_runner_id(runner_id)
-        .map_err(|error| format!("AGENT_ADVERTISEMENT_INVALID: {error:?}"))?;
-    let mut manifest = serde_json::to_value(advertisement)
-        .map_err(|error| format!("AGENT_ADVERTISEMENT_SERIALIZE_FAILED: {error}"))?;
-    let object = manifest
-        .as_object_mut()
-        .ok_or_else(|| "AGENT_ADVERTISEMENT_SERIALIZE_FAILED: expected object".to_string())?;
-    object.insert("surface".to_string(), Value::String("plugin".to_string()));
-    object.insert(
-        "runnerVersion".to_string(),
-        Value::String(env!("CARGO_PKG_VERSION").to_string()),
-    );
-    object.insert(
-        "bindingId".to_string(),
-        Value::String(binding_id.to_string()),
-    );
-    Ok(manifest)
-}
-
-fn runner_agent_runtime() -> &'static LocalAgentRuntime {
-    static RUNTIME: OnceLock<LocalAgentRuntime> = OnceLock::new();
-    RUNTIME.get_or_init(LocalAgentRuntime::default)
-}
-
-fn runner_agent_runtime_config(config_path: &Path) -> Result<RuntimeConfig, String> {
-    let executable_config =
-        AgentExecutableConfig::load_or_default(&agent_executable_config_path(config_path))
-            .map_err(format_core_error)?;
-    let mut config = RuntimeConfig::default();
-    for (provider, executor) in [
-        (AgentExecutableProvider::Codex, ExecutorKind::CodexCli),
-        (AgentExecutableProvider::Claude, ExecutorKind::ClaudeCli),
-        (AgentExecutableProvider::Agy, ExecutorKind::AgyCli),
-    ] {
-        if let Ok(path) = executable_config.resolve_executable(provider) {
-            config.executables.insert(executor, path);
+fn runner_control_manifest(resolved: &loomex_core::ResolvedCliSettings, binding_id: &str) -> Value {
+    json!({
+        "surface": "plugin",
+        "runnerVersion": env!("CARGO_PKG_VERSION"),
+        "bindingId": binding_id,
+        "workspaceRoot": resolved.workspace_path.clone().unwrap_or_default(),
+        "capabilities": {
+            "file.list": true,
+            "file.read_many": true,
+            "file.write_many": true,
+            "fs.list": true,
+            "fs.read": true,
+            "fs.write": true,
+            "fs.apply_patch": true,
+            "shell.exec": true,
+            "git.status": true,
+            "git.diff": true,
+            "git.log": true,
+            "http.request": true
         }
-    }
-    Ok(config)
-}
-
-fn current_rfc3339_timestamp() -> Result<String, String> {
-    let seconds = current_epoch_seconds()? as i64;
-    let days = seconds.div_euclid(86_400);
-    let seconds_of_day = seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_date_from_unix_days(days);
-    let hour = seconds_of_day / 3_600;
-    let minute = (seconds_of_day % 3_600) / 60;
-    let second = seconds_of_day % 60;
-    Ok(format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
-    ))
-}
-
-fn civil_date_from_unix_days(days: i64) -> (i64, i64, i64) {
-    let shifted = days + 719_468;
-    let era = shifted.div_euclid(146_097);
-    let day_of_era = shifted - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    if month <= 2 {
-        year += 1;
-    }
-    (year, month, day)
+    })
 }
 
 fn session_id_from_response(
@@ -7430,24 +6274,6 @@ fn runner_session_marker_path(guard_path: &Path) -> PathBuf {
 
 fn runner_job_recovery_path(guard_path: &Path) -> PathBuf {
     guard_path.with_extension("jobs.json")
-}
-
-fn agent_execution_journal_path(config_path: &Path, binding_id: &str) -> PathBuf {
-    runner_runtime_guard_path(config_path, binding_id).with_extension("agent-jobs.json")
-}
-
-fn open_agent_execution_journal(
-    config_path: &Path,
-    binding_id: Option<&str>,
-) -> Result<Arc<Mutex<loomex_core::execution::AgentExecutionJournal>>, String> {
-    let binding_id = binding_id.ok_or_else(|| {
-        "RUNNER_SERVICE_BINDING_REQUIRED: selected profile has no bindingId".to_string()
-    })?;
-    let journal = loomex_core::execution::AgentExecutionJournal::open(
-        agent_execution_journal_path(config_path, binding_id),
-    )
-    .map_err(format_core_error)?;
-    Ok(Arc::new(Mutex::new(journal)))
 }
 
 fn write_runner_session_marker(session_id: &str) {
@@ -7487,31 +6313,12 @@ fn recoverable_runner_job(
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| "RUNNER_JOB_INVALID: runnerId is required".to_string())
     })?;
-    let kind = required_job_string(job, "kind")?;
-    let terminal_idempotency_key = if kind == "agent.execute.v2" {
-        let key = job
-            .pointer("/metadata/agentAttempt/deliveryIdempotencyKey")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                "RUNNER_JOB_INVALID: agent deliveryIdempotencyKey metadata is required".to_string()
-            })?
-            .to_string();
-        loomex_protocol::agent_runtime_v2::validate_agent_attempt_delivery_idempotency_key(&key)
-            .map_err(|_| {
-                "RUNNER_JOB_INVALID: agent deliveryIdempotencyKey metadata is invalid".to_string()
-            })?;
-        Some(key)
-    } else {
-        None
-    };
     Ok(RecoverableRunnerJob {
         job_id: remote.job_id,
         runner_id,
         session_id: session_id.to_string(),
-        kind,
+        kind: required_job_string(job, "kind")?,
         idempotency_key: required_job_string(job, "idempotencyKey")?,
-        terminal_idempotency_key,
         payload_fingerprint: remote.payload_fingerprint,
         attempt_count: remote.attempt_count,
         lease_version: remote.lease_version,
@@ -7536,7 +6343,6 @@ fn remote_runner_job(job: &Value) -> Result<RemoteRunnerJobSnapshot, String> {
         "running" => RemoteRunnerJobStatus::Running,
         "succeeded" => RemoteRunnerJobStatus::Succeeded,
         "failed" => RemoteRunnerJobStatus::Failed,
-        "deferred" => RemoteRunnerJobStatus::Deferred,
         "canceling" => RemoteRunnerJobStatus::Canceling,
         "canceled" | "cancelled" => RemoteRunnerJobStatus::Canceled,
         "expired" => RemoteRunnerJobStatus::Expired,
@@ -7558,18 +6364,7 @@ fn remote_runner_job(job: &Value) -> Result<RemoteRunnerJobSnapshot, String> {
             .try_into()
             .map_err(|_| "RUNNER_JOB_INVALID: attemptCount exceeds u32".to_string())?,
         lease_version: required_job_u64(job, "leaseVersion")?,
-        leased_until_epoch_ms: job
-            .get("leasedUntilEpochMs")
-            .and_then(Value::as_u64)
-            .or_else(|| {
-                job.get("leasedUntil")
-                    .and_then(Value::as_str)
-                    .and_then(|value| {
-                        loomex_core::management::parse_rfc3339_utc_epoch_seconds(value)
-                            .ok()
-                            .map(|seconds| seconds.saturating_mul(1_000))
-                    })
-            }),
+        leased_until_epoch_ms: job.get("leasedUntilEpochMs").and_then(Value::as_u64),
         payload_fingerprint: required_job_string(job, "payloadDigest")?,
     })
 }
@@ -7589,263 +6384,16 @@ fn required_job_u64(job: &Value, field: &str) -> Result<u64, String> {
         .ok_or_else(|| format!("RUNNER_JOB_INVALID: {field} must be positive"))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn recover_canceling_agent_job<C: ManagementApiClient + Clone + Send + 'static>(
-    client: &mut C,
-    credential: &ManagementCredential,
-    resolved: &loomex_core::ResolvedCliSettings,
-    session_id: &str,
-    job: &mut Value,
-    remote: &mut RemoteRunnerJobSnapshot,
-    recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<bool, String> {
-    if remote.status != RemoteRunnerJobStatus::Canceling
-        || job.get("kind").and_then(Value::as_str) != Some("agent.execute.v2")
-    {
-        return Ok(false);
-    }
-    let local = recovery
-        .job(&remote.job_id)
-        .cloned()
-        .ok_or_else(|| "RUNNER_JOB_RECOVERY_INVALID: local record missing".to_string())?;
-    let reclaimed = client
-        .reclaim_runner_job(
-            credential,
-            session_id,
-            &local.job_id,
-            remote.lease_version,
-            &local.payload_fingerprint,
-            &local.idempotency_key,
-            None,
-        )
-        .map_err(format_core_error)?;
-    *job = reclaimed.job.ok_or_else(|| {
-        "RUNNER_JOB_CANCELLATION_RECLAIM_INVALID: response job missing".to_string()
-    })?;
-    *remote = remote_runner_job(job)?;
-    recovery
-        .adopt_reclaimed_cancellation_lease(&local.job_id, remote, session_id, current_epoch_ms()?)
-        .map_err(format_core_error)?;
-
-    let directive =
-        RunnerJobCancellationDirective::from_runner_job(job).map_err(format_core_error)?;
-    let terminal_idempotency_key = local
-        .terminal_idempotency_key
-        .as_deref()
-        .ok_or_else(|| "AGENT_JOB_DELIVERY_IDEMPOTENCY_MISSING".to_string())?;
-    let dispatch = validate_runner_agent_process_dispatch(
-        resolved,
-        session_id,
-        &local.job_id,
-        job,
-        terminal_idempotency_key,
-    )
-    .map_err(|message| format!("RUNNER_JOB_CANCELLATION_DISPATCH_INVALID: {message}"))?;
-    if directive.job_id != local.job_id
-        || directive.session_id != session_id
-        || directive.process_attempt_id != dispatch.attempt_id
-        || directive.lease_version != remote.lease_version
-        || directive.binding_generation != dispatch.task.binding.workspace_binding_generation
-    {
-        return Err(
-            "RUNNER_JOB_CANCELLATION_RECLAIM_MISMATCH: recovered directive is not owned"
-                .to_string(),
-        );
-    }
-    let acknowledgement_key = directive.acknowledgement_idempotency_key();
-    if local.phase == RecoverableJobPhase::PrestartFailedPendingAck {
-        let durable_terminal = local
-            .terminal_payload
-            .as_ref()
-            .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_MISSING".to_string())?;
-        let durable_execution: AgentExecutionV2 = serde_json::from_value(
-            durable_terminal
-                .get("execution")
-                .cloned()
-                .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?,
-        )
-        .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-        let terminal = match (
-            durable_execution.state,
-            durable_execution
-                .attempts
-                .first()
-                .map(|attempt| attempt.state),
-        ) {
-            (AgentExecutionState::Failed, Some(AgentAttemptState::DispatchRejected)) => {
-                let terminal = prestart_cancelled_agent_job_terminal(
-                    &local,
-                    &dispatch,
-                    &directive.requested_at,
-                )?;
-                recovery
-                    .record_prestart_cancellation(
-                        &local.job_id,
-                        session_id,
-                        terminal.clone(),
-                        current_epoch_ms()?,
-                    )
-                    .map_err(format_core_error)?;
-                terminal
-            }
-            (AgentExecutionState::Cancelled, Some(AgentAttemptState::DispatchCancelled)) => {
-                validate_prestart_cancelled_terminal_for_dispatch(durable_terminal, &dispatch)?;
-                durable_terminal.clone()
-            }
-            _ => return Err("AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string()),
-        };
-        let pending = pending_prestart_agent_terminal(&local.job_id, &terminal, "cancelled")?;
-        agent_context
-            .progress_outbox
-            .lock()
-            .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-            .replace_prestart_terminal(pending, &dispatch.task)
-            .map_err(format_core_error)?;
-        client
-            .acknowledge_runner_job_cancellation(
-                credential,
-                session_id,
-                &local.job_id,
-                directive.lease_version,
-                &directive.cancellation_id,
-                &acknowledgement_key,
-            )
-            .map_err(format_core_error)?;
-        submit_recovered_terminal(
-            client,
-            credential,
-            session_id,
-            &local.job_id,
-            recovery,
-            false,
-            terminal,
-            agent_context,
-        )?;
-        return Ok(true);
-    }
-    if agent_context
-        .cancellations
-        .is_active(&dispatch.task.request_id)
-        .map_err(format_core_error)?
-    {
-        return Err(
-            "RUNNER_JOB_CANCELLATION_RECLAIM_MISMATCH: recovered directive is already active"
-                .to_string(),
-        );
-    }
-    {
-        let mut journal = agent_context
-            .journal
-            .lock()
-            .map_err(|_| "AGENT_JOURNAL_POISONED".to_string())?;
-        journal
-            .request_runner_cancel(
-                &dispatch.task.request_id,
-                &acknowledgement_key,
-                &directive.cancellation_id,
-                &directive.job_id,
-                &directive.process_attempt_id,
-                directive.lease_version,
-                directive.binding_generation,
-                &directive.requested_at,
-                current_epoch_ms()?,
-            )
-            .map_err(format_core_error)?;
-    }
-    client
-        .acknowledge_runner_job_cancellation(
-            credential,
-            session_id,
-            &local.job_id,
-            directive.lease_version,
-            &directive.cancellation_id,
-            &acknowledgement_key,
-        )
-        .map_err(format_core_error)?;
-    let execution = {
-        let mut journal = agent_context
-            .journal
-            .lock()
-            .map_err(|_| "AGENT_JOURNAL_POISONED".to_string())?;
-        journal
-            .acknowledge_runner_cancel(&dispatch.task.request_id, &directive.cancellation_id)
-            .map_err(format_core_error)?;
-        let state = journal
-            .entry(&dispatch.task.request_id)
-            .ok_or_else(|| "AGENT_JOURNAL_NOT_FOUND".to_string())?
-            .state;
-        if state.is_terminal() || state == AgentExecutionState::Blocked {
-            journal
-                .reconcile_runner_cancellation_race(
-                    &dispatch.task.request_id,
-                    &directive.cancellation_id,
-                    current_rfc3339_timestamp()?,
-                    current_epoch_ms()?,
-                )
-                .map_err(format_core_error)?
-                .ok_or_else(|| "AGENT_CANCELLATION_RACE_RECONCILE_FAILED".to_string())?
-        } else {
-            let sequence = journal
-                .entry(&dispatch.task.request_id)
-                .ok_or_else(|| "AGENT_JOURNAL_NOT_FOUND".to_string())?
-                .last_progress_sequence
-                .checked_add(1)
-                .ok_or_else(|| "AGENT_JOURNAL_SEQUENCE_EXHAUSTED".to_string())?;
-            journal
-                .mark_process_lost(
-                    &dispatch.task.request_id,
-                    sequence,
-                    loomex_core::execution::AgentProcessLoss::Crash,
-                    current_rfc3339_timestamp()?,
-                    current_epoch_ms()?,
-                )
-                .map_err(format_core_error)?;
-            let payload = journal
-                .pending_delivery(&dispatch.task.request_id)
-                .map_err(format_core_error)?
-                .ok_or_else(|| "AGENT_CANCELLATION_TERMINAL_MISSING".to_string())?
-                .payload
-                .clone();
-            serde_json::from_value(payload)
-                .map_err(|_| "AGENT_CANCELLATION_TERMINAL_INVALID".to_string())?
-        }
-    };
-    materialize_runner_job_agent_progress(&local.job_id, agent_context)?;
-    let error = agent_job_service_outcome(AgentExecutionServiceOutcome::Executed(execution))
-        .expect_err("canceling recovery must not produce a successful terminal");
-    recovery
-        .record_cancellation_race_failed(
-            &local.job_id,
-            session_id,
-            error.clone(),
-            current_epoch_ms()?,
-        )
-        .map_err(format_core_error)?;
-    submit_recovered_terminal(
-        client,
-        credential,
-        session_id,
-        &local.job_id,
-        recovery,
-        false,
-        error,
-        agent_context,
-    )?;
-    Ok(true)
-}
-
-fn recover_pending_runner_jobs<C: ManagementApiClient + Clone + Send + 'static>(
+fn recover_pending_runner_jobs<C: ManagementApiClient>(
     client: &mut C,
     credential: &ManagementCredential,
     resolved: &loomex_core::ResolvedCliSettings,
     session_id: &str,
     recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
 ) -> Result<bool, String> {
     let pending = recovery.pending_jobs().to_vec();
     let mut processed = false;
-    for mut local in pending {
+    for local in pending {
         let response = client
             .get_runner_job(credential, &local.job_id)
             .map_err(format_core_error)?;
@@ -7853,37 +6401,12 @@ fn recover_pending_runner_jobs<C: ManagementApiClient + Clone + Send + 'static>(
             .job
             .ok_or_else(|| "RUNNER_JOB_RECOVERY_INVALID: server job missing".to_string())?;
         let mut remote = remote_runner_job(&job)?;
-        materialize_runner_job_agent_terminal(
-            &local.job_id,
-            session_id,
-            &job,
-            recovery,
-            agent_context,
-        )?;
-        local = recovery
-            .job(&local.job_id)
-            .cloned()
-            .ok_or_else(|| "RUNNER_JOB_RECOVERY_INVALID: local record missing".to_string())?;
-        if recover_canceling_agent_job(
-            client,
-            credential,
-            resolved,
-            session_id,
-            &mut job,
-            &mut remote,
-            recovery,
-            agent_context,
-        )? {
-            processed = true;
-            continue;
-        }
         let now_epoch_ms = current_epoch_ms()?;
         let mut action = recovery
             .recovery_action(&local.job_id, Some(&remote), session_id, now_epoch_ms)
             .map_err(format_core_error)?;
 
         if action == JobRecoveryAction::ForgetTerminal {
-            acknowledge_recovery_agent_terminal(&local, agent_context)?;
             recovery
                 .forget_server_terminal(&local.job_id, &remote)
                 .map_err(format_core_error)?;
@@ -7911,7 +6434,6 @@ fn recover_pending_runner_jobs<C: ManagementApiClient + Clone + Send + 'static>(
                 .ok_or_else(|| "RUNNER_JOB_RECLAIM_INVALID: response job missing".to_string())?;
             remote = remote_runner_job(&job)?;
             if remote.status.is_terminal() {
-                acknowledge_recovery_agent_terminal(&local, agent_context)?;
                 recovery
                     .forget_server_terminal(&local.job_id, &remote)
                     .map_err(format_core_error)?;
@@ -7947,27 +6469,10 @@ fn recover_pending_runner_jobs<C: ManagementApiClient + Clone + Send + 'static>(
                 .map_err(format_core_error)?;
         }
 
-        materialize_runner_job_agent_progress(&local.job_id, agent_context)?;
-        drain_runner_job_agent_progress(
-            client,
-            credential,
-            session_id,
-            remote.lease_version,
-            &local.job_id,
-            &agent_context.progress_outbox,
-            &agent_context.journal,
-        )?;
-
         match action {
             JobRecoveryAction::StartExecution | JobRecoveryAction::ResumeIdempotentExecution => {
                 execute_and_finalize_runner_job(
-                    client,
-                    credential,
-                    resolved,
-                    session_id,
-                    &job,
-                    recovery,
-                    agent_context,
+                    client, credential, resolved, session_id, &job, recovery,
                 )?;
                 processed = true;
             }
@@ -7980,7 +6485,6 @@ fn recover_pending_runner_jobs<C: ManagementApiClient + Clone + Send + 'static>(
                     recovery,
                     true,
                     result,
-                    agent_context,
                 )?;
                 processed = true;
             }
@@ -7993,19 +6497,6 @@ fn recover_pending_runner_jobs<C: ManagementApiClient + Clone + Send + 'static>(
                     recovery,
                     false,
                     error,
-                    agent_context,
-                )?;
-                processed = true;
-            }
-            JobRecoveryAction::SubmitDeferred(execution) => {
-                submit_recovered_defer(
-                    client,
-                    credential,
-                    session_id,
-                    &local.job_id,
-                    recovery,
-                    execution,
-                    agent_context,
                 )?;
                 processed = true;
             }
@@ -8039,7 +6530,6 @@ fn recover_pending_runner_jobs<C: ManagementApiClient + Clone + Send + 'static>(
                     recovery,
                     false,
                     error,
-                    agent_context,
                 )?;
                 processed = true;
             }
@@ -8061,222 +6551,12 @@ fn recovery_terminal_submission(job: &RecoverableRunnerJob) -> Option<Value> {
             .terminal_payload
             .clone()
             .map(|result| json!({"status": "succeeded", "result": result})),
-        RecoverableJobPhase::FailedPendingAck | RecoverableJobPhase::PrestartFailedPendingAck => {
-            job.terminal_payload
-                .clone()
-                .map(|error| json!({"status": "failed", "error": error}))
-        }
-        RecoverableJobPhase::Leased
-        | RecoverableJobPhase::Running
-        | RecoverableJobPhase::DeferPendingAck => None,
+        RecoverableJobPhase::FailedPendingAck => job
+            .terminal_payload
+            .clone()
+            .map(|error| json!({"status": "failed", "error": error})),
+        RecoverableJobPhase::Leased | RecoverableJobPhase::Running => None,
     }
-}
-
-fn materialize_runner_job_agent_terminal(
-    job_id: &str,
-    session_id: &str,
-    job: &Value,
-    recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<(), String> {
-    materialize_runner_job_agent_progress(job_id, agent_context)?;
-    let record = recovery
-        .job(job_id)
-        .cloned()
-        .ok_or_else(|| "RUNNER_JOB_RECOVERY_INVALID: local record missing".to_string())?;
-    if record.phase == RecoverableJobPhase::PrestartFailedPendingAck {
-        let expected_execution: AgentExecutionV2 = serde_json::from_value(
-            record
-                .terminal_payload
-                .as_ref()
-                .and_then(|terminal| terminal.get("execution"))
-                .cloned()
-                .ok_or_else(|| "AGENT_PRESTART_TERMINAL_INVALID".to_string())?,
-        )
-        .map_err(|_| "AGENT_PRESTART_TERMINAL_INVALID".to_string())?;
-        if expected_execution.state == AgentExecutionState::Cancelled {
-            let dispatch: AgentProcessDispatchV2 = serde_json::from_value(
-                job.get("payload")
-                    .cloned()
-                    .ok_or_else(|| "RUNNER_JOB_CANCELLATION_DISPATCH_MISSING".to_string())?,
-            )
-            .map_err(|_| "RUNNER_JOB_CANCELLATION_DISPATCH_INVALID".to_string())?;
-            let pending = pending_prestart_agent_terminal(
-                job_id,
-                record
-                    .terminal_payload
-                    .as_ref()
-                    .expect("pre-start terminal payload was checked"),
-                "cancelled",
-            )?;
-            agent_context
-                .progress_outbox
-                .lock()
-                .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-                .replace_prestart_terminal(pending, &dispatch.task)
-                .map_err(format_core_error)?;
-        }
-    }
-    let terminal = agent_context
-        .progress_outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .terminal_for_job(job_id)?;
-    let Some((_sequence, value)) = terminal else {
-        return Ok(());
-    };
-    let execution: AgentExecutionV2 = serde_json::from_value(value.clone())
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_INVALID".to_string())?;
-    let execution_state = execution.state;
-    let outcome = agent_job_service_outcome(AgentExecutionServiceOutcome::Executed(execution));
-    match (record.phase, outcome) {
-        (RecoverableJobPhase::Leased | RecoverableJobPhase::Running, Err(ref error))
-            if execution_state == AgentExecutionState::Blocked
-                && error.pointer("/context/coreCode").and_then(Value::as_str)
-                    == Some("AGENT_JOB_BLOCKED_NONTERMINAL") =>
-        {
-            recovery
-                .record_deferred(job_id, session_id, value.clone(), current_epoch_ms()?)
-                .map_err(format_core_error)
-        }
-        (RecoverableJobPhase::Leased | RecoverableJobPhase::Running, Ok(result)) => recovery
-            .record_succeeded(job_id, session_id, result, current_epoch_ms()?)
-            .map_err(format_core_error),
-        (RecoverableJobPhase::Leased | RecoverableJobPhase::Running, Err(error)) => recovery
-            .record_failed(job_id, session_id, error, current_epoch_ms()?)
-            .map_err(format_core_error),
-        (RecoverableJobPhase::SucceededPendingAck, Ok(result))
-            if record.terminal_payload.as_ref() == Some(&result) =>
-        {
-            Ok(())
-        }
-        (RecoverableJobPhase::FailedPendingAck, Err(error))
-            if record.terminal_payload.as_ref() == Some(&error) =>
-        {
-            Ok(())
-        }
-        (RecoverableJobPhase::PrestartFailedPendingAck, Err(error))
-            if record.terminal_payload.as_ref() == Some(&error) =>
-        {
-            Ok(())
-        }
-        (RecoverableJobPhase::DeferPendingAck, _)
-            if execution_state == AgentExecutionState::Blocked
-                && record.terminal_payload.as_ref() == Some(&value) =>
-        {
-            Ok(())
-        }
-        _ => Err("AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_CONFLICT".to_string()),
-    }
-}
-
-fn acknowledge_runner_job_agent_terminal(
-    job_id: &str,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<(), String> {
-    let terminal = agent_context
-        .progress_outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .terminal_for_job(job_id)?;
-    let Some((sequence, value)) = terminal else {
-        return Ok(());
-    };
-    let execution: AgentExecutionV2 = serde_json::from_value(value)
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_INVALID".to_string())?;
-    {
-        let mut journal = agent_context
-            .journal
-            .lock()
-            .map_err(|_| "AGENT_JOURNAL_POISONED".to_string())?;
-        if journal
-            .pending_delivery(&execution.request_id)
-            .map_err(format_core_error)?
-            .is_some_and(|pending| pending.sequence == sequence)
-        {
-            journal
-                .acknowledge_delivery(&execution.request_id, sequence)
-                .map_err(format_core_error)?;
-        }
-    }
-    agent_context
-        .progress_outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .acknowledge(job_id, sequence)
-        .map_err(format_core_error)
-}
-
-fn acknowledge_prestart_runner_job_agent_terminal(
-    record: &RecoverableRunnerJob,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<(), String> {
-    let job_id = &record.job_id;
-    let terminal = agent_context
-        .progress_outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .terminal_for_job(job_id)?;
-    let Some((sequence, value)) = terminal else {
-        return Ok(());
-    };
-    let execution: AgentExecutionV2 = serde_json::from_value(value.clone())
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_TERMINAL_INVALID".to_string())?;
-    execution
-        .validate()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID".to_string())?;
-    let expected_execution = record
-        .terminal_payload
-        .as_ref()
-        .and_then(|terminal| terminal.get("execution"))
-        .ok_or_else(|| "AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID".to_string())?;
-    if sequence != execution.sequence || expected_execution != &value {
-        return Err("AGENT_JOB_PROGRESS_OUTBOX_PRESTART_TERMINAL_INVALID".to_string());
-    }
-    agent_context
-        .progress_outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .acknowledge(job_id, sequence)
-        .map_err(format_core_error)
-}
-
-fn acknowledge_recovery_agent_terminal(
-    record: &RecoverableRunnerJob,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<(), String> {
-    if record.phase == RecoverableJobPhase::PrestartFailedPendingAck {
-        acknowledge_prestart_runner_job_agent_terminal(record, agent_context)
-    } else {
-        acknowledge_runner_job_agent_terminal(&record.job_id, agent_context)
-    }
-}
-
-fn validate_runner_job_terminal_submission(
-    session_id: &str,
-    lease_version: u64,
-    idempotency_key: &str,
-    succeeded: bool,
-    payload: &Value,
-) -> Result<(), String> {
-    let submission = if succeeded {
-        json!({
-            "sessionId": session_id,
-            "leaseVersion": lease_version,
-            "idempotencyKey": idempotency_key,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "sessionId": session_id,
-            "leaseVersion": lease_version,
-            "idempotencyKey": idempotency_key,
-            "error": payload,
-        })
-    };
-    validate_agent_terminal_submission(&submission)
-        .map(|_| ())
-        .map_err(|_| "AGENT_TERMINAL_SUBMISSION_TOO_LARGE".to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8288,23 +6568,11 @@ fn submit_recovered_terminal<C: ManagementApiClient>(
     recovery: &mut RunnerJobRecoveryJournal,
     succeeded: bool,
     payload: Value,
-    agent_context: &RunnerAgentExecutionContext,
 ) -> Result<(), String> {
     let record = recovery
         .job(job_id)
         .cloned()
         .ok_or_else(|| "RUNNER_JOB_RECOVERY_INVALID: local record missing".to_string())?;
-    let terminal_idempotency_key = record
-        .terminal_idempotency_key
-        .as_deref()
-        .unwrap_or(&record.idempotency_key);
-    validate_runner_job_terminal_submission(
-        session_id,
-        record.lease_version,
-        terminal_idempotency_key,
-        succeeded,
-        &payload,
-    )?;
     if succeeded {
         client
             .complete_runner_job_idempotent(
@@ -8312,7 +6580,7 @@ fn submit_recovered_terminal<C: ManagementApiClient>(
                 session_id,
                 job_id,
                 record.lease_version,
-                terminal_idempotency_key,
+                &record.idempotency_key,
                 payload,
             )
             .map_err(format_core_error)?;
@@ -8323,322 +6591,22 @@ fn submit_recovered_terminal<C: ManagementApiClient>(
                 session_id,
                 job_id,
                 record.lease_version,
-                terminal_idempotency_key,
+                &record.idempotency_key,
                 payload,
             )
             .map_err(format_core_error)?;
     }
-    acknowledge_recovery_agent_terminal(&record, agent_context)?;
     recovery
         .acknowledge_terminal(job_id)
         .map_err(format_core_error)
 }
 
-fn submit_recovered_defer<C: ManagementApiClient>(
-    client: &mut C,
-    credential: &ManagementCredential,
-    session_id: &str,
-    job_id: &str,
-    recovery: &mut RunnerJobRecoveryJournal,
-    execution: Value,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<(), String> {
-    let record = recovery
-        .job(job_id)
-        .cloned()
-        .ok_or_else(|| "RUNNER_JOB_RECOVERY_INVALID: local record missing".to_string())?;
-    let terminal_idempotency_key = record
-        .terminal_idempotency_key
-        .as_deref()
-        .ok_or_else(|| "AGENT_JOB_DELIVERY_IDEMPOTENCY_MISSING".to_string())?;
-    client
-        .defer_runner_job_idempotent(
-            credential,
-            session_id,
-            job_id,
-            record.lease_version,
-            terminal_idempotency_key,
-            execution,
-        )
-        .map_err(format_core_error)?;
-    acknowledge_runner_job_agent_terminal(job_id, agent_context)?;
-    recovery
-        .acknowledge_terminal(job_id)
-        .map_err(format_core_error)
-}
-
-fn disabled_agent_job_terminal(
-    dispatch: &AgentProcessDispatchV2,
-    timestamp: &str,
-) -> Result<Value, String> {
-    if dispatch.attempt_number != 1
-        || dispatch.retry_kind != AgentProcessRetryKindV2::Initial
-        || dispatch.from_attempt_id.is_some()
-    {
-        return Err(
-            "AGENT_RUNTIME_V2_DISABLED: an orphaned successor cannot be terminalized without its durable predecessor"
-                .to_string(),
-        );
-    }
-    let (executor, provider, model_key, provider_model_id, target) =
-        match &dispatch.task.selection.primary {
-            ModelSelectionMode::Exact { target } => (
-                target.executor,
-                target.provider,
-                Some(target.model_key.clone()),
-                Some(target.provider_model_id.clone()),
-                Some(target.clone()),
-            ),
-            ModelSelectionMode::Auto { executor, provider } => {
-                (*executor, *provider, None, None, None)
-            }
-        };
-    let mut error = runtime_error(
-        AgentErrorCode::AgentRuntimeV2Disabled,
-        AGENT_RUNTIME_V2_DISABLED_MESSAGE,
-        RuntimeErrorContext {
-            executor: Some(executor),
-            target,
-            execution_id: Some(dispatch.execution_id.clone()),
-            attempt_id: Some(dispatch.attempt_id.clone()),
-            ..RuntimeErrorContext::default()
-        },
-    );
-    error.context.safe_details.insert(
-        "reasonCode".to_string(),
-        AGENT_RUNTIME_V2_DISABLED_REASON_CODE.to_string(),
-    );
-    let attempt = AgentAttemptV2 {
-        attempt_id: dispatch.attempt_id.clone(),
-        attempt_number: dispatch.attempt_number,
-        task_idempotency_key: dispatch.task_idempotency_key.clone(),
-        delivery_idempotency_key: dispatch.delivery_idempotency_key.clone(),
-        payload_digest: dispatch.payload_digest.clone(),
-        state: AgentAttemptState::DispatchRejected,
-        started_sequence: 1,
-        finished_sequence: Some(1),
-        selection_index: 0,
-        executor,
-        provider,
-        requested_model_key: model_key.clone(),
-        requested_provider_model_id: provider_model_id.clone(),
-        resolved_model_key: model_key,
-        resolved_provider_model_id: provider_model_id,
-        started_at: timestamp.to_string(),
-        finished_at: Some(timestamp.to_string()),
-        session: None,
-        retry: None,
-        delivery: dispatch.delivery.clone(),
-        error: Some(error.clone()),
-    };
-    let execution = AgentExecutionV2 {
-        schema_version: AGENT_EXECUTION_SCHEMA_V2.to_string(),
-        execution_id: dispatch.execution_id.clone(),
-        request_id: dispatch.task.request_id.clone(),
-        idempotency_key: dispatch.task.idempotency_key.clone(),
-        sequence: 1,
-        binding: dispatch.task.binding.clone(),
-        state: AgentExecutionState::Failed,
-        active_attempt_id: None,
-        attempts: vec![attempt],
-        output: None,
-        error: Some(error.clone()),
-        created_at: timestamp.to_string(),
-        started_at: Some(timestamp.to_string()),
-        finished_at: Some(timestamp.to_string()),
-        updated_at: timestamp.to_string(),
-    };
-    execution
-        .validate_for_request(&dispatch.task)
-        .map_err(|error| format!("AGENT_RUNTIME_V2_DISABLED_TERMINAL_INVALID: {error:?}"))?;
-    let mut terminal = serde_json::to_value(error)
-        .map_err(|_| "AGENT_RUNTIME_V2_DISABLED_TERMINAL_INVALID".to_string())?;
-    terminal
-        .as_object_mut()
-        .ok_or_else(|| "AGENT_RUNTIME_V2_DISABLED_TERMINAL_INVALID".to_string())?
-        .insert(
-            "execution".to_string(),
-            serde_json::to_value(execution)
-                .map_err(|_| "AGENT_RUNTIME_V2_DISABLED_TERMINAL_INVALID".to_string())?,
-        );
-    Ok(terminal)
-}
-
-fn prestart_cancelled_agent_job_terminal(
-    record: &RecoverableRunnerJob,
-    dispatch: &AgentProcessDispatchV2,
-    timestamp: &str,
-) -> Result<Value, String> {
-    let rejected_terminal = record
-        .terminal_payload
-        .as_ref()
-        .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_MISSING".to_string())?;
-    let rejected: AgentExecutionV2 = serde_json::from_value(
-        rejected_terminal
-            .get("execution")
-            .cloned()
-            .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?,
-    )
-    .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    let mut cancelled = rejected.clone();
-    let attempt = cancelled
-        .attempts
-        .first_mut()
-        .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    let mut error = attempt
-        .error
-        .clone()
-        .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    error.code = AgentErrorCode::Cancelled;
-    error.category = AgentErrorCode::Cancelled.category();
-    error.message = "The dispatch was cancelled before provider execution.".to_string();
-    error.retry = AgentRetryDisposition::Never;
-    error.retry_after_seconds = None;
-    error.remediation.clear();
-    error.context.safe_details.clear();
-    error.context.safe_details.insert(
-        "reasonCode".to_string(),
-        "prestart_cancellation_won".to_string(),
-    );
-    attempt.state = AgentAttemptState::DispatchCancelled;
-    attempt.started_at = timestamp.to_string();
-    attempt.finished_at = Some(timestamp.to_string());
-    attempt.session = None;
-    attempt.retry = None;
-    attempt.error = Some(error.clone());
-    cancelled.state = AgentExecutionState::Cancelled;
-    cancelled.active_attempt_id = None;
-    cancelled.error = Some(error.clone());
-    cancelled.started_at = Some(timestamp.to_string());
-    cancelled.finished_at = Some(timestamp.to_string());
-    cancelled.updated_at = timestamp.to_string();
-    rejected
-        .validate_prestart_cancellation_replacement(&cancelled, &dispatch.task)
-        .map_err(|_| "AGENT_PRESTART_CANCELLATION_REPLACEMENT_INVALID".to_string())?;
-    let mut terminal = serde_json::to_value(error)
-        .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    terminal
-        .as_object_mut()
-        .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?
-        .insert(
-            "execution".to_string(),
-            serde_json::to_value(cancelled)
-                .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?,
-        );
-    Ok(terminal)
-}
-
-fn validate_prestart_cancelled_terminal_for_dispatch(
-    terminal: &Value,
-    dispatch: &AgentProcessDispatchV2,
-) -> Result<AgentExecutionV2, String> {
-    let execution: AgentExecutionV2 = serde_json::from_value(
-        terminal
-            .get("execution")
-            .cloned()
-            .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?,
-    )
-    .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    execution
-        .validate_for_request(&dispatch.task)
-        .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    let attempt = execution
-        .attempts
-        .first()
-        .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    let identity_matches = execution.execution_id == dispatch.execution_id
-        && execution.request_id == dispatch.task.request_id
-        && execution.idempotency_key == dispatch.task.idempotency_key
-        && execution.binding == dispatch.task.binding
-        && execution.sequence == 1
-        && execution.state == AgentExecutionState::Cancelled
-        && execution.attempts.len() == 1
-        && attempt.attempt_id == dispatch.attempt_id
-        && attempt.attempt_number == dispatch.attempt_number
-        && attempt.task_idempotency_key == dispatch.task_idempotency_key
-        && attempt.delivery_idempotency_key == dispatch.delivery_idempotency_key
-        && attempt.payload_digest == dispatch.payload_digest
-        && attempt.delivery == dispatch.delivery
-        && attempt.state == AgentAttemptState::DispatchCancelled
-        && attempt.started_sequence == 1
-        && attempt.finished_sequence == Some(1)
-        && attempt.session.is_none()
-        && attempt.retry.is_none();
-    if !identity_matches {
-        return Err("AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string());
-    }
-    let mut canonical_terminal = serde_json::to_value(
-        execution
-            .error
-            .as_ref()
-            .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?,
-    )
-    .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?;
-    canonical_terminal
-        .as_object_mut()
-        .ok_or_else(|| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?
-        .insert(
-            "execution".to_string(),
-            serde_json::to_value(&execution)
-                .map_err(|_| "AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string())?,
-        );
-    if &canonical_terminal != terminal {
-        return Err("AGENT_PRESTART_CANCELLATION_TERMINAL_INVALID".to_string());
-    }
-    Ok(execution)
-}
-
-fn pending_prestart_agent_terminal(
-    job_id: &str,
-    terminal: &Value,
-    phase: &str,
-) -> Result<PendingRunnerJobAgentProgress, String> {
-    let execution: AgentExecutionV2 = serde_json::from_value(
-        terminal
-            .get("execution")
-            .cloned()
-            .ok_or_else(|| "AGENT_PRESTART_TERMINAL_INVALID".to_string())?,
-    )
-    .map_err(|_| "AGENT_PRESTART_TERMINAL_INVALID".to_string())?;
-    Ok(PendingRunnerJobAgentProgress {
-        job_id: job_id.to_string(),
-        request_id: execution.request_id.clone(),
-        sequence: execution.sequence,
-        event: json!({
-            "eventType": format!("agent.{phase}"),
-            "stream": "",
-            "message": format!("agent execution {phase}"),
-            "payload": {
-                "requestId": execution.request_id,
-                "sequence": execution.sequence,
-                "phase": phase,
-                "value": execution,
-            }
-        }),
-    })
-}
-
-fn spool_disabled_agent_job_terminal(
-    job_id: &str,
-    terminal: &Value,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<(), String> {
-    let pending = pending_prestart_agent_terminal(job_id, terminal, "failed")?;
-    agent_context
-        .progress_outbox
-        .lock()
-        .map_err(|_| "AGENT_JOB_PROGRESS_OUTBOX_POISONED".to_string())?
-        .enqueue(pending)
-        .map_err(format_core_error)
-}
-
-fn process_one_runner_control_job<C: ManagementApiClient + Clone + Send + 'static>(
+fn process_one_runner_control_job<C: ManagementApiClient>(
     client: &mut C,
     credential: &ManagementCredential,
     resolved: &loomex_core::ResolvedCliSettings,
     session_id: &str,
     recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
 ) -> Result<bool, String> {
     let lease = client
         .lease_runner_job(credential, session_id)
@@ -8646,86 +6614,22 @@ fn process_one_runner_control_job<C: ManagementApiClient + Clone + Send + 'stati
     let Some(job) = lease.job else {
         return Ok(false);
     };
-    if job.get("kind").and_then(Value::as_str) == Some("agent.execute.v2")
-        && !resolved.agent_runtime_v2_enabled
-    {
-        let job_id = job_id(&job)?;
-        let now_epoch_ms = current_epoch_ms()?;
-        let recoverable = recoverable_runner_job(&job, resolved, session_id, now_epoch_ms)?;
-        let delivery_idempotency_key =
-            recoverable
-                .terminal_idempotency_key
-                .as_deref()
-                .ok_or_else(|| {
-                    "AGENT_RUNTIME_V2_DISABLED: agent delivery idempotency key is missing"
-                        .to_string()
-                })?;
-        let dispatch = validate_runner_agent_process_dispatch(
-            resolved,
-            session_id,
-            &job_id,
-            &job,
-            delivery_idempotency_key,
-        )
-        .map_err(|message| format!("AGENT_RUNTIME_V2_DISABLED_DISPATCH_INVALID: {message}"))?;
-        let journal_owned = {
-            let journal = agent_context
-                .journal
-                .lock()
-                .map_err(|_| "AGENT_JOURNAL_POISONED".to_string())?;
-            journal.entry(&dispatch.task.request_id).is_some()
-                || journal
-                    .tombstone(&dispatch.task.request_id)
-                    .map_err(format_core_error)?
-                    .is_some()
-        };
-        if recovery.job(&job_id).is_none() && !journal_owned {
-            let terminal = disabled_agent_job_terminal(&dispatch, &current_rfc3339_timestamp()?)?;
-            recovery
-                .record_lease(recoverable)
-                .map_err(format_core_error)?;
-            recovery
-                .record_prestart_failure(&job_id, session_id, terminal.clone(), current_epoch_ms()?)
-                .map_err(format_core_error)?;
-            spool_disabled_agent_job_terminal(&job_id, &terminal, agent_context)?;
-            submit_recovered_terminal(
-                client,
-                credential,
-                session_id,
-                &job_id,
-                recovery,
-                false,
-                terminal,
-                agent_context,
-            )?;
-            return Ok(true);
-        }
-    }
     let now_epoch_ms = current_epoch_ms()?;
     let recoverable = recoverable_runner_job(&job, resolved, session_id, now_epoch_ms)?;
     recovery
         .record_lease(recoverable)
         .map_err(format_core_error)?;
-    execute_and_finalize_runner_job(
-        client,
-        credential,
-        resolved,
-        session_id,
-        &job,
-        recovery,
-        agent_context,
-    )?;
+    execute_and_finalize_runner_job(client, credential, resolved, session_id, &job, recovery)?;
     Ok(true)
 }
 
-fn execute_and_finalize_runner_job<C: ManagementApiClient + Clone + Send + 'static>(
+fn execute_and_finalize_runner_job<C: ManagementApiClient>(
     client: &mut C,
     credential: &ManagementCredential,
     resolved: &loomex_core::ResolvedCliSettings,
     session_id: &str,
     job: &Value,
     recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
 ) -> Result<(), String> {
     let job_id = job_id(job)?;
     let lease_version = required_job_u64(job, "leaseVersion")?;
@@ -8738,30 +6642,7 @@ fn execute_and_finalize_runner_job<C: ManagementApiClient + Clone + Send + 'stat
     recovery
         .mark_running(&job_id, session_id, current_epoch_ms()?)
         .map_err(format_core_error)?;
-    let is_agent_job = job.get("kind").and_then(Value::as_str) == Some("agent.execute.v2");
-    materialize_runner_job_agent_progress(&job_id, agent_context)?;
-    drain_runner_job_agent_progress(
-        client,
-        credential,
-        session_id,
-        lease_version,
-        &job_id,
-        &agent_context.progress_outbox,
-        &agent_context.journal,
-    )?;
-    let execution: Result<Value, Value> = if is_agent_job {
-        execute_cancellable_agent_job(
-            client,
-            credential,
-            resolved,
-            session_id,
-            &job_id,
-            lease_version,
-            job,
-            recovery,
-            agent_context,
-        )
-    } else if matches!(
+    let execution = if matches!(
         job.get("kind").and_then(Value::as_str),
         Some("shell.exec" | "command.run")
     ) {
@@ -8775,10 +6656,8 @@ fn execute_and_finalize_runner_job<C: ManagementApiClient + Clone + Send + 'stat
             job,
             recovery,
         )
-        .map_err(runner_job_generic_error)
     } else {
         execute_runner_control_job_for_session(resolved, session_id, job)
-            .map_err(runner_job_generic_error)
     };
     match execution {
         Ok(result) => {
@@ -8788,803 +6667,64 @@ fn execute_and_finalize_runner_job<C: ManagementApiClient + Clone + Send + 'stat
             let terminal_record = recovery.job(&job_id).cloned().ok_or_else(|| {
                 "RUNNER_JOB_RECOVERY_INVALID: terminal record missing".to_string()
             })?;
-            let terminal_idempotency_key = terminal_record
-                .terminal_idempotency_key
-                .as_deref()
-                .unwrap_or(&terminal_record.idempotency_key);
-            if !is_agent_job {
-                let _ = client.append_runner_job_events_leased(
-                    credential,
-                    session_id,
-                    &job_id,
-                    terminal_record.lease_version,
-                    vec![json!({
-                        "eventType": "stdout",
-                        "stream": "stdout",
-                        "message": "job completed",
-                        "payload": result.clone()
-                    })],
-                );
-            }
-            if is_agent_job {
-                validate_runner_job_terminal_submission(
-                    session_id,
-                    terminal_record.lease_version,
-                    terminal_idempotency_key,
-                    true,
-                    &result,
-                )?;
-            }
+            let _ = client.append_runner_job_events_leased(
+                credential,
+                session_id,
+                &job_id,
+                terminal_record.lease_version,
+                vec![json!({
+                    "eventType": "stdout",
+                    "stream": "stdout",
+                    "message": "job completed",
+                    "payload": result.clone()
+                })],
+            );
             client
                 .complete_runner_job_idempotent(
                     credential,
                     session_id,
                     &job_id,
                     terminal_record.lease_version,
-                    terminal_idempotency_key,
+                    &terminal_record.idempotency_key,
                     result,
                 )
                 .map_err(format_core_error)?;
-            if is_agent_job {
-                acknowledge_runner_job_agent_terminal(&job_id, agent_context)?;
-            }
         }
-        Err(error) => {
-            let core_code = error.pointer("/context/coreCode").and_then(Value::as_str);
-            if core_code == Some("AGENT_JOB_PROGRESS_DELIVERY_UNAVAILABLE") {
-                return Err("AGENT_JOB_PROGRESS_DELIVERY_UNAVAILABLE".to_string());
-            }
-            if core_code == Some("AGENT_JOB_BLOCKED_NONTERMINAL") {
-                let execution = error
-                    .pointer("/context/execution")
-                    .cloned()
-                    .ok_or_else(|| "AGENT_JOB_BLOCKED_EXECUTION_MISSING".to_string())?;
-                recovery
-                    .record_deferred(&job_id, session_id, execution.clone(), current_epoch_ms()?)
-                    .map_err(format_core_error)?;
-                submit_recovered_defer(
-                    client,
-                    credential,
-                    session_id,
-                    &job_id,
-                    recovery,
-                    execution,
-                    agent_context,
-                )?;
-                return Ok(());
-            }
+        Err(err) => {
+            let error = json!({"code": "RUNNER_JOB_EXECUTION_FAILED", "message": err});
             recovery
                 .record_failed(&job_id, session_id, error.clone(), current_epoch_ms()?)
                 .map_err(format_core_error)?;
             let terminal_record = recovery.job(&job_id).cloned().ok_or_else(|| {
                 "RUNNER_JOB_RECOVERY_INVALID: terminal record missing".to_string()
             })?;
-            let terminal_idempotency_key = terminal_record
-                .terminal_idempotency_key
-                .as_deref()
-                .unwrap_or(&terminal_record.idempotency_key);
-            if !is_agent_job {
-                let _ = client.append_runner_job_events_leased(
-                    credential,
-                    session_id,
-                    &job_id,
-                    terminal_record.lease_version,
-                    vec![json!({
-                        "eventType": "stderr",
-                        "stream": "stderr",
-                        "message": error["message"].as_str().unwrap_or("job failed"),
-                        "payload": error.clone()
-                    })],
-                );
-            }
-            if is_agent_job {
-                validate_runner_job_terminal_submission(
-                    session_id,
-                    terminal_record.lease_version,
-                    terminal_idempotency_key,
-                    false,
-                    &error,
-                )?;
-            }
+            let _ = client.append_runner_job_events_leased(
+                credential,
+                session_id,
+                &job_id,
+                terminal_record.lease_version,
+                vec![json!({
+                    "eventType": "stderr",
+                    "stream": "stderr",
+                    "message": error["message"].as_str().unwrap_or("job failed"),
+                    "payload": error.clone()
+                })],
+            );
             client
                 .fail_runner_job_idempotent(
                     credential,
                     session_id,
                     &job_id,
                     terminal_record.lease_version,
-                    terminal_idempotency_key,
+                    &terminal_record.idempotency_key,
                     error,
                 )
                 .map_err(format_core_error)?;
-            if is_agent_job {
-                acknowledge_runner_job_agent_terminal(&job_id, agent_context)?;
-            }
         }
     }
     recovery
         .acknowledge_terminal(&job_id)
         .map_err(format_core_error)
-}
-
-fn runner_job_generic_error(message: String) -> Value {
-    json!({"code": "RUNNER_JOB_EXECUTION_FAILED", "message": message})
-}
-
-fn stop_leased_agent_worker(
-    service: &AgentExecutionService,
-    request_id: &str,
-    job_id: &str,
-    worker: thread::JoinHandle<()>,
-    receiver: &std::sync::mpsc::Receiver<loomex_core::CoreResult<AgentExecutionServiceOutcome>>,
-    error: Value,
-) -> Result<Value, Value> {
-    let _ = job_id;
-    let _ = service.interrupt_for_lease_loss(request_id);
-    // Process adapters own bounded process-tree termination. Never return and detach the
-    // provider worker: wait for its confirmed exit before the lease-lost result escapes.
-    let shutdown = receiver.recv_timeout(Duration::from_secs(15));
-    match shutdown {
-        Ok(_result) => {
-            let _ = worker.join();
-            service
-                .reconcile_lease_loss(request_id)
-                .map_err(agent_job_core_error)
-                .and_then(|execution| {
-                    agent_job_service_outcome(AgentExecutionServiceOutcome::Executed(execution))
-                })
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            let _ = worker.join();
-            service
-                .reconcile_lease_loss(request_id)
-                .map_err(|_| error)
-                .and_then(|execution| {
-                    agent_job_service_outcome(AgentExecutionServiceOutcome::Executed(execution))
-                })
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            // A join here is intentionally fail-closed. Returning would allow an unowned
-            // provider process to emit side effects after the lease moved to another runner.
-            let _ = worker.join();
-            service
-                .reconcile_lease_loss(request_id)
-                .map_err(|_| {
-                    agent_job_internal_error(
-                        "agent worker exceeded its bounded lease-loss shutdown budget",
-                    )
-                })
-                .and_then(|execution| {
-                    agent_job_service_outcome(AgentExecutionServiceOutcome::Executed(execution))
-                })
-        }
-    }
-}
-
-fn validate_runner_agent_process_dispatch(
-    resolved: &loomex_core::ResolvedCliSettings,
-    session_id: &str,
-    job_id: &str,
-    job: &Value,
-    trusted_delivery_idempotency_key: &str,
-) -> Result<AgentProcessDispatchV2, String> {
-    let dispatch: AgentProcessDispatchV2 = serde_json::from_value(
-        job.get("payload")
-            .cloned()
-            .ok_or_else(|| "agent job payload is required".to_string())?,
-    )
-    .map_err(|_| "agent job payload is not an agent-process-dispatch v2".to_string())?;
-    if dispatch.delivery_idempotency_key != trusted_delivery_idempotency_key {
-        return Err(
-            "agent dispatch delivery idempotency key does not match trusted runner job metadata"
-                .to_string(),
-        );
-    }
-    let actual_runner_id = resolved
-        .runner_id
-        .as_deref()
-        .ok_or_else(|| "runnerId is unavailable".to_string())?;
-    dispatch
-        .validate_for_runner_job(job_id, actual_runner_id)
-        .map_err(|_| {
-            "agent job process dispatch does not belong to this job and runner lease".to_string()
-        })?;
-    let authoritative_payload_digest = loomex_core::execution::canonical_json_payload_digest(
-        &dispatch
-            .payload_digest_input()
-            .map_err(|_| "agent job dispatch is not canonical JSON".to_string())?,
-    )
-    .map_err(|_| "agent job dispatch digest could not be computed".to_string())?;
-    let job_payload_digest = job
-        .get("payloadDigest")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "agent job payloadDigest is required".to_string())?;
-    let job_idempotency_key = job
-        .get("idempotencyKey")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "agent job idempotencyKey is required".to_string())?;
-    let job_runner_id = job
-        .get("runnerId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "agent job runnerId is required".to_string())?;
-    let job_session_id = job
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "agent job sessionId is required".to_string())?;
-    let binding_generation = job
-        .get("bindingGeneration")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "agent job bindingGeneration is required".to_string())?;
-    let configured_binding_id = resolved
-        .binding_id
-        .as_deref()
-        .ok_or_else(|| "bindingId is unavailable".to_string())?;
-    if !loomex_core::execution::constant_time_digest_eq(
-        &dispatch.payload_digest,
-        &authoritative_payload_digest,
-    ) || !loomex_core::execution::constant_time_digest_eq(
-        job_payload_digest,
-        &authoritative_payload_digest,
-    ) || job_idempotency_key != dispatch.task_idempotency_key
-        || job_runner_id != actual_runner_id
-        || job_session_id != session_id
-        || binding_generation != dispatch.task.binding.workspace_binding_generation
-        || dispatch.task.binding.workspace_binding_id != configured_binding_id
-    {
-        return Err(
-            "agent job outer dispatch, binding, or idempotency identity does not match".to_string(),
-        );
-    }
-    Ok(dispatch)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn execute_cancellable_agent_job<C: ManagementApiClient + Clone + Send + 'static>(
-    client: &mut C,
-    credential: &ManagementCredential,
-    resolved: &loomex_core::ResolvedCliSettings,
-    session_id: &str,
-    job_id: &str,
-    initial_lease_version: u64,
-    job: &Value,
-    recovery: &mut RunnerJobRecoveryJournal,
-    agent_context: &RunnerAgentExecutionContext,
-) -> Result<Value, Value> {
-    let transport_delivery_idempotency_key = recovery
-        .job(job_id)
-        .and_then(|record| record.terminal_idempotency_key.as_deref())
-        .ok_or_else(|| {
-            agent_job_validation_error(
-                "trusted runner job delivery idempotency metadata is unavailable",
-            )
-        })?;
-    let dispatch = validate_runner_agent_process_dispatch(
-        resolved,
-        session_id,
-        job_id,
-        job,
-        transport_delivery_idempotency_key,
-    )
-    .map_err(|message| agent_job_validation_error(&message))?;
-    let task = dispatch.task.clone();
-    let task_value = serde_json::to_value(&task)
-        .map_err(|_| agent_job_validation_error("agent task could not be canonicalized"))?;
-    let mut task_intent_value = task_value.clone();
-    task_intent_value
-        .as_object_mut()
-        .ok_or_else(|| agent_job_validation_error("agent job payload must be an object"))?
-        .remove("continuation");
-    let task_intent_digest =
-        loomex_core::execution::canonical_agent_task_payload_digest(&task_intent_value)
-            .map_err(agent_job_core_error)?;
-    let execution_identity = AgentExecutionIdentity {
-        execution_id: dispatch.execution_id.clone(),
-        attempt_id: dispatch.attempt_id.clone(),
-        attempt_number: dispatch.attempt_number,
-        retry_kind: dispatch.retry_kind,
-        from_attempt_id: dispatch.from_attempt_id.clone(),
-        delivery: dispatch.delivery.clone(),
-        task_idempotency_key: dispatch.task_idempotency_key.clone(),
-        delivery_idempotency_key: dispatch.delivery_idempotency_key.clone(),
-        payload_digest: dispatch.payload_digest.clone(),
-        task_intent_digest,
-    };
-    recovery
-        .set_terminal_idempotency_key(job_id, session_id, &dispatch.delivery_idempotency_key)
-        .map_err(agent_job_core_error)?;
-    let expected_binding = AgentExecutionBindingV2 {
-        workspace_binding_id: resolved
-            .binding_id
-            .clone()
-            .ok_or_else(|| agent_job_validation_error("runner bindingId is unavailable"))?,
-        workspace_binding_generation: job
-            .get("bindingGeneration")
-            .and_then(Value::as_u64)
-            .filter(|value| *value > 0)
-            .ok_or_else(|| agent_job_validation_error("agent job bindingGeneration is required"))?,
-        runner_id: resolved
-            .runner_id
-            .clone()
-            .ok_or_else(|| agent_job_validation_error("runnerId is unavailable"))?,
-    };
-    if task.binding != expected_binding
-        || job.get("runnerId").and_then(Value::as_str) != Some(expected_binding.runner_id.as_str())
-    {
-        return Err(agent_job_validation_error(
-            "agent task binding does not match the leased runner job",
-        ));
-    }
-    let workspace = PathBuf::from(
-        resolved
-            .workspace_path
-            .as_deref()
-            .ok_or_else(|| agent_job_validation_error("runner workspacePath is unavailable"))?,
-    )
-    .canonicalize()
-    .map_err(|_| agent_job_validation_error("runner workspace is not accessible"))?;
-    let config = runner_agent_runtime_config(&agent_context.config_path)
-        .map_err(|_| agent_job_validation_error("agent executable configuration is invalid"))?;
-    let service = AgentExecutionService::with_cancellation_registry(
-        Arc::new(LocalAgentRuntime::default()),
-        Arc::new(Mutex::new(config)),
-        Arc::new(Mutex::new(workspace)),
-        Arc::new(Mutex::new(expected_binding.clone())),
-        Arc::clone(&agent_context.journal),
-        Arc::clone(&agent_context.cancellations),
-    );
-    let lease_version = Arc::new(AtomicU64::new(initial_lease_version));
-    let sink: Arc<dyn AgentExecutionProgressSink> = Arc::new(RunnerJobAgentProgressSink {
-        client: Mutex::new(client.clone()),
-        credential: credential.clone(),
-        session_id: session_id.to_string(),
-        job_id: job_id.to_string(),
-        predecessor_job_id: job
-            .get("predecessorJobId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
-        job_idempotency_key: dispatch.delivery_idempotency_key.clone(),
-        lease_version: Arc::clone(&lease_version),
-        outbox: Arc::clone(&agent_context.progress_outbox),
-    });
-    let worker_service = service.clone();
-    let worker_task = task.clone();
-    let worker_identity = execution_identity;
-    let initial_clock_epoch_ms =
-        current_epoch_ms().map_err(|_| agent_job_internal_error("runner clock is unavailable"))?;
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    let worker = thread::Builder::new()
-        .name(format!("loomex-agent-job-{job_id}"))
-        .spawn(move || {
-            let result = worker_service.execute_with_sink(&worker_task, worker_identity, sink);
-            let _ = sender.send(result);
-        })
-        .map_err(|_| agent_job_internal_error("agent job worker could not be started"))?;
-    let mut current_lease_version = initial_lease_version;
-    let mut next_renewal_epoch_ms = initial_clock_epoch_ms.saturating_add(10_000);
-    struct PendingCancellation {
-        directive: RunnerJobCancellationDirective,
-        signalled: bool,
-        acknowledged_at: Option<Instant>,
-    }
-    let mut pending_cancellation: Option<PendingCancellation> = None;
-    let mut authoritative_cancellation_terminal: Option<AgentExecutionV2> = None;
-    macro_rules! lease_owned {
-        ($expression:expr) => {
-            match $expression {
-                Ok(value) => value,
-                Err(error) => {
-                    return stop_leased_agent_worker(
-                        &service,
-                        &task.request_id,
-                        job_id,
-                        worker,
-                        &receiver,
-                        error,
-                    )
-                }
-            }
-        };
-    }
-    loop {
-        if let Some(execution) = authoritative_cancellation_terminal.as_ref() {
-            if materialize_runner_job_agent_progress(job_id, agent_context).is_ok() {
-                let execution = execution.clone();
-                let _ = receiver.recv_timeout(Duration::from_secs(15));
-                let _ = worker.join();
-                return agent_job_service_outcome(AgentExecutionServiceOutcome::Executed(
-                    execution,
-                ));
-            }
-        } else if let Some(pending) = pending_cancellation.as_mut() {
-            let directive = &mut pending.directive;
-            if let Ok(directives) =
-                client.list_runner_job_cancellation_directives(credential, session_id)
-            {
-                if let Some(refreshed) = directives.into_iter().find(|candidate| {
-                    candidate.cancellation_id == directive.cancellation_id
-                        && candidate.job_id == directive.job_id
-                        && candidate.session_id == session_id
-                        && candidate.process_attempt_id == directive.process_attempt_id
-                        && candidate.binding_generation == directive.binding_generation
-                        && candidate.requested_at == directive.requested_at
-                        && candidate.lease_version >= directive.lease_version
-                }) {
-                    let acknowledgement_key = refreshed.acknowledgement_idempotency_key();
-                    if service
-                        .reserve_runner_cancellation(
-                            &task.request_id,
-                            &acknowledgement_key,
-                            &refreshed.cancellation_id,
-                            &refreshed.job_id,
-                            &refreshed.process_attempt_id,
-                            refreshed.lease_version,
-                            refreshed.binding_generation,
-                            &refreshed.requested_at,
-                        )
-                        .is_ok()
-                    {
-                        *directive = refreshed;
-                    }
-                }
-            }
-            if !pending.signalled
-                && service
-                    .signal_reserved_runner_cancellation(
-                        &task.request_id,
-                        &directive.cancellation_id,
-                    )
-                    .is_ok()
-            {
-                pending.signalled = true;
-            }
-            let acknowledgement_key = directive.acknowledgement_idempotency_key();
-            if pending.signalled
-                && pending.acknowledged_at.is_none()
-                && client
-                    .acknowledge_runner_job_cancellation(
-                        credential,
-                        session_id,
-                        job_id,
-                        current_lease_version,
-                        &directive.cancellation_id,
-                        &acknowledgement_key,
-                    )
-                    .is_ok()
-                && service
-                    .acknowledge_runner_cancellation(&task.request_id, &directive.cancellation_id)
-                    .is_ok()
-            {
-                pending.acknowledged_at = Some(Instant::now());
-            }
-            if pending.acknowledged_at.is_some() {
-                let has_nonterminal_pending = agent_context
-                    .journal
-                    .lock()
-                    .ok()
-                    .and_then(|journal| {
-                        journal
-                            .entry(&task.request_id)
-                            .and_then(|entry| entry.pending_delivery.as_ref())
-                            .map(|delivery| {
-                                matches!(
-                                    delivery.kind,
-                                    AgentPendingDeliveryKind::Checkpoint
-                                        | AgentPendingDeliveryKind::Execution
-                                )
-                            })
-                    })
-                    .unwrap_or(false);
-                if has_nonterminal_pending
-                    && (materialize_runner_job_agent_progress(job_id, agent_context).is_err()
-                        || drain_runner_job_agent_nonterminal_progress(
-                            client,
-                            credential,
-                            session_id,
-                            current_lease_version,
-                            job_id,
-                            &agent_context.progress_outbox,
-                            &agent_context.journal,
-                        )
-                        .is_err())
-                {
-                    continue;
-                }
-                let cancellation_id = directive.cancellation_id.clone();
-                let worker_observation = receiver.try_recv();
-                let cancellation_terminal: Result<Option<AgentExecutionV2>, Value> = (|| {
-                    let state = agent_context
-                        .journal
-                        .lock()
-                        .map_err(|_| agent_job_internal_error("agent journal lock is poisoned"))?
-                        .entry(&task.request_id)
-                        .ok_or_else(|| {
-                            agent_job_internal_error(
-                                "agent journal entry disappeared during cancellation",
-                            )
-                        })?
-                        .state;
-                    let convergence_expired = pending
-                        .acknowledged_at
-                        .expect("acknowledgement time was checked above")
-                        .elapsed()
-                        >= RUNNER_AGENT_CANCELLATION_CONVERGENCE_BUDGET;
-                    let worker_stopped = matches!(
-                        worker_observation,
-                        Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected)
-                    );
-                    if state.is_terminal()
-                        || state == AgentExecutionState::Blocked
-                        || worker_stopped
-                        || convergence_expired
-                    {
-                        if convergence_expired {
-                            let _ = service.interrupt_for_lease_loss(&task.request_id);
-                        }
-                        service
-                            .converge_acknowledged_runner_cancellation(
-                                &task.request_id,
-                                &cancellation_id,
-                                if convergence_expired {
-                                    loomex_core::execution::AgentProcessLoss::Timeout
-                                } else {
-                                    loomex_core::execution::AgentProcessLoss::Crash
-                                },
-                            )
-                            .map_err(agent_job_core_error)
-                    } else {
-                        Ok(None)
-                    }
-                })(
-                );
-                match cancellation_terminal {
-                    Ok(Some(execution)) => {
-                        pending_cancellation = None;
-                        authoritative_cancellation_terminal = Some(execution);
-                        continue;
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        // The authoritative cancellation remains durable and the worker stays
-                        // owned. Retry reconciliation; never release the pre-cancel result.
-                        continue;
-                    }
-                }
-            }
-        } else {
-            if let Ok(directives) =
-                client.list_runner_job_cancellation_directives(credential, session_id)
-            {
-                if let Some(directive) = directives
-                    .into_iter()
-                    .find(|directive| directive.job_id == job_id)
-                {
-                    if directive.session_id != session_id
-                        || directive.process_attempt_id != dispatch.attempt_id
-                        || directive.lease_version != current_lease_version
-                        || directive.binding_generation
-                            != expected_binding.workspace_binding_generation
-                    {
-                        // A stale or mismatched directive has no authority over this process.
-                        // Keep the valid lease running; a later matching directive or lease fence
-                        // may still arrive.
-                    } else {
-                        let acknowledgement_key = directive.acknowledgement_idempotency_key();
-                        if service
-                            .reserve_runner_cancellation(
-                                &task.request_id,
-                                &acknowledgement_key,
-                                &directive.cancellation_id,
-                                &directive.job_id,
-                                &directive.process_attempt_id,
-                                directive.lease_version,
-                                directive.binding_generation,
-                                &directive.requested_at,
-                            )
-                            .is_ok()
-                        {
-                            let signalled = service
-                                .signal_reserved_runner_cancellation(
-                                    &task.request_id,
-                                    &directive.cancellation_id,
-                                )
-                                .is_ok();
-                            pending_cancellation = Some(PendingCancellation {
-                                directive,
-                                signalled,
-                                acknowledged_at: None,
-                            });
-                            continue;
-                        }
-                    }
-                }
-            }
-            match receiver.try_recv() {
-                Ok(result) => {
-                    let _ = worker.join();
-                    return result
-                        .map_err(agent_job_core_error)
-                        .and_then(agent_job_service_outcome);
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    let _ = worker.join();
-                    return Err(agent_job_internal_error("agent job worker disconnected"));
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-            }
-        }
-        let now_epoch_ms =
-            lease_owned!(current_epoch_ms()
-                .map_err(|_| agent_job_internal_error("runner clock is unavailable")));
-        if now_epoch_ms >= next_renewal_epoch_ms {
-            let renewed = lease_owned!(client
-                .renew_runner_job(credential, session_id, job_id, current_lease_version)
-                .map_err(agent_job_core_error));
-            let renewed = lease_owned!(renewed
-                .job
-                .ok_or_else(|| agent_job_internal_error("renewed job response is missing")));
-            let remote = lease_owned!(remote_runner_job(&renewed)
-                .map_err(|_| agent_job_internal_error("renewed job response is invalid")));
-            if remote.session_id.as_deref() != Some(session_id)
-                || remote.lease_version <= current_lease_version
-            {
-                return stop_leased_agent_worker(
-                    &service,
-                    &task.request_id,
-                    job_id,
-                    worker,
-                    &receiver,
-                    agent_job_internal_error("agent job lease ownership changed during execution"),
-                );
-            }
-            let leased_until_epoch_ms =
-                lease_owned!(remote.leased_until_epoch_ms.ok_or_else(|| {
-                    agent_job_internal_error("renewed job lease deadline is missing")
-                }));
-            lease_owned!(recovery
-                .renew_lease(
-                    job_id,
-                    session_id,
-                    remote.lease_version,
-                    leased_until_epoch_ms,
-                    now_epoch_ms,
-                )
-                .map_err(agent_job_core_error));
-            current_lease_version = remote.lease_version;
-            lease_version.store(current_lease_version, Ordering::Release);
-            let remaining = leased_until_epoch_ms.saturating_sub(now_epoch_ms);
-            next_renewal_epoch_ms = now_epoch_ms.saturating_add((remaining / 3).max(1_000));
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-}
-
-fn agent_job_service_outcome(outcome: AgentExecutionServiceOutcome) -> Result<Value, Value> {
-    match outcome {
-        AgentExecutionServiceOutcome::Executed(execution) => {
-            let state = execution.state;
-            let error = execution.error.clone();
-            let value = serde_json::to_value(execution)
-                .map_err(|_| agent_job_internal_error("agent execution could not be serialized"))?;
-            if state == AgentExecutionState::Blocked {
-                return Err(json!({
-                    "schemaVersion": "loomex.agent-error.v2",
-                    "code": "provider_unavailable",
-                    "category": "availability",
-                    "message": "agent execution is blocked pending user remediation",
-                    "retry": "user_action_required",
-                    "context": {
-                        "coreCode": "AGENT_JOB_BLOCKED_NONTERMINAL",
-                        "execution": value,
-                    },
-                }));
-            }
-            if matches!(
-                state,
-                AgentExecutionState::Failed
-                    | AgentExecutionState::Cancelled
-                    | AgentExecutionState::Indeterminate
-            ) {
-                let mut failure = error
-                    .and_then(|error| serde_json::to_value(error).ok())
-                    .unwrap_or_else(|| {
-                        agent_job_internal_error("agent execution ended unsuccessfully")
-                    });
-                if let Some(object) = failure.as_object_mut() {
-                    // Backend terminal reconciliation accepts either a direct execution envelope
-                    // or an object containing it under `execution`.
-                    object.insert("execution".to_string(), value);
-                }
-                Err(failure)
-            } else {
-                Ok(value)
-            }
-        }
-        AgentExecutionServiceOutcome::Replay(replay) => {
-            let value = json!({
-                "schemaVersion": "loomex.agent-execution-replay.v2",
-                "requestId": replay.request_id,
-                "executionId": replay.execution_id,
-                "state": replay.state,
-                "sequence": replay.last_progress_sequence,
-                "replayed": true,
-                "cancelRequested": replay.cancel_requested,
-                "hasSessionCheckpoint": replay.has_session_checkpoint,
-            });
-            if replay.state == AgentExecutionState::Blocked {
-                Err(json!({
-                    "schemaVersion": "loomex.agent-error.v2",
-                    "code": "provider_unavailable",
-                    "category": "availability",
-                    "message": "agent execution remains blocked pending user remediation",
-                    "retry": "user_action_required",
-                    "context": {
-                        "coreCode": "AGENT_JOB_BLOCKED_NONTERMINAL",
-                        "agentExecution": value,
-                    },
-                }))
-            } else if matches!(
-                replay.state,
-                AgentExecutionState::Failed
-                    | AgentExecutionState::Cancelled
-                    | AgentExecutionState::Indeterminate
-            ) {
-                Err(json!({
-                    "schemaVersion": "loomex.agent-error.v2",
-                    "code": "execution_indeterminate",
-                    "category": "execution",
-                    "message": "durable agent execution requires reconciliation",
-                    "retry": "resume_required",
-                    "remediation": ["resume_session"],
-                    "context": {},
-                    "agentExecution": value,
-                }))
-            } else {
-                Ok(value)
-            }
-        }
-    }
-}
-
-fn agent_job_validation_error(message: &str) -> Value {
-    json!({
-        "schemaVersion": "loomex.agent-error.v2",
-        "code": "invalid_request",
-        "category": "validation",
-        "message": message,
-        "retry": "never",
-        "context": {},
-    })
-}
-
-fn agent_job_internal_error(message: &str) -> Value {
-    json!({
-        "schemaVersion": "loomex.agent-error.v2",
-        "code": "internal_error",
-        "category": "internal",
-        "message": message,
-        "retry": "retryable",
-        "context": {},
-    })
-}
-
-fn agent_job_core_error(error: loomex_core::CoreError) -> Value {
-    json!({
-        "schemaVersion": "loomex.agent-error.v2",
-        "code": "internal_error",
-        "category": "internal",
-        "message": error.message,
-        "retry": if error.code.contains("HTTP")
-            || error.code.contains("TIMEOUT")
-            || error.code.contains("UNAVAILABLE")
-            || error.code.contains("CONNECT")
-        {
-            "retryable"
-        } else {
-            "never"
-        },
-        "context": {"coreCode": error.code},
-    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -10404,8 +7544,6 @@ fn build_runner_service_runtime_config<C: ManagementApiClient>(
         binding_id: binding_id.to_string(),
         local_root_path,
         runner_device_id: format!("device_{}", machine_fingerprint_hash()),
-        agent_runtime_v2_enabled: resolved.agent_runtime_v2_enabled,
-        legacy_agent_task_mode: resolved.legacy_agent_task_mode,
         stream_credential,
     })
 }
@@ -10545,10 +7683,7 @@ fn build_service_transport_runtime(
         identity,
         project_runner_binding_id: config.binding_id.clone(),
         local_root_path: config.local_root_path.clone(),
-        capabilities: default_runner_capabilities(
-            config.agent_runtime_v2_enabled,
-            config.legacy_agent_task_mode,
-        ),
+        capabilities: default_runner_capabilities(),
         default_heartbeat_interval: Duration::from_secs(20),
         default_max_output_chunk_bytes: 64 * 1024,
         transport_max_inflight_output_bytes: 1024 * 1024,
@@ -10718,10 +7853,7 @@ fn bind_workspace<C: ManagementApiClient>(
                 arch: env::consts::ARCH.to_string(),
                 runner_version: env!("CARGO_PKG_VERSION").to_string(),
                 protocol_version: PROTOCOL_VERSION.to_string(),
-                capabilities: default_runner_capabilities(
-                    config.agent_runtime_v2_enabled,
-                    config.legacy_agent_task_mode,
-                ),
+                capabilities: default_runner_capabilities(),
             },
             &idempotency_key("runner-upsert", &organization_id),
         )
@@ -12684,65 +9816,12 @@ struct ParsedArgs {
 struct SetupInstallRequest {
     version: String,
     channel: String,
-    refresh_agent_executables: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SetupAgentRefreshRequest {
-    provider: Option<AgentExecutableProvider>,
-    path: Option<PathBuf>,
-    confirm: bool,
-}
-
-impl SetupAgentRefreshRequest {
-    fn parse(args: &[String]) -> Result<Self, String> {
-        let mut provider = None;
-        let mut path = None;
-        let mut confirm = false;
-        let mut index = 0;
-        while index < args.len() {
-            match args[index].as_str() {
-                "--provider" => {
-                    index += 1;
-                    let value = required_value(args, index, "--provider")?;
-                    provider = Some(
-                        AgentExecutableProvider::from_executable_name(&value)
-                            .map_err(format_core_error)?,
-                    );
-                }
-                "--path" => {
-                    index += 1;
-                    path = Some(PathBuf::from(required_value(args, index, "--path")?));
-                }
-                "--confirm" => confirm = true,
-                "--help" | "-h" => return Err(SETUP_HELP.to_string()),
-                value => {
-                    return Err(format!(
-                        "AGENT_EXECUTABLE_REFRESH_OPTION_INVALID: unknown setup agents refresh option: {value}\n{SETUP_HELP}"
-                    ))
-                }
-            }
-            index += 1;
-        }
-        if provider.is_some() != path.is_some() {
-            return Err(
-                "AGENT_EXECUTABLE_REFRESH_PATH_PAIR_REQUIRED: --provider and --path must be supplied together"
-                    .to_string(),
-            );
-        }
-        Ok(Self {
-            provider,
-            path,
-            confirm,
-        })
-    }
 }
 
 impl SetupInstallRequest {
     fn parse(args: &[String]) -> Result<Self, String> {
         let mut version = None;
         let mut channel = "stable".to_string();
-        let mut refresh_agent_executables = false;
         let mut index = 0;
         while index < args.len() {
             match args[index].as_str() {
@@ -12754,7 +9833,6 @@ impl SetupInstallRequest {
                     index += 1;
                     channel = required_value(args, index, "--channel")?;
                 }
-                "--refresh-agent-executables" => refresh_agent_executables = true,
                 "--help" | "-h" => return Err(SETUP_HELP.to_string()),
                 value => {
                     return Err(format!(
@@ -12772,11 +9850,7 @@ impl SetupInstallRequest {
                 "PLUGIN_SETUP_INSTALL_CHANNEL_INVALID: channel must be stable or beta".to_string(),
             );
         }
-        Ok(Self {
-            version,
-            channel,
-            refresh_agent_executables,
-        })
+        Ok(Self { version, channel })
     }
 }
 
@@ -12932,7 +10006,7 @@ usage:
   loomex profile list|current|use NAME
   loomex org list|select ORG_ID
   loomex project list|select PROJECT_ID
-  loomex setup install --version VERSION [--channel stable|beta] [--refresh-agent-executables]
+  loomex setup install --version VERSION [--channel stable|beta]
   loomex bind .|--project PROJECT_ID --workspace PATH|list|revoke BINDING_ID
   loomex workflow list|show WORKFLOW_ID|run WORKFLOW_ID --input JSON [--follow]
   loomex runner start|stop|status|logs|doctor|service|release|ops
@@ -12960,8 +10034,7 @@ usage:
 
 const SETUP_HELP: &str = "\
 usage:
-  loomex setup install --version VERSION [--channel stable|beta] [--refresh-agent-executables] [--json --non-interactive]
-  loomex setup agents refresh --confirm [--provider codex|claude|agy --path ABSOLUTE_CANONICAL_PATH] [--json]";
+  loomex setup install --version VERSION [--channel stable|beta] [--json --non-interactive]";
 
 const PROFILE_HELP: &str = "\
 usage:
@@ -13042,437 +10115,8 @@ const TRACE_HELP: &str = "usage:\n  loomex trace export RUN_ID [--path LOG_PATH]
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
 
-    static PROCESS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    static NEXT_ISOLATED_ENVIRONMENT: AtomicU64 = AtomicU64::new(1);
-
-    struct IsolatedCliEnvironment {
-        root: PathBuf,
-        profile: String,
-        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl IsolatedCliEnvironment {
-        fn new(label: &str) -> Self {
-            let lock = PROCESS_ENV_LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let sequence = NEXT_ISOLATED_ENVIRONMENT.fetch_add(1, Ordering::Relaxed);
-            let root = env::temp_dir().join(format!(
-                "loomex-cli-isolated-{label}-{}-{sequence}",
-                process::id()
-            ));
-            let _ = fs::remove_dir_all(&root);
-            let home = root.join("home");
-            let loomex_home = home.join(".loomex");
-            let config_path = loomex_home.join("config.toml");
-            let profile = format!("test-{}-{sequence}", process::id());
-            prepare_private_test_directory(&loomex_home);
-
-            let mut config = CliConfig::default();
-            config
-                .set_key(
-                    &format!("profiles.{profile}.serverUrl"),
-                    "https://loomex.app".to_string(),
-                )
-                .unwrap();
-            config.set_key("selectedProfile", profile.clone()).unwrap();
-            config.save(&config_path).unwrap();
-
-            let values = [
-                ("HOME", home),
-                (CONFIG_PATH_ENV, config_path),
-                (CREDENTIAL_DIR_ENV, loomex_home.join("credentials")),
-                ("LOOMEX_RUNTIME_DIR", root.join("runtime")),
-                (loomex_core::RUNTIME_HOME_ENV, root.join("runtime-home")),
-                ("XDG_STATE_HOME", root.join("xdg-state")),
-                ("XDG_CONFIG_HOME", root.join("xdg-config")),
-                ("XDG_DATA_HOME", root.join("xdg-data")),
-                (LOG_PATH_ENV, root.join("runner.log.jsonl")),
-                (RUNNER_GUARD_PATH_ENV, root.join("runner.guard")),
-            ];
-            let previous = values
-                .iter()
-                .map(|(key, _)| (*key, env::var_os(key)))
-                .collect::<Vec<_>>();
-            for (key, value) in values {
-                env::set_var(key, value);
-            }
-
-            Self {
-                root,
-                profile,
-                previous,
-                _lock: lock,
-            }
-        }
-    }
-
-    impl Drop for IsolatedCliEnvironment {
-        fn drop(&mut self) {
-            for (key, value) in self.previous.drain(..).rev() {
-                match value {
-                    Some(value) => env::set_var(key, value),
-                    None => env::remove_var(key),
-                }
-            }
-            let _ = fs::remove_dir_all(&self.root);
-        }
-    }
-
-    #[test]
-    fn setup_bootstrap_discovers_only_persisted_allowlisted_agent_executables() {
-        let root = env::temp_dir().join(format!(
-            "loomex-cli-setup-agent-discovery-{}-{}",
-            process::id(),
-            current_epoch_ms().unwrap()
-        ));
-        let bin = root.join("bin");
-        fs::create_dir_all(&bin).unwrap();
-        for executable in ["codex", "claude", "agy", "gemini"] {
-            let path = bin.join(executable);
-            fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-            }
-        }
-        let config_path = root.join("agent-executables.json");
-        let interactive_path = env::join_paths([bin]).unwrap();
-
-        let discovered =
-            discover_agent_executables_for_setup(&config_path, Some(&interactive_path)).unwrap();
-
-        for provider in [
-            AgentExecutableProvider::Codex,
-            AgentExecutableProvider::Claude,
-            AgentExecutableProvider::Agy,
-        ] {
-            assert!(discovered
-                .resolve_executable(provider)
-                .unwrap()
-                .is_absolute());
-        }
-        let persisted = fs::read_to_string(&config_path).unwrap();
-        assert!(!persisted.contains("\"gemini\""));
-        assert!(!persisted.contains("token"));
-
-        let restricted_bin = root.join("restricted");
-        fs::create_dir_all(&restricted_bin).unwrap();
-        let restricted_path = env::join_paths([restricted_bin]).unwrap();
-        let setup_reentry =
-            discover_agent_executables_for_setup(&config_path, Some(&restricted_path)).unwrap();
-        for provider in [
-            AgentExecutableProvider::Codex,
-            AgentExecutableProvider::Claude,
-            AgentExecutableProvider::Agy,
-        ] {
-            assert!(setup_reentry.resolve_executable(provider).is_ok());
-        }
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn setup_agent_refresh_makes_install_after_setup_runtime_configured() {
-        let root = env::temp_dir().join(format!(
-            "loomex-cli-agent-refresh-install-after-setup-{}-{}",
-            process::id(),
-            current_epoch_ms().unwrap()
-        ));
-        let cli_config_path = root.join("config.toml");
-        let config_path = agent_executable_config_path(&cli_config_path);
-        let empty_bin = root.join("empty-bin");
-        fs::create_dir_all(&empty_bin).unwrap();
-        let empty_path = env::join_paths([&empty_bin]).unwrap();
-        AgentExecutableConfig::discover_and_save(&config_path, Some(&empty_path), 1).unwrap();
-
-        let installed_bin = root.join("installed").join("bin");
-        fs::create_dir_all(&installed_bin).unwrap();
-        let claude = installed_bin.join("claude");
-        fs::write(&claude, b"#!/bin/sh\nexit 0\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&claude, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        let refreshed_path = env::join_paths([&installed_bin]).unwrap();
-        let output = run_setup_agent_refresh_with(
-            &["--confirm".to_string()],
-            &GlobalOptions {
-                json: true,
-                ..Default::default()
-            },
-            &config_path,
-            Some(&refreshed_path),
-            true,
-        )
-        .unwrap();
-        let value: Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(value["mode"], "interactive_path");
-        assert_eq!(value["serviceRestartRequired"], false);
-        assert_eq!(value["nextHeartbeatUsesPersistedConfiguration"], true);
-
-        let daemon_loaded = AgentExecutableConfig::load_or_default(&config_path).unwrap();
-        assert!(daemon_loaded
-            .resolve_executable(AgentExecutableProvider::Claude)
-            .is_ok());
-        let heartbeat_config = runner_agent_runtime_config(&cli_config_path).unwrap();
-        assert!(heartbeat_config
-            .executables
-            .contains_key(&ExecutorKind::ClaudeCli));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn setup_agent_refresh_supports_restricted_gui_path_with_approved_claude_path() {
-        let root = env::temp_dir().join(format!(
-            "loomex-cli-agent-refresh-approved-path-{}-{}",
-            process::id(),
-            current_epoch_ms().unwrap()
-        ));
-        let config_path = root.join("agent-executables.json");
-        let restricted_bin = root.join("restricted-gui-bin");
-        fs::create_dir_all(&restricted_bin).unwrap();
-        let restricted_path = env::join_paths([&restricted_bin]).unwrap();
-        AgentExecutableConfig::discover_and_save(&config_path, Some(&restricted_path), 1).unwrap();
-
-        let claude = root.join("claude-install").join("bin").join("claude");
-        fs::create_dir_all(claude.parent().unwrap()).unwrap();
-        fs::write(&claude, b"#!/bin/sh\nexit 0\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&claude, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        let claude = fs::canonicalize(claude).unwrap();
-        let output = run_setup_agent_refresh_with(
-            &[
-                "--confirm".to_string(),
-                "--provider".to_string(),
-                "claude".to_string(),
-                "--path".to_string(),
-                claude.display().to_string(),
-            ],
-            &GlobalOptions {
-                json: true,
-                ..Default::default()
-            },
-            &config_path,
-            Some(&restricted_path),
-            true,
-        )
-        .unwrap();
-        let value: Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(value["mode"], "approved_explicit_path");
-        assert_eq!(value["provider"], "claude");
-        assert!(!output.contains(&claude.display().to_string()));
-
-        let loaded = AgentExecutableConfig::load_or_default(&config_path).unwrap();
-        assert_eq!(
-            loaded
-                .resolve_executable(AgentExecutableProvider::Claude)
-                .unwrap(),
-            claude
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn setup_agent_refresh_is_local_interactive_only_and_never_accepts_gemini() {
-        let root = env::temp_dir().join(format!(
-            "loomex-cli-agent-refresh-rejections-{}-{}",
-            process::id(),
-            current_epoch_ms().unwrap()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        let config_path = root.join("agent-executables.json");
-        let args = ["--confirm".to_string()];
-        let error = run_setup_agent_refresh_with(
-            &args,
-            &GlobalOptions {
-                non_interactive: true,
-                ..Default::default()
-            },
-            &config_path,
-            None,
-            true,
-        )
-        .unwrap_err();
-        assert!(error.starts_with("AGENT_EXECUTABLE_REFRESH_INTERACTIVE_REQUIRED:"));
-
-        let error = run_setup_agent_refresh_with(
-            &[
-                "--confirm".to_string(),
-                "--provider".to_string(),
-                "gemini".to_string(),
-                "--path".to_string(),
-                root.join("gemini").display().to_string(),
-            ],
-            &GlobalOptions::default(),
-            &config_path,
-            None,
-            true,
-        )
-        .unwrap_err();
-        assert!(error.starts_with("AGENT_EXECUTABLE_PROVIDER_UNSUPPORTED:"));
-
-        for incomplete_args in [
-            vec![
-                "--confirm".to_string(),
-                "--provider".to_string(),
-                "claude".to_string(),
-            ],
-            vec![
-                "--confirm".to_string(),
-                "--path".to_string(),
-                root.join("claude").display().to_string(),
-            ],
-        ] {
-            let error = run_setup_agent_refresh_with(
-                &incomplete_args,
-                &GlobalOptions::default(),
-                &config_path,
-                None,
-                true,
-            )
-            .unwrap_err();
-            assert!(error.starts_with("AGENT_EXECUTABLE_REFRESH_PATH_PAIR_REQUIRED:"));
-        }
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn runner_manifest_advertises_redacted_agent_runtime_v2_snapshot() {
-        let root = env::temp_dir().join(format!(
-            "loomex-cli-agent-manifest-{}-{}",
-            process::id(),
-            current_epoch_ms().unwrap()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        let config_path = root.join("config.toml");
-        let mut resolved = service_resolved_settings();
-        resolved.workspace_path = Some(root.display().to_string());
-
-        let manifest = runner_control_manifest(&resolved, "binding_123", &config_path).unwrap();
-
-        assert_eq!(manifest["capabilities"][AGENT_RUNTIME_CAPABILITY_V2], true);
-        assert_eq!(
-            manifest["agentRuntimes"]["schemaVersion"],
-            AGENT_CAPABILITY_SCHEMA_V2
-        );
-        assert_eq!(manifest["agentRuntimes"]["runnerId"], "runner_123");
-        let executors = manifest["agentRuntimes"]["executors"].as_array().unwrap();
-        assert_eq!(executors.len(), 3);
-        assert!(executors
-            .iter()
-            .any(|entry| entry["executor"] == "codex_cli"));
-        assert!(executors
-            .iter()
-            .any(|entry| entry["executor"] == "claude_cli"));
-        assert!(executors.iter().any(|entry| entry["executor"] == "agy_cli"));
-        let serialized = manifest.to_string();
-        for forbidden in [
-            "gemini_cli",
-            "executablePath",
-            "rawStderr",
-            "accessToken",
-            root.to_string_lossy().as_ref(),
-        ] {
-            assert!(
-                !serialized.contains(forbidden),
-                "manifest leaked forbidden runtime data: {forbidden}"
-            );
-        }
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn runner_agent_advertisement_four_way_matrix_is_identical_across_planes() {
-        let root = env::temp_dir().join(format!(
-            "loomex-cli-agent-cutover-matrix-{}-{}",
-            process::id(),
-            current_epoch_ms().unwrap()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        let config_path = root.join("config.toml");
-
-        for (v2_enabled, legacy_mode) in [
-            (true, loomex_core::LegacyAgentTaskMode::DrainOnly),
-            (true, loomex_core::LegacyAgentTaskMode::Disabled),
-            (false, loomex_core::LegacyAgentTaskMode::DrainOnly),
-            (false, loomex_core::LegacyAgentTaskMode::Disabled),
-        ] {
-            let mut resolved = service_resolved_settings();
-            resolved.workspace_path = Some(root.display().to_string());
-            resolved.agent_runtime_v2_enabled = v2_enabled;
-            resolved.legacy_agent_task_mode = legacy_mode;
-            let manifest = runner_control_manifest(&resolved, "binding_123", &config_path).unwrap();
-            let advertisement: RunnerAgentAdvertisementV1 =
-                serde_json::from_value(manifest.clone()).unwrap();
-            advertisement.validate_for_runner_id("runner_123").unwrap();
-
-            let plane_capabilities = default_runner_capabilities(v2_enabled, legacy_mode);
-            let upsert = RunnerUpsertRequest {
-                organization_id: "org_123".to_string(),
-                display_name: "runner".to_string(),
-                machine_fingerprint_hash: "fingerprint".to_string(),
-                os: "test".to_string(),
-                arch: "test".to_string(),
-                runner_version: env!("CARGO_PKG_VERSION").to_string(),
-                protocol_version: PROTOCOL_VERSION.to_string(),
-                capabilities: plane_capabilities.clone(),
-            };
-            let stream = StreamSupervisorConfig {
-                identity: StreamIdentity {
-                    organization_id: "org_123".to_string(),
-                    project_id: "prj_123".to_string(),
-                    runner_device_id: "device_123".to_string(),
-                    runner_session_id: "session_123".to_string(),
-                    protocol_version: PROTOCOL_VERSION.to_string(),
-                    runner_version: env!("CARGO_PKG_VERSION").to_string(),
-                },
-                project_runner_binding_id: "binding_123".to_string(),
-                local_root_path: root.display().to_string(),
-                capabilities: plane_capabilities.clone(),
-                default_heartbeat_interval: Duration::from_secs(20),
-                default_max_output_chunk_bytes: 64 * 1024,
-                transport_max_inflight_output_bytes: 1024 * 1024,
-            };
-            assert_eq!(upsert.capabilities, stream.capabilities);
-            for capability in [
-                AGENT_RUNTIME_CAPABILITY_V2,
-                LEGACY_AGENT_TASK_DRAIN_CAPABILITY,
-            ] {
-                let expected = plane_capabilities.iter().any(|item| item == capability);
-                assert_eq!(
-                    manifest["capabilities"]
-                        .get(capability)
-                        .and_then(Value::as_bool),
-                    expected.then_some(true)
-                );
-            }
-            assert_eq!(
-                manifest.get("agentRuntimes").is_some(),
-                resolved.agent_runtime_v2_enabled
-            );
-            assert_eq!(
-                manifest["agentRuntimeV2Enabled"],
-                resolved.agent_runtime_v2_enabled
-            );
-            assert_eq!(
-                manifest["legacyAgentTasks"]["mode"],
-                if legacy_mode == loomex_core::LegacyAgentTaskMode::DrainOnly {
-                    "drain_only"
-                } else {
-                    "disabled"
-                }
-            );
-        }
-        let _ = fs::remove_dir_all(root);
-    }
+    static PLUGIN_CONTROL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn test_plugin_auth_flow(server_url: &str) -> PluginAuthFlow {
         PluginAuthFlow {
@@ -13562,7 +10206,7 @@ mod tests {
 
     #[test]
     fn plugin_control_setup_status_works_before_daemon_or_runtime_exists() {
-        let _lock = PROCESS_ENV_LOCK.lock().unwrap();
+        let _lock = PLUGIN_CONTROL_ENV_LOCK.lock().unwrap();
         let runtime_root = env::temp_dir().join(format!(
             "loomex-plugin-first-use-{}-{}",
             process::id(),
@@ -13700,10 +10344,7 @@ mod tests {
                 status: "online".to_string(),
                 runner_version: env!("CARGO_PKG_VERSION").to_string(),
                 protocol_version: PROTOCOL_VERSION.to_string(),
-                capabilities: default_runner_capabilities(
-                    true,
-                    loomex_core::LegacyAgentTaskMode::DrainOnly,
-                ),
+                capabilities: default_runner_capabilities(),
             }),
             ..Default::default()
         };
@@ -13892,6 +10533,8 @@ mod tests {
         assert!(!paths.token_path.exists());
         let _ = fs::remove_dir_all(root);
     }
+    use std::{cell::Cell, rc::Rc};
+
     use loomex_core::{
         CredentialStorageOutcome, FileLogSink, HumanRequestExecution, HumanRequestResolveResponse,
         LocalCredentialStore, LogEntry, Runner, StreamCredentialResponse, WorkflowRunStartResponse,
@@ -14008,29 +10651,19 @@ mod tests {
     fn setup_install_request_requires_a_supported_version_and_channel() {
         let request = SetupInstallRequest::parse(&[
             "--version".to_string(),
-            "0.2.0".to_string(),
+            "0.1.37".to_string(),
             "--channel".to_string(),
             "stable".to_string(),
         ])
         .unwrap();
-        assert_eq!(request.version, "0.2.0");
+        assert_eq!(request.version, "0.1.37");
         assert_eq!(request.channel, "stable");
-        assert!(!request.refresh_agent_executables);
-        assert!(
-            SetupInstallRequest::parse(&[
-                "--version".to_string(),
-                "0.2.0".to_string(),
-                "--refresh-agent-executables".to_string(),
-            ])
-            .unwrap()
-            .refresh_agent_executables
-        );
         assert!(SetupInstallRequest::parse(&[])
             .unwrap_err()
             .contains("VERSION_REQUIRED"));
         assert!(SetupInstallRequest::parse(&[
             "--version".to_string(),
-            "0.2.0".to_string(),
+            "0.1.37".to_string(),
             "--channel".to_string(),
             "nightly".to_string(),
         ])
@@ -14040,7 +10673,6 @@ mod tests {
 
     #[test]
     fn parses_all_phase_60_task_01_commands() {
-        let _environment = IsolatedCliEnvironment::new("phase-60-command-parsing");
         let commands = vec![
             vec!["config", "list"],
             vec!["config", "get", "selectedProfile"],
@@ -14062,7 +10694,7 @@ mod tests {
 
         for command in commands {
             let args = command.into_iter().map(str::to_string).collect::<Vec<_>>();
-            assert!(run(args.clone()).is_ok(), "command failed: {args:?}");
+            assert!(run(args).is_ok());
         }
     }
 
@@ -14078,20 +10710,19 @@ mod tests {
 
     #[test]
     fn runner_status_json_schema() {
-        let environment = IsolatedCliEnvironment::new("runner-status-json-schema");
         let output = run(vec![
             "runner".to_string(),
             "status".to_string(),
             "--json".to_string(),
             "--profile".to_string(),
-            environment.profile.clone(),
+            "local".to_string(),
         ])
         .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!("loomex.cli.runnerStatus/v1", parsed["schemaVersion"]);
         assert_eq!("disconnected", parsed["status"]);
-        assert_eq!(environment.profile, parsed["profile"]);
+        assert_eq!("local", parsed["profile"]);
     }
 
     #[test]
@@ -14131,7 +10762,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert_eq!("loomex.localhost", value);
-        assert!(saved.starts_with("configVersion = 3\n"));
+        assert!(saved.starts_with("configVersion = 2\n"));
         assert!(list.contains("profiles.dev.serverUrl=http://127.0.0.1:28080"));
         assert!(!list.to_lowercase().contains("token"));
     }
@@ -14154,31 +10785,6 @@ mod tests {
             .unwrap()
             .iter()
             .any(|entry| entry["key"] == "selectedProfile" && entry["value"] == "default"));
-    }
-
-    #[test]
-    fn config_cutover_change_explicitly_requires_runner_service_restart() {
-        let path = temp_config_path("config-cutover-restart");
-        let options = GlobalOptions {
-            json: true,
-            ..Default::default()
-        };
-
-        for (key, value) in [
-            ("agentRuntimeV2Enabled", "false"),
-            ("legacyAgentTaskMode", "disabled"),
-        ] {
-            let output = run_config_with_path(
-                &["set".to_string(), key.to_string(), value.to_string()],
-                &options,
-                path.clone(),
-            )
-            .unwrap();
-            let parsed: Value = serde_json::from_str(&output).unwrap();
-            assert_eq!(parsed["serviceRestartRequired"], true);
-            assert_eq!(parsed["nextAction"], "restart_runner_service");
-        }
-        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -14330,10 +10936,7 @@ mod tests {
                 status: "connected".to_string(),
                 runner_version: "0.1.0".to_string(),
                 protocol_version: PROTOCOL_VERSION.to_string(),
-                capabilities: default_runner_capabilities(
-                    true,
-                    loomex_core::LegacyAgentTaskMode::DrainOnly,
-                ),
+                capabilities: default_runner_capabilities(),
             }),
             bindings: vec![ManagementProjectRunnerBinding {
                 id: "binding_123".to_string(),
@@ -15064,24 +11667,7 @@ mod tests {
             current_epoch_ms().unwrap()
         ));
         let log_path = recovery_path.with_extension("log");
-        let config_path = recovery_path.with_extension("config.toml");
         let mut recovery = RunnerJobRecoveryJournal::open(&recovery_path).unwrap();
-        let agent_context = RunnerAgentExecutionContext {
-            config_path: config_path.clone(),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(
-                    recovery_path.with_extension("agent-jobs.json"),
-                )
-                .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(
-                    recovery_path.with_extension("agent-events.json"),
-                )
-                .unwrap(),
-            )),
-        };
         let mut backoff = RunnerControlReconnectBackoff::new();
 
         for expected_delay in [1, 2, 4] {
@@ -15091,17 +11677,12 @@ mod tests {
                 &credential,
                 &resolved,
                 "binding_123",
-                &config_path,
                 &mut recovery,
-                &agent_context,
                 &log_path,
                 &mut || session_healthy = true,
             )
             .unwrap_err();
-            assert!(
-                error.contains("RUNNER_CONTROL_HTTP_FAILED"),
-                "unexpected runner session error: {error}"
-            );
+            assert!(error.contains("RUNNER_CONTROL_HTTP_FAILED"));
             assert!(!session_healthy, "session creation alone is not healthy");
             assert_eq!(
                 Duration::from_secs(expected_delay),
@@ -15115,17 +11696,12 @@ mod tests {
             &credential,
             &resolved,
             "binding_123",
-            &config_path,
             &mut recovery,
-            &agent_context,
             &log_path,
             &mut || session_healthy = true,
         )
         .unwrap_err();
-        assert!(
-            error.contains("RUNNER_CONTROL_HTTP_FAILED"),
-            "unexpected runner session error: {error}"
-        );
+        assert!(error.contains("RUNNER_CONTROL_HTTP_FAILED"));
         assert!(session_healthy, "the first lease poll succeeded");
         backoff.control_operation_succeeded();
         assert_eq!(Duration::from_secs(1), backoff.next_retry_delay());
@@ -15329,7 +11905,6 @@ mod tests {
 
     #[test]
     fn support_bundle_redacts_logs_and_config() {
-        let _lock = PROCESS_ENV_LOCK.lock().unwrap();
         let log_path = temp_config_path("support-bundle-log");
         let bundle_path = temp_config_path("support-bundle-output");
         let _ = fs::remove_file(&log_path);
@@ -16304,7 +12879,7 @@ mod tests {
         let credential_root = temp_credential_dir("device-challenge-presented");
         let store = LocalCredentialStore::new(credential_root.clone());
         let mut config = CliConfig::default();
-        let challenge_presented = Arc::new(AtomicBool::new(false));
+        let challenge_presented = Rc::new(Cell::new(false));
         let mut client = FakeManagementClient {
             device_challenge: Some(DeviceLoginChallenge {
                 device_code: "dev_code".to_string(),
@@ -16318,7 +12893,7 @@ mod tests {
                 id: "org_123".to_string(),
                 name: "Only Org".to_string(),
             }],
-            poll_requires_presented: Some(Arc::clone(&challenge_presented)),
+            poll_requires_presented: Some(Rc::clone(&challenge_presented)),
             ..Default::default()
         };
 
@@ -16339,7 +12914,7 @@ mod tests {
             |challenge| {
                 assert_eq!("USER-CODE", challenge.user_code);
                 assert_eq!("https://loomex.app/device", challenge.verification_uri);
-                challenge_presented.store(true, Ordering::Release);
+                challenge_presented.set(true);
             },
         )
         .unwrap();
@@ -16347,7 +12922,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&credential_root);
 
         assert!(output.contains("device login verified"));
-        assert!(challenge_presented.load(Ordering::Acquire));
+        assert!(challenge_presented.get());
     }
 
     #[test]
@@ -16894,10 +13469,7 @@ mod tests {
                 status: "online".to_string(),
                 runner_version: env!("CARGO_PKG_VERSION").to_string(),
                 protocol_version: PROTOCOL_VERSION.to_string(),
-                capabilities: default_runner_capabilities(
-                    true,
-                    loomex_core::LegacyAgentTaskMode::DrainOnly,
-                ),
+                capabilities: default_runner_capabilities(),
             }),
             bindings: vec![ManagementProjectRunnerBinding {
                 id: "binding-foreign".to_string(),
@@ -18488,8 +15060,6 @@ mod tests {
             profile: "default".to_string(),
             server_url: "https://loomex.app".to_string(),
             host_header: None,
-            agent_runtime_v2_enabled: true,
-            legacy_agent_task_mode: loomex_core::config::LegacyAgentTaskMode::DrainOnly,
             organization_id: Some("org_123".to_string()),
             project_id: Some("prj_123".to_string()),
             runner_id: Some("runner_123".to_string()),
@@ -18502,7 +15072,7 @@ mod tests {
     struct FakeManagementClient {
         device_challenge: Option<DeviceLoginChallenge>,
         device_token: Option<AuthTokenResponse>,
-        poll_requires_presented: Option<Arc<AtomicBool>>,
+        poll_requires_presented: Option<Rc<Cell<bool>>>,
         api_key_token: Option<AuthTokenResponse>,
         api_key_exchange_organization_id: Option<String>,
         api_key_error: Option<loomex_core::CoreError>,
@@ -18536,21 +15106,8 @@ mod tests {
         runner_session_response: Option<loomex_core::RunnerSessionResponse>,
         runner_jobs: Vec<Value>,
         runner_job_lease_errors: Vec<Option<loomex_core::CoreError>>,
-        started_runner_jobs: Vec<String>,
         completed_runner_jobs: Vec<Value>,
         failed_runner_jobs: Vec<Value>,
-        failed_runner_job_keys: Vec<String>,
-        fail_runner_job_error_before_accept: Option<loomex_core::CoreError>,
-        fail_runner_job_response_loss_after_accept: bool,
-        deferred_runner_jobs: Vec<Value>,
-        deferred_runner_job_keys: Vec<String>,
-        runner_job_lookup: Option<Value>,
-        runner_job_cancellation_directives: Vec<RunnerJobCancellationDirective>,
-        runner_job_cancellation_ack_keys: Vec<String>,
-        runner_job_cancellation_ack_error: Option<loomex_core::CoreError>,
-        runner_job_cancellation_ack_failures_remaining: usize,
-        runner_job_cancellation_poll_failures_remaining: usize,
-        appended_runner_job_events: Vec<Value>,
     }
 
     struct FallingBackCredentialStore;
@@ -18591,7 +15148,7 @@ mod tests {
         ) -> loomex_core::CoreResult<Option<AuthTokenResponse>> {
             if let Some(required) = &self.poll_requires_presented {
                 assert!(
-                    required.load(Ordering::Acquire),
+                    required.get(),
                     "device challenge must be presented before poll"
                 );
             }
@@ -18688,10 +15245,7 @@ mod tests {
                 status: "connected".to_string(),
                 runner_version: env!("CARGO_PKG_VERSION").to_string(),
                 protocol_version: PROTOCOL_VERSION.to_string(),
-                capabilities: default_runner_capabilities(
-                    true,
-                    loomex_core::LegacyAgentTaskMode::DrainOnly,
-                ),
+                capabilities: default_runner_capabilities(),
             }))
         }
 
@@ -18709,10 +15263,7 @@ mod tests {
                     status: "online".to_string(),
                     runner_version: env!("CARGO_PKG_VERSION").to_string(),
                     protocol_version: PROTOCOL_VERSION.to_string(),
-                    capabilities: default_runner_capabilities(
-                        true,
-                        loomex_core::LegacyAgentTaskMode::DrainOnly,
-                    ),
+                    capabilities: default_runner_capabilities(),
                 });
                 json!({
                     "runner": {
@@ -18975,95 +15526,12 @@ mod tests {
             })
         }
 
-        fn list_runner_job_cancellation_directives(
-            &mut self,
-            _credential: &ManagementCredential,
-            _session_id: &str,
-        ) -> loomex_core::CoreResult<Vec<RunnerJobCancellationDirective>> {
-            if self.runner_job_cancellation_poll_failures_remaining > 0 {
-                self.runner_job_cancellation_poll_failures_remaining -= 1;
-                return Err(loomex_core::CoreError::new(
-                    "MANAGEMENT_HTTP_FAILED",
-                    "temporary cancellation poll failure",
-                ));
-            }
-            Ok(self.runner_job_cancellation_directives.clone())
-        }
-
-        fn acknowledge_runner_job_cancellation(
-            &mut self,
-            _credential: &ManagementCredential,
-            _session_id: &str,
-            _job_id: &str,
-            _lease_version: u64,
-            cancellation_id: &str,
-            idempotency_key: &str,
-        ) -> loomex_core::CoreResult<loomex_core::RunnerJobCancellationAckResponse> {
-            self.runner_job_cancellation_ack_keys
-                .push(idempotency_key.to_string());
-            if self.runner_job_cancellation_ack_failures_remaining > 0 {
-                self.runner_job_cancellation_ack_failures_remaining -= 1;
-                return Err(loomex_core::CoreError::new(
-                    "MANAGEMENT_HTTP_FAILED",
-                    "temporary cancellation acknowledgement failure",
-                ));
-            }
-            if let Some(error) = self.runner_job_cancellation_ack_error.clone() {
-                return Err(error);
-            }
-            Ok(loomex_core::RunnerJobCancellationAckResponse {
-                cancellation_id: cancellation_id.to_string(),
-                state: "acknowledged".to_string(),
-                replayed: false,
-            })
-        }
-
-        fn get_runner_job(
-            &mut self,
-            _credential: &ManagementCredential,
-            _job_id: &str,
-        ) -> loomex_core::CoreResult<loomex_core::RunnerJobResponse> {
-            Ok(loomex_core::RunnerJobResponse {
-                job: self.runner_job_lookup.clone(),
-            })
-        }
-
-        fn reclaim_runner_job(
-            &mut self,
-            _credential: &ManagementCredential,
-            session_id: &str,
-            job_id: &str,
-            expected_lease_version: u64,
-            _payload_digest: &str,
-            _idempotency_key: &str,
-            _terminal_submission: Option<&Value>,
-        ) -> loomex_core::CoreResult<loomex_core::RunnerJobResponse> {
-            let mut job = self.runner_job_lookup.clone().ok_or_else(|| {
-                loomex_core::CoreError::new("RUNNER_JOB_NOT_FOUND", "test job missing")
-            })?;
-            if job.get("id").and_then(Value::as_str) != Some(job_id) {
-                return Err(loomex_core::CoreError::new(
-                    "RUNNER_JOB_NOT_FOUND",
-                    "test job identity mismatch",
-                ));
-            }
-            let lease_version = expected_lease_version.saturating_add(1);
-            job["sessionId"] = Value::String(session_id.to_string());
-            job["leaseVersion"] = json!(lease_version);
-            if let Some(cancellation) = job.pointer_mut("/metadata/cancellation") {
-                cancellation["leaseVersion"] = json!(lease_version);
-            }
-            self.runner_job_lookup = Some(job.clone());
-            Ok(loomex_core::RunnerJobResponse { job: Some(job) })
-        }
-
         fn start_runner_job(
             &mut self,
             _credential: &ManagementCredential,
             _session_id: &str,
             job_id: &str,
         ) -> loomex_core::CoreResult<loomex_core::RunnerJobResponse> {
-            self.started_runner_jobs.push(job_id.to_string());
             Ok(loomex_core::RunnerJobResponse {
                 job: Some(json!({"id": job_id, "status": "running"})),
             })
@@ -19076,7 +15544,6 @@ mod tests {
             _job_id: &str,
             events: Vec<Value>,
         ) -> loomex_core::CoreResult<loomex_core::RunnerJobEventCreateResponse> {
-            self.appended_runner_job_events.extend(events.clone());
             Ok(loomex_core::RunnerJobEventCreateResponse { events })
         }
 
@@ -19101,47 +15568,6 @@ mod tests {
         ) -> loomex_core::CoreResult<loomex_core::RunnerJobResponse> {
             let job = json!({"id": job_id, "status": "failed", "error": error});
             self.failed_runner_jobs.push(job.clone());
-            Ok(loomex_core::RunnerJobResponse { job: Some(job) })
-        }
-
-        fn fail_runner_job_idempotent(
-            &mut self,
-            credential: &ManagementCredential,
-            session_id: &str,
-            job_id: &str,
-            _lease_version: u64,
-            idempotency_key: &str,
-            error: Value,
-        ) -> loomex_core::CoreResult<loomex_core::RunnerJobResponse> {
-            self.failed_runner_job_keys
-                .push(idempotency_key.to_string());
-            if let Some(error) = self.fail_runner_job_error_before_accept.take() {
-                return Err(error);
-            }
-            let response = self.fail_runner_job(credential, session_id, job_id, error)?;
-            if self.fail_runner_job_response_loss_after_accept {
-                self.fail_runner_job_response_loss_after_accept = false;
-                return Err(loomex_core::CoreError::new(
-                    "MANAGEMENT_HTTP_FAILED",
-                    "simulated response loss after Backend accepted the failure",
-                ));
-            }
-            Ok(response)
-        }
-
-        fn defer_runner_job_idempotent(
-            &mut self,
-            _credential: &ManagementCredential,
-            _session_id: &str,
-            job_id: &str,
-            _lease_version: u64,
-            idempotency_key: &str,
-            execution: Value,
-        ) -> loomex_core::CoreResult<loomex_core::RunnerJobResponse> {
-            let job = json!({"id": job_id, "status": "deferred", "execution": execution});
-            self.deferred_runner_job_keys
-                .push(idempotency_key.to_string());
-            self.deferred_runner_jobs.push(job.clone());
             Ok(loomex_core::RunnerJobResponse { job: Some(job) })
         }
 
@@ -19247,1438 +15673,6 @@ mod tests {
         .unwrap();
         assert_eq!(cancelled["cancelled"], true);
         let _ = fs::remove_dir_all(workspace);
-    }
-
-    #[test]
-    fn disabled_v2_rejects_unowned_job_pre_start_but_drains_exact_recovery() {
-        let root = temp_workspace_path("runner-agent-v2-disabled-gate");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let mut resolved = service_resolved_settings();
-        resolved.workspace_path = Some(root.display().to_string());
-        resolved.agent_runtime_v2_enabled = false;
-        let credential = credential("default", "org_123");
-        let task: loomex_protocol::AgentTaskRequestV2 = serde_json::from_value(json!({
-            "schemaVersion": "loomex.plugin-agent-task/v2",
-            "requestId": "agent-disabled-request",
-            "idempotencyKey": "agent-disabled-idempotency",
-            "binding": {
-                "workspaceBindingId": "binding_123",
-                "workspaceBindingGeneration": 7,
-                "runnerId": "runner_123"
-            },
-            "selection": {
-                "primary": {
-                    "mode": "exact",
-                    "target": {
-                        "executor": "codex_cli",
-                        "provider": "open_ai",
-                        "modelKey": "openai/gpt-5.2",
-                        "providerModelId": "gpt-5.2"
-                    }
-                },
-                "fallback": {"policy": "none"}
-            },
-            "prompt": "This prompt must never reach a provider while disabled.",
-            "requirements": {
-                "structuredOutput": false,
-                "sessionResume": true,
-                "cancellation": true
-            }
-        }))
-        .unwrap();
-        let execution_id = "6532af8c-d14c-4dda-82fb-3a919687f92b";
-        let attempt_id = "0a744f87-1ed2-49b2-823c-7efc580d6531";
-        let task_hash = loomex_core::execution::sha256_payload_digest(
-            &loomex_protocol::agent_attempt_task_idempotency_preimage(execution_id, 1),
-        );
-        let task_key = format!(
-            "loomex-agent-attempt-v2:{}",
-            task_hash.strip_prefix("sha256:").unwrap()
-        );
-        let delivery_hash = loomex_core::execution::sha256_payload_digest(
-            &loomex_protocol::agent_attempt_delivery_idempotency_preimage(execution_id, 1),
-        );
-        let delivery_key = format!(
-            "loomex-agent-delivery-v2:{}",
-            delivery_hash.strip_prefix("sha256:").unwrap()
-        );
-        let mut dispatch = AgentProcessDispatchV2 {
-            schema_version: loomex_protocol::AGENT_PROCESS_DISPATCH_SCHEMA_V2.to_string(),
-            execution_id: execution_id.to_string(),
-            attempt_id: attempt_id.to_string(),
-            attempt_number: 1,
-            retry_kind: AgentProcessRetryKindV2::Initial,
-            from_attempt_id: None,
-            delivery: loomex_protocol::AgentProcessDeliveryV2 {
-                route: loomex_protocol::AgentDeliveryRouteV2::RunnerJob,
-                runner_job_id: Some("job-disabled-agent".to_string()),
-                lease_target_runner_id: Some("runner_123".to_string()),
-            },
-            task_idempotency_key: task_key.clone(),
-            delivery_idempotency_key: delivery_key.clone(),
-            payload_digest: format!("sha256:{}", "0".repeat(64)),
-            task,
-        };
-        dispatch.payload_digest = loomex_core::execution::canonical_json_payload_digest(
-            &dispatch.payload_digest_input().unwrap(),
-        )
-        .unwrap();
-        let job = json!({
-            "id": "job-disabled-agent",
-            "kind": "agent.execute.v2",
-            "status": "leased",
-            "sessionId": "session_123",
-            "runnerId": "runner_123",
-            "attemptCount": 1,
-            "leaseVersion": 1,
-            "leasedUntilEpochMs": current_epoch_ms().unwrap().saturating_add(60_000),
-            "bindingGeneration": 7,
-            "payloadDigest": dispatch.payload_digest,
-            "idempotencyKey": task_key,
-            "metadata": {
-                "agentAttempt": {
-                    "deliveryIdempotencyKey": delivery_key
-                }
-            },
-            "payload": dispatch
-        });
-        let context = RunnerAgentExecutionContext {
-            config_path: root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(root.join("agent-jobs.json"))
-                    .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(root.join("agent-events.json")).unwrap(),
-            )),
-        };
-
-        let mut wrong_job_id = job.clone();
-        wrong_job_id["payload"]["delivery"]["runnerJobId"] =
-            Value::String("another-job".to_string());
-        let mut wrong_runner_id = job.clone();
-        wrong_runner_id["runnerId"] = Value::String("another-runner".to_string());
-        let mut wrong_digest = job.clone();
-        wrong_digest["payloadDigest"] = Value::String(format!("sha256:{}", "f".repeat(64)));
-        let mut wrong_task_key = job.clone();
-        wrong_task_key["idempotencyKey"] =
-            Value::String(format!("loomex-agent-attempt-v2:{}", "f".repeat(64)));
-        let mut wrong_binding = job.clone();
-        wrong_binding["bindingGeneration"] = json!(8);
-        for (label, tampered_job) in [
-            ("job-id", wrong_job_id),
-            ("runner-id", wrong_runner_id),
-            ("digest", wrong_digest),
-            ("task-key", wrong_task_key),
-            ("binding", wrong_binding),
-        ] {
-            let mut tampered_client = FakeManagementClient {
-                runner_jobs: vec![tampered_job],
-                ..Default::default()
-            };
-            let mut tampered_recovery =
-                RunnerJobRecoveryJournal::open(root.join(format!("{label}-runner-jobs.json")))
-                    .unwrap();
-            let error = process_one_runner_control_job(
-                &mut tampered_client,
-                &credential,
-                &resolved,
-                "session_123",
-                &mut tampered_recovery,
-                &context,
-            )
-            .unwrap_err();
-            assert!(error.starts_with("AGENT_RUNTIME_V2_DISABLED_DISPATCH_INVALID:"));
-            assert!(tampered_recovery.pending_jobs().is_empty());
-            assert!(tampered_client.started_runner_jobs.is_empty());
-            assert!(tampered_client.failed_runner_jobs.is_empty());
-            assert!(context
-                .journal
-                .lock()
-                .unwrap()
-                .entry("agent-disabled-request")
-                .is_none());
-            assert!(context
-                .progress_outbox
-                .lock()
-                .unwrap()
-                .terminal_for_job("job-disabled-agent")
-                .unwrap()
-                .is_none());
-        }
-
-        let mut new_client = FakeManagementClient {
-            runner_jobs: vec![job.clone()],
-            ..Default::default()
-        };
-        let mut new_recovery =
-            RunnerJobRecoveryJournal::open(root.join("new-runner-jobs.json")).unwrap();
-        assert!(process_one_runner_control_job(
-            &mut new_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut new_recovery,
-            &context,
-        )
-        .unwrap());
-        assert!(new_client.started_runner_jobs.is_empty());
-        assert_eq!(new_client.failed_runner_jobs.len(), 1);
-        assert_eq!(
-            new_client.failed_runner_jobs[0]["error"]["code"],
-            "agent_runtime_v2_disabled"
-        );
-        assert_eq!(
-            new_client.failed_runner_jobs[0]["error"]["execution"]["state"],
-            "failed"
-        );
-        let terminal: AgentExecutionV2 =
-            serde_json::from_value(new_client.failed_runner_jobs[0]["error"]["execution"].clone())
-                .unwrap();
-        terminal.validate().unwrap();
-        assert_eq!(terminal.sequence, 1);
-        assert_eq!(
-            terminal.attempts[0].state,
-            AgentAttemptState::DispatchRejected
-        );
-        assert_eq!(terminal.attempts[0].started_sequence, 1);
-        assert_eq!(terminal.attempts[0].finished_sequence, Some(1));
-        assert_eq!(
-            terminal.attempts[0].finished_at.as_deref(),
-            Some(terminal.attempts[0].started_at.as_str())
-        );
-        assert!(terminal.attempts[0].session.is_none());
-        assert!(terminal.attempts[0].retry.is_none());
-        assert_eq!(
-            new_client.failed_runner_job_keys,
-            vec![delivery_key.clone()]
-        );
-        assert!(new_recovery.job("job-disabled-agent").is_none());
-        assert!(context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-disabled-request")
-            .is_none());
-
-        // Crash window 1: the exact pre-start failure is durable before the fail POST. A restart
-        // retries it with the dispatch-owned delivery key and never starts or claims execution.
-        let before_send_root = root.join("before-terminal-send");
-        fs::create_dir_all(&before_send_root).unwrap();
-        let before_send_context = RunnerAgentExecutionContext {
-            config_path: before_send_root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(
-                    before_send_root.join("agent-jobs.json"),
-                )
-                .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(before_send_root.join("agent-events.json"))
-                    .unwrap(),
-            )),
-        };
-        let before_send_recovery_path = before_send_root.join("runner-jobs.json");
-        let mut before_send_recovery =
-            RunnerJobRecoveryJournal::open(&before_send_recovery_path).unwrap();
-        let mut before_send_client = FakeManagementClient {
-            runner_jobs: vec![job.clone()],
-            fail_runner_job_error_before_accept: Some(loomex_core::CoreError::new(
-                "MANAGEMENT_HTTP_FAILED",
-                "simulated network failure before Backend acceptance",
-            )),
-            ..Default::default()
-        };
-        assert!(process_one_runner_control_job(
-            &mut before_send_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut before_send_recovery,
-            &before_send_context,
-        )
-        .is_err());
-        assert!(before_send_client.started_runner_jobs.is_empty());
-        assert!(before_send_client.failed_runner_jobs.is_empty());
-        assert_eq!(
-            before_send_client.failed_runner_job_keys,
-            vec![delivery_key.clone()]
-        );
-        assert_eq!(
-            before_send_recovery
-                .job("job-disabled-agent")
-                .unwrap()
-                .phase,
-            RecoverableJobPhase::PrestartFailedPendingAck
-        );
-        assert!(before_send_context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-disabled-request")
-            .is_none());
-        assert!(before_send_context
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-disabled-agent")
-            .unwrap()
-            .is_some());
-
-        let mut before_send_restarted_recovery =
-            RunnerJobRecoveryJournal::open(&before_send_recovery_path).unwrap();
-        let mut before_send_restarted_client = FakeManagementClient {
-            runner_job_lookup: Some(job.clone()),
-            ..Default::default()
-        };
-        assert!(recover_pending_runner_jobs(
-            &mut before_send_restarted_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut before_send_restarted_recovery,
-            &before_send_context,
-        )
-        .unwrap());
-        assert!(before_send_restarted_client.started_runner_jobs.is_empty());
-        assert_eq!(
-            before_send_restarted_client.failed_runner_job_keys,
-            vec![delivery_key.clone()]
-        );
-        assert!(before_send_restarted_recovery
-            .job("job-disabled-agent")
-            .is_none());
-        assert!(before_send_context
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-disabled-agent")
-            .unwrap()
-            .is_none());
-
-        // Crash window 2: Backend accepted the failure but its response was lost before local
-        // acknowledgement. A restart observes the terminal server job and clears both durable
-        // local records without a duplicate fail POST.
-        let after_accept_root = root.join("after-terminal-accept");
-        fs::create_dir_all(&after_accept_root).unwrap();
-        let after_accept_context = RunnerAgentExecutionContext {
-            config_path: after_accept_root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(
-                    after_accept_root.join("agent-jobs.json"),
-                )
-                .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(after_accept_root.join("agent-events.json"))
-                    .unwrap(),
-            )),
-        };
-        let after_accept_recovery_path = after_accept_root.join("runner-jobs.json");
-        let mut after_accept_recovery =
-            RunnerJobRecoveryJournal::open(&after_accept_recovery_path).unwrap();
-        let mut after_accept_client = FakeManagementClient {
-            runner_jobs: vec![job.clone()],
-            fail_runner_job_response_loss_after_accept: true,
-            ..Default::default()
-        };
-        assert!(process_one_runner_control_job(
-            &mut after_accept_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut after_accept_recovery,
-            &after_accept_context,
-        )
-        .is_err());
-        assert!(after_accept_client.started_runner_jobs.is_empty());
-        assert_eq!(after_accept_client.failed_runner_jobs.len(), 1);
-        assert_eq!(
-            after_accept_client.failed_runner_job_keys,
-            vec![delivery_key.clone()]
-        );
-        assert_eq!(
-            after_accept_recovery
-                .job("job-disabled-agent")
-                .unwrap()
-                .phase,
-            RecoverableJobPhase::PrestartFailedPendingAck
-        );
-        let mut remote_failed = job.clone();
-        remote_failed["status"] = Value::String("failed".to_string());
-        remote_failed["error"] = after_accept_client.failed_runner_jobs[0]["error"].clone();
-        let mut after_accept_restarted_recovery =
-            RunnerJobRecoveryJournal::open(&after_accept_recovery_path).unwrap();
-        let mut after_accept_restarted_client = FakeManagementClient {
-            runner_job_lookup: Some(remote_failed),
-            ..Default::default()
-        };
-        assert!(recover_pending_runner_jobs(
-            &mut after_accept_restarted_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut after_accept_restarted_recovery,
-            &after_accept_context,
-        )
-        .unwrap());
-        assert!(after_accept_restarted_client.failed_runner_jobs.is_empty());
-        assert!(after_accept_restarted_client
-            .failed_runner_job_keys
-            .is_empty());
-        assert!(after_accept_context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-disabled-request")
-            .is_none());
-        assert!(after_accept_restarted_recovery
-            .job("job-disabled-agent")
-            .is_none());
-        assert!(after_accept_context
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-disabled-agent")
-            .unwrap()
-            .is_none());
-
-        // Cancellation wins only after Backend returns an authoritative canceling receipt. The
-        // unacknowledged dispatch rejection is replaced at sequence 1 without a journal claim or
-        // provider start. Response loss after Backend accepts cancellation is recovered exactly.
-        let race_root = root.join("prestart-cancellation-race");
-        fs::create_dir_all(&race_root).unwrap();
-        let race_context = RunnerAgentExecutionContext {
-            config_path: race_root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(
-                    race_root.join("agent-jobs.json"),
-                )
-                .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(race_root.join("agent-events.json")).unwrap(),
-            )),
-        };
-        let race_job_id = "11111111-1111-4111-8111-111111111111";
-        let mut race_dispatch: AgentProcessDispatchV2 =
-            serde_json::from_value(job["payload"].clone()).unwrap();
-        race_dispatch.delivery.runner_job_id = Some(race_job_id.to_string());
-        race_dispatch.payload_digest = loomex_core::execution::canonical_json_payload_digest(
-            &race_dispatch.payload_digest_input().unwrap(),
-        )
-        .unwrap();
-        let mut race_job = job.clone();
-        race_job["id"] = Value::String(race_job_id.to_string());
-        race_job["payloadDigest"] = Value::String(race_dispatch.payload_digest.clone());
-        race_job["payload"] = serde_json::to_value(&race_dispatch).unwrap();
-        let race_recovery_path = race_root.join("runner-jobs.json");
-        let mut race_recovery = RunnerJobRecoveryJournal::open(&race_recovery_path).unwrap();
-        let mut race_prestart_client = FakeManagementClient {
-            runner_jobs: vec![race_job.clone()],
-            fail_runner_job_error_before_accept: Some(loomex_core::CoreError::new(
-                "MANAGEMENT_HTTP_FAILED",
-                "simulated prestart response failure",
-            )),
-            ..Default::default()
-        };
-        assert!(process_one_runner_control_job(
-            &mut race_prestart_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut race_recovery,
-            &race_context,
-        )
-        .is_err());
-        assert_eq!(
-            race_recovery.job(race_job_id).unwrap().phase,
-            RecoverableJobPhase::PrestartFailedPendingAck
-        );
-
-        let cancellation_id = "22222222-2222-4222-8222-222222222222";
-        let mut canceling_job = race_job.clone();
-        canceling_job["status"] = Value::String("canceling".to_string());
-        canceling_job["metadata"]["cancellation"] = json!({
-            "cancellationId": cancellation_id,
-            "jobId": race_job_id,
-            "processAttemptId": attempt_id,
-            "leaseVersion": 1,
-            "bindingGeneration": 7,
-            "requestedAt": "2026-07-27T10:30:00Z",
-            "state": "requested"
-        });
-        let mut race_client = FakeManagementClient {
-            runner_job_lookup: Some(canceling_job),
-            fail_runner_job_response_loss_after_accept: true,
-            ..Default::default()
-        };
-        assert!(recover_pending_runner_jobs(
-            &mut race_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut race_recovery,
-            &race_context,
-        )
-        .is_err());
-        assert!(race_client.started_runner_jobs.is_empty());
-        assert_eq!(
-            race_client.runner_job_cancellation_ack_keys,
-            vec![format!("backend-cancel:{cancellation_id}")]
-        );
-        assert_eq!(race_client.failed_runner_jobs.len(), 1);
-        let cancelled_execution: AgentExecutionV2 =
-            serde_json::from_value(race_client.failed_runner_jobs[0]["error"]["execution"].clone())
-                .unwrap();
-        cancelled_execution.validate().unwrap();
-        assert_eq!(cancelled_execution.sequence, 1);
-        assert_eq!(cancelled_execution.state, AgentExecutionState::Cancelled);
-        assert_eq!(
-            cancelled_execution.attempts[0].state,
-            AgentAttemptState::DispatchCancelled
-        );
-        assert_eq!(
-            cancelled_execution.attempts[0]
-                .error
-                .as_ref()
-                .unwrap()
-                .context
-                .safe_details
-                .get("reasonCode")
-                .map(String::as_str),
-            Some("prestart_cancellation_won")
-        );
-        assert!(race_context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-disabled-request")
-            .is_none());
-        assert_eq!(
-            race_recovery.job(race_job_id).unwrap().phase,
-            RecoverableJobPhase::PrestartFailedPendingAck
-        );
-
-        let mut remote_cancelled = race_client.runner_job_lookup.clone().unwrap();
-        remote_cancelled["status"] = Value::String("failed".to_string());
-        remote_cancelled["error"] = race_client.failed_runner_jobs[0]["error"].clone();
-        let mut race_restarted_recovery =
-            RunnerJobRecoveryJournal::open(&race_recovery_path).unwrap();
-        let mut race_restarted_client = FakeManagementClient {
-            runner_job_lookup: Some(remote_cancelled),
-            ..Default::default()
-        };
-        assert!(recover_pending_runner_jobs(
-            &mut race_restarted_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut race_restarted_recovery,
-            &race_context,
-        )
-        .unwrap());
-        assert!(race_restarted_client.failed_runner_jobs.is_empty());
-        assert!(race_restarted_recovery.job(race_job_id).is_none());
-        assert!(race_context
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job(race_job_id)
-            .unwrap()
-            .is_none());
-
-        // Crash window 3: cancellation replacement reached the recovery journal, but the process
-        // died before replacing the durable outbox entry. Restart repairs the outbox from the
-        // exact recovery payload and reuses it rather than attempting a second replacement.
-        let replacement_root = root.join("prestart-cancellation-replacement-crash");
-        fs::create_dir_all(&replacement_root).unwrap();
-        let replacement_context = RunnerAgentExecutionContext {
-            config_path: replacement_root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(
-                    replacement_root.join("agent-jobs.json"),
-                )
-                .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(replacement_root.join("agent-events.json"))
-                    .unwrap(),
-            )),
-        };
-        let replacement_recovery_path = replacement_root.join("runner-jobs.json");
-        let mut replacement_recovery =
-            RunnerJobRecoveryJournal::open(&replacement_recovery_path).unwrap();
-        let mut replacement_prestart_client = FakeManagementClient {
-            runner_jobs: vec![race_job.clone()],
-            fail_runner_job_error_before_accept: Some(loomex_core::CoreError::new(
-                "MANAGEMENT_HTTP_FAILED",
-                "simulated prestart failure before cancellation",
-            )),
-            ..Default::default()
-        };
-        assert!(process_one_runner_control_job(
-            &mut replacement_prestart_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut replacement_recovery,
-            &replacement_context,
-        )
-        .is_err());
-        let rejected_record = replacement_recovery.job(race_job_id).unwrap().clone();
-        let durable_cancelled = prestart_cancelled_agent_job_terminal(
-            &rejected_record,
-            &race_dispatch,
-            "2026-07-27T10:30:00Z",
-        )
-        .unwrap();
-        let mut tampered_cancelled = durable_cancelled.clone();
-        tampered_cancelled["message"] = Value::String("tampered outer wrapper".to_string());
-        assert!(validate_prestart_cancelled_terminal_for_dispatch(
-            &tampered_cancelled,
-            &race_dispatch,
-        )
-        .is_err());
-        replacement_recovery
-            .record_prestart_cancellation(
-                race_job_id,
-                "session_123",
-                durable_cancelled.clone(),
-                current_epoch_ms().unwrap(),
-            )
-            .unwrap();
-        drop(replacement_recovery);
-
-        let mut replacement_restarted_recovery =
-            RunnerJobRecoveryJournal::open(&replacement_recovery_path).unwrap();
-        let mut replacement_client = FakeManagementClient {
-            runner_job_lookup: Some({
-                let mut value = race_job.clone();
-                value["status"] = Value::String("canceling".to_string());
-                value["metadata"]["cancellation"] = json!({
-                    "cancellationId": cancellation_id,
-                    "jobId": race_job_id,
-                    "processAttemptId": attempt_id,
-                    "leaseVersion": 1,
-                    "bindingGeneration": 7,
-                    "requestedAt": "2026-07-27T10:30:00Z",
-                    "state": "requested"
-                });
-                value
-            }),
-            ..Default::default()
-        };
-        assert!(recover_pending_runner_jobs(
-            &mut replacement_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut replacement_restarted_recovery,
-            &replacement_context,
-        )
-        .unwrap());
-        assert!(replacement_client.started_runner_jobs.is_empty());
-        assert_eq!(replacement_client.failed_runner_jobs.len(), 1);
-        assert_eq!(
-            replacement_client.failed_runner_jobs[0]["error"],
-            durable_cancelled
-        );
-        assert!(replacement_restarted_recovery.job(race_job_id).is_none());
-        assert!(replacement_context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-disabled-request")
-            .is_none());
-        assert!(replacement_context
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job(race_job_id)
-            .unwrap()
-            .is_none());
-
-        let mut recovery =
-            RunnerJobRecoveryJournal::open(root.join("active-runner-jobs.json")).unwrap();
-        recovery
-            .record_lease(
-                recoverable_runner_job(&job, &resolved, "session_123", current_epoch_ms().unwrap())
-                    .unwrap(),
-            )
-            .unwrap();
-        let mut recovery_client = FakeManagementClient {
-            runner_jobs: vec![job],
-            ..Default::default()
-        };
-        assert!(process_one_runner_control_job(
-            &mut recovery_client,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut recovery,
-            &context,
-        )
-        .unwrap());
-        assert_eq!(
-            recovery_client.started_runner_jobs,
-            vec!["job-disabled-agent".to_string()]
-        );
-        assert!(recovery_client.failed_runner_jobs.is_empty());
-        assert_eq!(recovery_client.deferred_runner_jobs.len(), 1);
-        assert_eq!(
-            recovery_client.deferred_runner_jobs[0]["execution"]["state"],
-            "blocked"
-        );
-        assert!(recovery.job("job-disabled-agent").is_none());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn runner_agent_job_requires_authoritative_metadata_and_preserves_backend_ids() {
-        let root = temp_workspace_path("runner-agent-job");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let mut resolved = service_resolved_settings();
-        resolved.workspace_path = Some(root.display().to_string());
-        let task = json!({
-            "schemaVersion": "loomex.plugin-agent-task/v2",
-            "requestId": "agent-request-1",
-            "idempotencyKey": "agent-idempotency-1",
-            "binding": {
-                "workspaceBindingId": "binding_123",
-                "workspaceBindingGeneration": 7,
-                "runnerId": "runner_123"
-            },
-            "selection": {
-                "primary": {
-                    "mode": "exact",
-                    "target": {
-                        "executor": "codex_cli",
-                        "provider": "open_ai",
-                        "modelKey": "openai/gpt-5.2",
-                        "providerModelId": "gpt-5.2"
-                    }
-                },
-                "fallback": {"policy": "none"}
-            },
-            "prompt": "Return a concise assessment.",
-            "requirements": {
-                "structuredOutput": false,
-                "sessionResume": true,
-                "cancellation": true
-            }
-        });
-        let recovery_path = root.join("runner-jobs.json");
-        let mut recovery = RunnerJobRecoveryJournal::open(&recovery_path).unwrap();
-        let context = RunnerAgentExecutionContext {
-            config_path: root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(root.join("agent-jobs.json"))
-                    .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(root.join("agent-events.json")).unwrap(),
-            )),
-        };
-        let mut client = FakeManagementClient::default();
-        let credential = credential("default", "org_123");
-        let missing_metadata = json!({
-            "runnerId": "runner_123",
-            "bindingGeneration": 7,
-            "payloadDigest": "digest-1",
-            "payload": task,
-        });
-
-        let error = execute_cancellable_agent_job(
-            &mut client,
-            &credential,
-            &resolved,
-            "session_123",
-            "job-agent-missing-metadata",
-            1,
-            &missing_metadata,
-            &mut recovery,
-            &context,
-        )
-        .unwrap_err();
-        assert_eq!(error["code"], "invalid_request");
-        assert!(context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-request-1")
-            .is_none());
-
-        fn runner_agent_job(task: &Value, job_id: &str) -> Value {
-            let task: loomex_protocol::agent_runtime_v2::AgentTaskRequestV2 =
-                serde_json::from_value(task.clone()).unwrap();
-            let execution_id = "6532af8c-d14c-4dda-82fb-3a919687f92b";
-            let attempt_id = "0a744f87-1ed2-49b2-823c-7efc580d6531";
-            let task_hash = loomex_core::execution::sha256_payload_digest(
-                &loomex_protocol::agent_runtime_v2::agent_attempt_task_idempotency_preimage(
-                    execution_id,
-                    1,
-                ),
-            );
-            let task_idempotency_key = format!(
-                "loomex-agent-attempt-v2:{}",
-                task_hash.strip_prefix("sha256:").unwrap()
-            );
-            let delivery_hash = loomex_core::execution::sha256_payload_digest(
-                &loomex_protocol::agent_runtime_v2::agent_attempt_delivery_idempotency_preimage(
-                    execution_id,
-                    1,
-                ),
-            );
-            let delivery_idempotency_key = format!(
-                "loomex-agent-delivery-v2:{}",
-                delivery_hash.strip_prefix("sha256:").unwrap()
-            );
-            let mut dispatch = loomex_protocol::agent_runtime_v2::AgentProcessDispatchV2 {
-                schema_version: loomex_protocol::agent_runtime_v2::AGENT_PROCESS_DISPATCH_SCHEMA_V2
-                    .to_string(),
-                execution_id: execution_id.to_string(),
-                attempt_id: attempt_id.to_string(),
-                attempt_number: 1,
-                retry_kind: loomex_protocol::agent_runtime_v2::AgentProcessRetryKindV2::Initial,
-                from_attempt_id: None,
-                delivery: loomex_protocol::agent_runtime_v2::AgentProcessDeliveryV2 {
-                    route: loomex_protocol::agent_runtime_v2::AgentDeliveryRouteV2::RunnerJob,
-                    runner_job_id: Some(job_id.to_string()),
-                    lease_target_runner_id: Some("runner_123".to_string()),
-                },
-                task_idempotency_key: task_idempotency_key.clone(),
-                delivery_idempotency_key: delivery_idempotency_key.clone(),
-                payload_digest: format!("sha256:{}", "0".repeat(64)),
-                task,
-            };
-            dispatch.payload_digest = loomex_core::execution::canonical_json_payload_digest(
-                &dispatch.payload_digest_input().unwrap(),
-            )
-            .unwrap();
-            json!({
-                "id": job_id,
-                "kind": "agent.execute.v2",
-                "status": "leased",
-                "sessionId": "session_123",
-                "runnerId": "runner_123",
-                "bindingGeneration": 7,
-                "attemptCount": 1,
-                "leaseVersion": 1,
-                "leasedUntilEpochMs": current_epoch_ms().unwrap() + 60_000,
-                "idempotencyKey": task_idempotency_key,
-                "payloadDigest": dispatch.payload_digest,
-                "payload": dispatch,
-                "metadata": {
-                    "agentAttempt": {
-                        "deliveryIdempotencyKey": delivery_idempotency_key,
-                    }
-                }
-            })
-        }
-
-        let mut digest_mismatch =
-            runner_agent_job(&missing_metadata["payload"], "job-agent-digest-mismatch");
-        digest_mismatch["payloadDigest"] = Value::String("0".repeat(64));
-        recovery
-            .record_lease(
-                recoverable_runner_job(
-                    &digest_mismatch,
-                    &resolved,
-                    "session_123",
-                    current_epoch_ms().unwrap(),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        let expected_invalid_delivery_key = digest_mismatch
-            .pointer("/metadata/agentAttempt/deliveryIdempotencyKey")
-            .and_then(Value::as_str)
-            .unwrap()
-            .to_string();
-        execute_and_finalize_runner_job(
-            &mut client,
-            &credential,
-            &resolved,
-            "session_123",
-            &digest_mismatch,
-            &mut recovery,
-            &context,
-        )
-        .unwrap();
-        assert_eq!(
-            client.failed_runner_job_keys,
-            vec![expected_invalid_delivery_key]
-        );
-        assert!(recovery.job("job-agent-digest-mismatch").is_none());
-        assert!(context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-request-1")
-            .is_none());
-
-        let mut tampered = runner_agent_job(&missing_metadata["payload"], "job-agent-tampered");
-        tampered["payload"]["task"]["prompt"] = Value::String("tampered prompt".to_string());
-        recovery
-            .record_lease(
-                recoverable_runner_job(
-                    &tampered,
-                    &resolved,
-                    "session_123",
-                    current_epoch_ms().unwrap(),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        execute_and_finalize_runner_job(
-            &mut client,
-            &credential,
-            &resolved,
-            "session_123",
-            &tampered,
-            &mut recovery,
-            &context,
-        )
-        .unwrap();
-        assert!(recovery.job("job-agent-tampered").is_none());
-        assert!(context
-            .journal
-            .lock()
-            .unwrap()
-            .entry("agent-request-1")
-            .is_none());
-
-        let job = runner_agent_job(&missing_metadata["payload"], "job-agent-blocked");
-        recovery
-            .record_lease(
-                recoverable_runner_job(&job, &resolved, "session_123", current_epoch_ms().unwrap())
-                    .unwrap(),
-            )
-            .unwrap();
-        recovery
-            .mark_running(
-                "job-agent-blocked",
-                "session_123",
-                current_epoch_ms().unwrap(),
-            )
-            .unwrap();
-        let blocked = execute_cancellable_agent_job(
-            &mut client,
-            &credential,
-            &resolved,
-            "session_123",
-            "job-agent-blocked",
-            1,
-            &job,
-            &mut recovery,
-            &context,
-        )
-        .unwrap_err();
-        assert_eq!(
-            blocked.pointer("/context/coreCode").and_then(Value::as_str),
-            Some("AGENT_JOB_BLOCKED_NONTERMINAL")
-        );
-        let execution = &blocked["context"]["execution"];
-
-        assert_eq!(execution["state"], "blocked");
-        assert_eq!(
-            execution["executionId"],
-            "6532af8c-d14c-4dda-82fb-3a919687f92b"
-        );
-        assert_eq!(
-            execution["attempts"][0]["attemptId"],
-            "0a744f87-1ed2-49b2-823c-7efc580d6531"
-        );
-        assert_eq!(execution["error"]["code"], "provider_not_installed");
-        let persisted = context.journal.lock().unwrap();
-        let entry = persisted.entry("agent-request-1").unwrap();
-        assert_eq!(entry.execution_id, "6532af8c-d14c-4dda-82fb-3a919687f92b");
-        assert_eq!(
-            entry.attempts[0].attempt_id,
-            "0a744f87-1ed2-49b2-823c-7efc580d6531"
-        );
-        assert_eq!(
-            entry.pending_delivery.as_ref().map(|pending| pending.kind),
-            Some(AgentPendingDeliveryKind::Deferred)
-        );
-        drop(persisted);
-        assert!(context
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-agent-blocked")
-            .unwrap()
-            .is_some());
-
-        // Crash window 1: the exact blocked execution is durable before the defer POST. Recovery
-        // submits it with the dispatch-owned delivery key, then acknowledges journal and spool.
-        recovery
-            .record_deferred(
-                "job-agent-blocked",
-                "session_123",
-                execution.clone(),
-                current_epoch_ms().unwrap(),
-            )
-            .unwrap();
-        let expected_delivery_key = job
-            .pointer("/metadata/agentAttempt/deliveryIdempotencyKey")
-            .and_then(Value::as_str)
-            .unwrap()
-            .to_string();
-        let window2_root = root.join("defer-window-2");
-        let window3_root = root.join("defer-window-3");
-        fs::create_dir_all(&window2_root).unwrap();
-        fs::create_dir_all(&window3_root).unwrap();
-        for window_root in [&window2_root, &window3_root] {
-            fs::copy(&recovery_path, window_root.join("runner-jobs.json")).unwrap();
-            fs::copy(
-                root.join("agent-jobs.json"),
-                window_root.join("agent-jobs.json"),
-            )
-            .unwrap();
-            fs::copy(
-                root.join("agent-events.json"),
-                window_root.join("agent-events.json"),
-            )
-            .unwrap();
-        }
-        submit_recovered_defer(
-            &mut client,
-            &credential,
-            "session_123",
-            "job-agent-blocked",
-            &mut recovery,
-            execution.clone(),
-            &context,
-        )
-        .unwrap();
-        assert_eq!(client.deferred_runner_job_keys, vec![expected_delivery_key]);
-        assert!(recovery.job("job-agent-blocked").is_none());
-        assert!(context
-            .journal
-            .lock()
-            .unwrap()
-            .pending_delivery("agent-request-1")
-            .unwrap()
-            .is_none());
-        assert!(context
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-agent-blocked")
-            .unwrap()
-            .is_none());
-
-        // Crash window 2: Backend accepted defer, but the process died before either local ACK.
-        // GET returns Deferred, so recovery removes both durable copies without a duplicate POST.
-        let mut recovery2 =
-            RunnerJobRecoveryJournal::open(window2_root.join("runner-jobs.json")).unwrap();
-        let context2 = RunnerAgentExecutionContext {
-            config_path: root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(
-                    window2_root.join("agent-jobs.json"),
-                )
-                .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(window2_root.join("agent-events.json")).unwrap(),
-            )),
-        };
-        let record2 = recovery2.job("job-agent-blocked").unwrap().clone();
-        assert_eq!(record2.phase, RecoverableJobPhase::DeferPendingAck);
-        let mut client2 = FakeManagementClient::default();
-        client2
-            .defer_runner_job_idempotent(
-                &credential,
-                "session_123",
-                "job-agent-blocked",
-                record2.lease_version,
-                record2.terminal_idempotency_key.as_deref().unwrap(),
-                execution.clone(),
-            )
-            .unwrap();
-        let mut remote_deferred = job.clone();
-        remote_deferred["status"] = Value::String("deferred".to_string());
-        client2.runner_job_lookup = Some(remote_deferred.clone());
-        assert!(recover_pending_runner_jobs(
-            &mut client2,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut recovery2,
-            &context2,
-        )
-        .unwrap());
-        assert_eq!(client2.deferred_runner_job_keys.len(), 1);
-        assert!(recovery2.job("job-agent-blocked").is_none());
-        assert!(context2
-            .journal
-            .lock()
-            .unwrap()
-            .pending_delivery("agent-request-1")
-            .unwrap()
-            .is_none());
-        assert!(context2
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-agent-blocked")
-            .unwrap()
-            .is_none());
-
-        // Crash window 3: journal ACK committed, but the process died before deleting the spool
-        // record. Deferred reconciliation must delete the orphan spool and never POST again.
-        let mut recovery3 =
-            RunnerJobRecoveryJournal::open(window3_root.join("runner-jobs.json")).unwrap();
-        let context3 = RunnerAgentExecutionContext {
-            config_path: root.join("config.toml"),
-            journal: Arc::new(Mutex::new(
-                loomex_core::execution::AgentExecutionJournal::open(
-                    window3_root.join("agent-jobs.json"),
-                )
-                .unwrap(),
-            )),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(window3_root.join("agent-events.json")).unwrap(),
-            )),
-        };
-        let blocked_sequence = context3
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-agent-blocked")
-            .unwrap()
-            .unwrap()
-            .0;
-        context3
-            .journal
-            .lock()
-            .unwrap()
-            .acknowledge_delivery("agent-request-1", blocked_sequence)
-            .unwrap();
-        let mut client3 = FakeManagementClient {
-            runner_job_lookup: Some(remote_deferred),
-            ..Default::default()
-        };
-        assert!(recover_pending_runner_jobs(
-            &mut client3,
-            &credential,
-            &resolved,
-            "session_123",
-            &mut recovery3,
-            &context3,
-        )
-        .unwrap());
-        assert!(client3.deferred_runner_job_keys.is_empty());
-        assert!(recovery3.job("job-agent-blocked").is_none());
-        assert!(context3
-            .progress_outbox
-            .lock()
-            .unwrap()
-            .terminal_for_job("job-agent-blocked")
-            .unwrap()
-            .is_none());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn restart_outbox_supersedes_older_terminal_with_newer_indeterminate_once() {
-        let root = temp_workspace_path("agent-terminal-supersede-restart");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("agent-events.json");
-        let terminal = |sequence: u64, phase: &str| PendingRunnerJobAgentProgress {
-            job_id: "job-cancel-race".to_string(),
-            request_id: "request-cancel-race".to_string(),
-            sequence,
-            event: json!({
-                "eventType": format!("agent.{phase}"),
-                "stream": "",
-                "message": format!("agent execution {phase}"),
-                "payload": {
-                    "requestId": "request-cancel-race",
-                    "sequence": sequence,
-                    "phase": phase,
-                    "value": {"state": phase}
-                }
-            }),
-        };
-
-        RunnerJobAgentProgressOutbox::open(path.clone())
-            .unwrap()
-            .enqueue(terminal(3, "completed"))
-            .unwrap();
-        let mut restarted = RunnerJobAgentProgressOutbox::open(path.clone()).unwrap();
-        assert_eq!(
-            Some(3),
-            restarted
-                .terminal_for_job("job-cancel-race")
-                .unwrap()
-                .map(|(sequence, _)| sequence)
-        );
-        restarted
-            .supersede_terminal(terminal(4, "indeterminate"))
-            .unwrap();
-
-        let final_restart = RunnerJobAgentProgressOutbox::open(path).unwrap();
-        let (sequence, value) = final_restart
-            .terminal_for_job("job-cancel-race")
-            .unwrap()
-            .expect("new terminal must remain durable");
-        assert_eq!(4, sequence);
-        assert_eq!("indeterminate", value["state"]);
-        assert_eq!(
-            1,
-            final_restart
-                .document
-                .pending
-                .iter()
-                .filter(|pending| pending.job_id == "job-cancel-race")
-                .count()
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn cancellation_drains_pending_nonterminal_before_indeterminate_terminal() {
-        struct FailAfterDurableProgress {
-            job_id: String,
-            calls: AtomicU64,
-        }
-        impl AgentExecutionProgressSink for FailAfterDurableProgress {
-            fn delivery_route(&self) -> AgentDeliveryRoute {
-                AgentDeliveryRoute::RunnerJob {
-                    job_id: self.job_id.clone(),
-                    predecessor_job_id: None,
-                }
-            }
-
-            fn on_progress(
-                &self,
-                _progress: AgentExecutionProgress,
-            ) -> loomex_core::CoreResult<()> {
-                if self.calls.fetch_add(1, Ordering::AcqRel) == 0 {
-                    Ok(())
-                } else {
-                    Err(loomex_core::CoreError::new(
-                        "TEST_PROGRESS_UNAVAILABLE",
-                        "leave exact nonterminal delivery pending",
-                    ))
-                }
-            }
-        }
-
-        let root = temp_workspace_path("cancel-pending-progress-order");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let job_id = "61111111-1111-4111-8111-111111111111";
-        let cancellation_id = "62222222-2222-4222-8222-222222222222";
-        let task: loomex_protocol::agent_runtime_v2::AgentTaskRequestV2 =
-            serde_json::from_value(json!({
-                "schemaVersion": "loomex.plugin-agent-task/v2",
-                "requestId": "request-cancel-pending-progress",
-                "idempotencyKey": "task-cancel-pending-progress",
-                "binding": {
-                    "workspaceBindingId": "binding_123",
-                    "workspaceBindingGeneration": 7,
-                    "runnerId": "runner_123"
-                },
-                "selection": {
-                    "primary": {
-                        "mode": "exact",
-                        "target": {
-                            "executor": "codex_cli",
-                            "provider": "open_ai",
-                            "modelKey": "openai/test-model",
-                            "providerModelId": "test-model"
-                        }
-                    },
-                    "fallback": {"policy": "none"}
-                },
-                "prompt": "test ordered cancellation convergence",
-                "requirements": {
-                    "structuredOutput": false,
-                    "sessionResume": true,
-                    "cancellation": true
-                }
-            }))
-            .unwrap();
-        let execution_id = "63333333-3333-4333-8333-333333333333";
-        let attempt_id = "64444444-4444-4444-8444-444444444444";
-        let task_key_hash = loomex_core::execution::sha256_payload_digest(
-            &loomex_protocol::agent_runtime_v2::agent_attempt_task_idempotency_preimage(
-                execution_id,
-                1,
-            ),
-        );
-        let delivery_key_hash = loomex_core::execution::sha256_payload_digest(
-            &loomex_protocol::agent_runtime_v2::agent_attempt_delivery_idempotency_preimage(
-                execution_id,
-                1,
-            ),
-        );
-        let task_key = format!(
-            "loomex-agent-attempt-v2:{}",
-            task_key_hash.strip_prefix("sha256:").unwrap()
-        );
-        let delivery_key = format!(
-            "loomex-agent-delivery-v2:{}",
-            delivery_key_hash.strip_prefix("sha256:").unwrap()
-        );
-        let delivery = loomex_protocol::agent_runtime_v2::AgentProcessDeliveryV2 {
-            route: loomex_protocol::agent_runtime_v2::AgentDeliveryRouteV2::RunnerJob,
-            runner_job_id: Some(job_id.to_string()),
-            lease_target_runner_id: Some(task.binding.runner_id.clone()),
-        };
-        let mut dispatch = loomex_protocol::agent_runtime_v2::AgentProcessDispatchV2 {
-            schema_version: loomex_protocol::agent_runtime_v2::AGENT_PROCESS_DISPATCH_SCHEMA_V2
-                .to_string(),
-            execution_id: execution_id.to_string(),
-            attempt_id: attempt_id.to_string(),
-            attempt_number: 1,
-            retry_kind: loomex_protocol::agent_runtime_v2::AgentProcessRetryKindV2::Initial,
-            from_attempt_id: None,
-            delivery: delivery.clone(),
-            task_idempotency_key: task_key.clone(),
-            delivery_idempotency_key: delivery_key.clone(),
-            payload_digest: format!("sha256:{}", "0".repeat(64)),
-            task: task.clone(),
-        };
-        dispatch.payload_digest = loomex_core::execution::canonical_json_payload_digest(
-            &dispatch.payload_digest_input().unwrap(),
-        )
-        .unwrap();
-        let task_value = serde_json::to_value(&task).unwrap();
-        let mut task_intent = task_value;
-        task_intent.as_object_mut().unwrap().remove("continuation");
-        let journal = Arc::new(Mutex::new(
-            loomex_core::execution::AgentExecutionJournal::open(root.join("agent-journal.json"))
-                .unwrap(),
-        ));
-        let service = AgentExecutionService::with_cancellation_registry(
-            Arc::new(LocalAgentRuntime::default()),
-            Arc::new(Mutex::new(RuntimeConfig::default())),
-            Arc::new(Mutex::new(root.clone())),
-            Arc::new(Mutex::new(task.binding.clone())),
-            Arc::clone(&journal),
-            Arc::new(AgentCancellationRegistry::default()),
-        );
-        let result = service.execute_with_sink(
-            &task,
-            AgentExecutionIdentity {
-                execution_id: execution_id.to_string(),
-                attempt_id: attempt_id.to_string(),
-                attempt_number: 1,
-                retry_kind: loomex_protocol::agent_runtime_v2::AgentProcessRetryKindV2::Initial,
-                from_attempt_id: None,
-                delivery,
-                task_idempotency_key: task_key,
-                delivery_idempotency_key: delivery_key,
-                payload_digest: dispatch.payload_digest,
-                task_intent_digest: loomex_core::execution::canonical_agent_task_payload_digest(
-                    &task_intent,
-                )
-                .unwrap(),
-            },
-            Arc::new(FailAfterDurableProgress {
-                job_id: job_id.to_string(),
-                calls: AtomicU64::new(0),
-            }),
-        );
-        assert_eq!(result.unwrap_err().code, "TEST_PROGRESS_UNAVAILABLE");
-        let nonterminal_sequence = journal
-            .lock()
-            .unwrap()
-            .entry(&task.request_id)
-            .and_then(|entry| entry.pending_delivery.as_ref())
-            .filter(|pending| pending.kind == AgentPendingDeliveryKind::Execution)
-            .map(|pending| pending.sequence)
-            .expect("nonterminal execution must remain pending");
-
-        service
-            .reserve_runner_cancellation(
-                &task.request_id,
-                "backend-cancel:62222222-2222-4222-8222-222222222222",
-                cancellation_id,
-                job_id,
-                attempt_id,
-                1,
-                task.binding.workspace_binding_generation,
-                "2026-07-27T00:00:01Z",
-            )
-            .unwrap();
-        service
-            .acknowledge_runner_cancellation(&task.request_id, cancellation_id)
-            .unwrap();
-        let context = RunnerAgentExecutionContext {
-            config_path: root.join("config.toml"),
-            journal: Arc::clone(&journal),
-            cancellations: Arc::new(AgentCancellationRegistry::default()),
-            progress_outbox: Arc::new(Mutex::new(
-                RunnerJobAgentProgressOutbox::open(root.join("agent-events.json")).unwrap(),
-            )),
-        };
-        materialize_runner_job_agent_progress(job_id, &context).unwrap();
-        let mut client = FakeManagementClient::default();
-        drain_runner_job_agent_nonterminal_progress(
-            &mut client,
-            &credential("default", "org_123"),
-            "session_123",
-            1,
-            job_id,
-            &context.progress_outbox,
-            &context.journal,
-        )
-        .unwrap();
-        assert_eq!(
-            Some(nonterminal_sequence),
-            client
-                .appended_runner_job_events
-                .first()
-                .and_then(|event| event.pointer("/payload/sequence"))
-                .and_then(Value::as_u64)
-        );
-        assert!(journal
-            .lock()
-            .unwrap()
-            .pending_delivery(&task.request_id)
-            .unwrap()
-            .is_none());
-
-        let terminal = service
-            .converge_acknowledged_runner_cancellation(
-                &task.request_id,
-                cancellation_id,
-                loomex_core::execution::AgentProcessLoss::Crash,
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(AgentExecutionState::Indeterminate, terminal.state);
-        assert!(terminal.sequence > nonterminal_sequence);
-        materialize_runner_job_agent_progress(job_id, &context).unwrap();
-        assert_eq!(
-            Some(terminal.sequence),
-            context
-                .progress_outbox
-                .lock()
-                .unwrap()
-                .terminal_for_job(job_id)
-                .unwrap()
-                .map(|(sequence, _)| sequence)
-        );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]
