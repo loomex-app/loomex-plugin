@@ -71,10 +71,12 @@ task. Use `loomex_agent_task_list` scoped by `executionId` after a wait reports
 pending plugin agent work, or after reconnect when a plugin run is waiting.
 
 Each task includes an `agentTask` object. Read its `prompt`, `input`, `schemas`,
-`sessionDirective`, and `instructions` before doing anything. The server is the
-source of truth for sub-agent continuity. `requestedProvider` and
-`requestedModel` are workflow intent metadata; they do not authorize switching
-to another local CLI or running the node on the server.
+`sessionDirective`, `providerExecution`, and `instructions` before doing
+anything. `resolvedProvider` and `resolvedModel` are the execution contract;
+`requestedProvider` and `requestedModel` preserve the workflow selection. The
+server is the source of truth for sub-agent continuity. Provider routing and
+the explicit command/fallback policy are defined in
+[plugin-agent-providers.md](plugin-agent-providers.md).
 
 Obey `sessionDirective.action` exactly:
 
@@ -93,20 +95,20 @@ derive session policy locally.
 
 Submit exactly one structured response with `loomex_agent_task_respond`:
 
-- completed spawn:
-  `{"status":"completed","output":{...},"agentSession":{"id":"actual-id","host":"codex","action":"spawned"}}`
-- completed resume:
-  `{"status":"completed","output":{...},"agentSession":{"id":"the-server-session-id","host":"codex","action":"resumed"}}`
+- completed spawn: include the actual provider/model in both the response and
+  session, for example
+  `{"status":"completed","output":{...},"provider":"claude","model":"claude-sonnet","agentSession":{"id":"actual-id","host":"codex","action":"spawned","provider":"claude","model":"claude-sonnet"}}`
+- completed resume: use the same exact provider/model and the server-selected
+  session ID, with `agentSession.action` set to `resumed`.
 - plugin host cannot perform the directed action:
-  `{"status":"unavailable","error":{"code":"PLUGIN_AGENT_SUB_AGENT_UNAVAILABLE","message":"...","provider":"plugin_host","model":"inherit"}}`
+  `{"status":"unavailable","error":{"code":"PLUGIN_AGENT_PROVIDER_NOT_INSTALLED","message":"...","provider":"claude","model":"claude-sonnet"}}`
 - failed local execution:
   `{"status":"failed","error":{"code":"PLUGIN_AGENT_FAILED","message":"...","provider":"...","model":"..."}}`
 
 The `output` object must match the task's output schema when one is present.
-Never fabricate an AI result or silently create a replacement when the current
-plugin host cannot perform the required spawn/resume action. The server will
-reject a missing, reused, or mismatched session and prevent the execution from
-advancing rather than losing continuity.
+Never fabricate an AI result or a session ID. The server will reject a missing,
+reused, provider-mismatched, model-mismatched, or continuity-mismatched session
+and prevent the execution from advancing rather than losing continuity.
 
 A dispatch timeout is a terminal backend result when `loomex_run_get` reports
 the run as `failed`: the job was not leased within the dispatch grace period.

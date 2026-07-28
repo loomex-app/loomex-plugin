@@ -68,6 +68,10 @@ test("references use the implemented public MCP argument contract", async () => 
     path.join(root, "skills", "loomex", "references", "workflows-and-runs.md"),
     "utf8",
   );
+  const providers = await readFile(
+    path.join(root, "skills", "loomex", "references", "plugin-agent-providers.md"),
+    "utf8",
+  );
   const human = await readFile(
     path.join(root, "skills", "loomex", "references", "human-and-approvals.md"),
     "utf8",
@@ -96,6 +100,13 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.doesNotMatch(human, /answer in the public `payload`/);
   assert.match(runner, /optional `level`/);
   assert.match(runner, /does not accept time-range or run-ID filters/);
+  assert.match(runs, /resolvedProvider.*resolvedModel.*execution contract/);
+  assert.match(runs, /provider-mismatched, model-mismatched/);
+  assert.match(providers, /command -v claude/);
+  assert.match(providers, /command -v agy/);
+  assert.match(providers, /exact `resolvedModel`/);
+  assert.match(providers, /PLUGIN_AGENT_PROVIDER_NOT_INSTALLED/);
+  assert.match(providers, /Do not silently substitute a different provider or model/);
 });
 
 test("retryable management failures recover state before considering restart", async () => {
