@@ -15,7 +15,8 @@ inside the Codex task.
   primarily about one of those areas. Handle scope, run follow-up, human input,
   approvals, and agent tasks through this main skill and its references. All
   skills share the same Loomex MCP contract and safety rules; do not duplicate
-  execution in shell commands or bypass the Runner.
+  workflow execution in shell commands or bypass the Runner. Provider command
+  execution is allowed only while handling a server-issued plugin agent task.
 - Setup, upgrade, repair, or uninstall/rollback: read
   [setup-and-auth.md](references/setup-and-auth.md).
 - Organization, project, or local workspace binding: read
@@ -60,12 +61,14 @@ Read every reference needed for the user's request before calling its tools.
    capabilities when the workflow or parameters are ambiguous.
 8. Treat the ID returned by `loomex_workflow_run` as authoritative. Follow it
    with `loomex_run_wait`; do not run shell commands to imitate its nodes.
-9. When a wait returns a plugin agent task, execute it on the local plugin host
-   according to its server-managed `agentTask.sessionDirective`, then submit
-   the result and actual `agentSession` with `loomex_agent_task_respond`.
-   `spawn` requires a new sub-agent; `resume` requires the exact prior session
-   ID and must never fall back to a replacement. Do not let the server AI
-   substitute for this work.
+9. When a wait returns a plugin agent task, read
+   [plugin-agent-providers.md](references/plugin-agent-providers.md), then
+   execute the declared provider route on the local plugin host according to
+   `agentTask.providerExecution` and the server-managed
+   `agentTask.sessionDirective`. Submit the result and actual `agentSession`
+   with `loomex_agent_task_respond`. `spawn` requires a new sub-agent; `resume`
+   requires the exact prior session ID. Report the actual provider/model used;
+   never claim that a Codex fallback executed Claude or Gemini.
 10. When a wait returns a typed human request, route by `inputSpec.inputType`:
    collect `text` in the Codex chat and submit it with `loomex_human_respond`;
    call `loomex_human_open` for `boolean`, `single_select`/`radio`, and

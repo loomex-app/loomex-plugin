@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.38
+
+- Route plugin agent tasks by the workflow-selected provider and resolved model.
+- Execute Claude through `claude`, Gemini through `agy`, and use an explicit
+  Codex fallback only when the provider command is unavailable.
+- Validate actual provider, model, and agent-session continuity in Backend.
+
 ## 0.1.37
 
 - Remove the standalone Runs, Human, and Scope sub-skills from the Codex plugin.

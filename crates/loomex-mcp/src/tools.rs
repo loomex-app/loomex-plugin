@@ -1447,7 +1447,7 @@ mod tests {
                 json!({"humanRequest":{"id":"human-1","status":"pending","title":"Review","description":"Please review","blocking":true}})
             }
             "loomex_agent_task_list" => {
-                json!({"humanRequests":[{"id":"agent-1","status":"pending","title":"Run plugin agent task","description":"Execute in the current plugin host","blocking":true,"agentTask":{"schemaVersion":"loomex.plugin-agent-task/v1","executionStrategy":"plugin_host_sub_agent","provider":"plugin_host","model":"inherit","requestedProvider":"codex","requestedModel":"auto","prompt":"Summarize","input":{},"schemas":{},"instructions":{"strategy":"sub_agent","host":"current_plugin_host"}}}],"nextCursor":null})
+                json!({"humanRequests":[{"id":"agent-1","status":"pending","title":"Run plugin agent task","description":"Execute in the current plugin host","blocking":true,"agentTask":{"schemaVersion":"loomex.plugin-agent-task/v2","executionStrategy":"plugin_host_sub_agent","provider":"plugin_host","model":"inherit","requestedProvider":"codex","requestedModel":"auto","resolvedProvider":"codex","resolvedModel":"auto","providerExecution":{"mode":"codex_sub_agent","provider":"codex","model":"auto","command":null,"commandAvailability":"not_applicable","fallback":null,"allowedResponses":[{"provider":"codex","model":"auto"}]},"allowedResponses":[{"provider":"codex","model":"auto"}],"prompt":"Summarize","input":{},"schemas":{},"instructions":{"strategy":"provider_aware_sub_agent","host":"current_plugin_host"}}}],"nextCursor":null})
             }
             "loomex_agent_task_respond" => {
                 json!({"requestId":"agent-1","requestStatus":"resolved","executionId":"run-1","executionStatus":"running"})
