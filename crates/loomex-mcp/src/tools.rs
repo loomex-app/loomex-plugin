@@ -389,6 +389,14 @@ pub fn definitions() -> Vec<ToolDefinition> {
             mutating(false, true, true),
         ),
         tool(
+            "loomex_runner_job_get",
+            "Get Runner job",
+            "Read the status and result of a Runner-executed provider command. Use this to watch a plugin agent Runner job; never execute the provider command in Codex.",
+            "runner.job.get",
+            obj(&[("jobId", identifier())], &["jobId"]),
+            open_ro(),
+        ),
+        tool(
             "loomex_approval_list",
             "List approvals",
             "List pending or decided Loomex policy approvals.",
@@ -505,6 +513,7 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_human_open" => "human.open",
                 "loomex_agent_task_list" => "agent.list",
                 "loomex_agent_task_respond" => "agent.respond",
+                "loomex_runner_job_get" => "runner.job.get",
                 "loomex_approval_list" => "approval.list",
                 "loomex_approval_decide" => "approval.decide",
                 "loomex_runner_status" => "status",
@@ -988,6 +997,9 @@ fn output_data_schema(tool_name: &str) -> Value {
                 &["humanRequests", "nextCursor"],
             )
         }
+        "loomex_runner_job_get" => {
+            evolvable_object(&[("job", nullable(evolvable_object(&[], &[])))], &["job"])
+        }
         "loomex_human_respond" | "loomex_approval_decide" | "loomex_agent_task_respond" => {
             evolvable_object(
                 &[
@@ -1449,6 +1461,17 @@ mod tests {
             "loomex_agent_task_list" => {
                 json!({"humanRequests":[{"id":"agent-1","status":"pending","title":"Run plugin agent task","description":"Execute in the current plugin host","blocking":true,"agentTask":{"schemaVersion":"loomex.plugin-agent-task/v2","executionStrategy":"plugin_host_sub_agent","provider":"plugin_host","model":"inherit","requestedProvider":"codex","requestedModel":"auto","resolvedProvider":"codex","resolvedModel":"auto","providerExecution":{"mode":"codex_sub_agent","provider":"codex","model":"auto","command":null,"commandAvailability":"not_applicable","fallback":null,"allowedResponses":[{"provider":"codex","model":"auto"}]},"allowedResponses":[{"provider":"codex","model":"auto"}],"prompt":"Summarize","input":{},"schemas":{},"instructions":{"strategy":"provider_aware_sub_agent","host":"current_plugin_host"}}}],"nextCursor":null})
             }
+            "loomex_runner_job_get" => json!({
+                "job": {
+                    "id": "job-1",
+                    "kind": "shell.exec",
+                    "status": "succeeded",
+                    "runnerId": "runner-1",
+                    "sessionId": "session-1",
+                    "result": {"exitCode": 0, "stdout": "{}", "stderr": ""},
+                    "error": null
+                }
+            }),
             "loomex_agent_task_respond" => {
                 json!({"requestId":"agent-1","requestStatus":"resolved","executionId":"run-1","executionStatus":"running"})
             }
@@ -1493,7 +1516,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_unique_route_and_strict_top_level_schema() {
         let definitions = definitions();
-        assert_eq!(definitions.len(), 33);
+        assert_eq!(definitions.len(), 34);
         let mut names = HashSet::new();
         for tool in definitions {
             assert!(names.insert(tool.name));

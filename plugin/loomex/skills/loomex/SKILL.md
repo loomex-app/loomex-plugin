@@ -62,16 +62,16 @@ Read every reference needed for the user's request before calling its tools.
 8. Treat the ID returned by `loomex_workflow_run` as authoritative. Follow it
    with `loomex_run_wait`; do not run shell commands to imitate its nodes.
 9. When a wait returns a plugin agent task, read
-   [plugin-agent-providers.md](references/plugin-agent-providers.md), then
-   execute the declared provider route on the local plugin host according to
-   `agentTask.providerExecution` and the server-managed
-   `agentTask.sessionDirective`. Treat `agentTask.prompt` as a server-managed
-   opaque string and forward it exactly; never edit it to add context, translate
-   it, summarize it, or append output-format instructions. Submit the result
-   and actual `agentSession` with `loomex_agent_task_respond`. `spawn` requires
-   a new sub-agent; `resume` requires the exact prior session ID. Report the
-   actual provider/model used; never claim that a Codex fallback executed
-   Claude or Gemini.
+   [plugin-agent-providers.md](references/plugin-agent-providers.md). Codex
+   executes only the OpenAI sub-agent route. For Claude/Gemini, Backend has
+   already queued the server-built provider argv on the local Runner; call
+   `loomex_runner_job_get` with the exact `runnerExecution.jobId` and watch it
+   until terminal. Treat `agentTask.prompt` as a server-managed opaque string
+   and never edit it. Parse only the terminal Runner result, then submit the
+   result and actual `agentSession` with `loomex_agent_task_respond`. `spawn`
+   requires a new provider session; `resume` requires the exact prior session
+   ID. Report the actual provider/model used; never claim that a Codex fallback
+   executed Claude or Gemini.
 10. When a wait returns a typed human request, route by `inputSpec.inputType`:
    collect `text` in the Codex chat and submit it with `loomex_human_respond`;
    call `loomex_human_open` for `boolean`, `single_select`/`radio`, and
@@ -115,7 +115,7 @@ Read every reference needed for the user's request before calling its tools.
   `loomex_human_respond`
 - Approvals: `loomex_approval_list`, `loomex_approval_decide`
 - Plugin agent tasks: `loomex_agent_task_list`,
-  `loomex_agent_task_respond`
+  `loomex_agent_task_respond`, `loomex_runner_job_get`
 - Runner: `loomex_runner_status`, `loomex_runner_control`,
   `loomex_runner_doctor`, `loomex_runner_logs`
 

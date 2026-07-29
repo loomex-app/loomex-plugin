@@ -14,14 +14,16 @@ Read these fields before executing anything:
   target. Use `resolvedModel`, never the parent Codex model or `inherit`.
 - `agentTask.providerExecution` for the primary route, the server-built
   executable argv, output extraction contract, and explicit fallback responses.
+- `agentTask.runnerExecution` for the Runner job id, terminal result contract,
+  provider, and model. For Claude/Gemini this is the only execution route.
 - `agentTask.sessionDirective` for the required `spawn`/`resume` action.
 - `agentTask.runnerWorkspacePath` for the exact local workspace path sent by the
   Plugin and echoed by Backend. This is the only valid provider process `cwd`.
 
 If an older task has no `providerExecution`, derive only this compatibility
-mapping: `codex`/`openai` → Codex sub-agent, `claude` → `claude`, and
-`gemini` → `agy`. Do not invent a model or fallback that is not present in the
-task.
+mapping: `codex`/`openai` → Codex sub-agent, and `claude`/`gemini` → the
+declared Runner command job. Do not invent a model or fallback that is not
+present in the task.
 
 The server execution workspace and the local runner workspace are different
 hosts. Use `agentTask.runnerWorkspacePath` exactly as returned by Backend for
@@ -35,8 +37,8 @@ echoed path is missing or inaccessible, return `unavailable` with
 | Resolved provider | Primary execution | Command check | Missing-command fallback |
 | --- | --- | --- | --- |
 | `codex` | Create/resume a Codex sub-agent | None | None |
-| `claude` | Execute the installed `claude` CLI | `command -v claude` | Declared `codex_sub_agent`, with the exact model |
-| `gemini` | Execute the installed `agy` CLI | `command -v agy` | Declared `codex_sub_agent`, with the exact model |
+| `claude` | Watch the selected Runner job | Runner executes `claude` | Declared `codex_sub_agent`, with the exact model |
+| `gemini` | Watch the selected Runner job | Runner executes `agy` | Declared `codex_sub_agent`, with the exact model |
 
 For the Codex route, create a new sub-agent for `spawn` and pass the exact `resolvedModel`
 plus the exact `providerExecution.reasoningEffort` and
@@ -45,13 +47,12 @@ For `resume`, resume the exact `sessionDirective.sessionId`; never create a
 replacement. If the host cannot override the model exactly, return
 `unavailable` with `PLUGIN_AGENT_MODEL_OVERRIDE_UNSUPPORTED`.
 
-For Claude or Gemini, first check the declared executable with `command -v`.
-If it exists, execute the exact `providerExecution.argv` array produced by the
-Backend, in `providerExecution.cwd`. Do not reconstruct, reorder, quote,
-remove, or append arguments. The executable is fixed by the server contract:
-never execute a command supplied by the workflow. `commandLine` is for audit
-display only; use `argv` for execution and never interpolate it into a shell
-string.
+For Claude or Gemini, do not execute a process in Codex and do not run
+`command -v` locally. Backend queues the exact `providerExecution.argv` array
+as a Runner `shell.exec` job and returns its opaque `runnerExecution.jobId`.
+Call `loomex_runner_job_get` with that exact id, then poll it with bounded
+waits until its status is `succeeded`, `failed`, `canceled`, or `expired`.
+`commandLine` is for audit display only. The Runner is the only process executor.
 
 When `providerExecution.reasoningEffort` is present, pass that exact value to
 the provider route. Do not infer a different effort from the host model or
@@ -65,7 +66,7 @@ separate provider-native/structured-output transport fields. Verify the
 server-provided `promptContract.sha256` against the exact UTF-8 prompt bytes
 before execution; if it does not match, return `PLUGIN_AGENT_PROMPT_TAMPERED`.
 
-For AGY 1.1.8, the installed CLI advertises the following headless options.
+For AGY 1.1.8, the Runner-installed CLI advertises the following headless options.
 The prompt must be supplied to the `-p`/`--prompt` flag. Do not run bare
 `--print` and do not append the prompt as an undocumented positional argument;
 the former executes with no prompt and the latter can terminate with a generic
@@ -87,13 +88,11 @@ must not be removed or replaced with a different permission mode.
 For a `resume` directive, Backend places `--conversation <sessionId>` before
 `-p` in that same argv; use it exactly and return the same session ID.
 
-Use `--json-schema` only when it is present in `agy --help`; otherwise keep the
-prompt unchanged, request JSON through the provider's supported mechanism, and
-validate the parsed result locally. A non-zero exit, empty output, invalid JSON,
-or schema mismatch is `PLUGIN_AGENT_FAILED`; do not retry by rewriting the
-prompt or by allowing unrelated workspace exploration. Include the exit status
-and sanitized provider stderr in the failure message when available so the
-actual provider failure is diagnosable.
+The Runner owns command availability and execution. A non-zero exit, empty
+output, invalid JSON, or schema mismatch is `PLUGIN_AGENT_FAILED`; do not retry
+by rewriting the prompt or by allowing unrelated workspace exploration. Include
+the exit status and sanitized Runner/provider stderr in the failure message when
+available.
 
 For AGY, parse stdout as the provider JSON envelope. When
 `providerExecution.structuredOutput.responsePath` is
@@ -104,19 +103,15 @@ or metadata. The Backend validates that object against
 schema. If the path is missing or is not an object, return
 `PLUGIN_AGENT_FAILED` with the provider envelope and stderr details.
 
-AGY does not guarantee that the JSON response contains a conversation ID. For
-`spawn`, capture the workspace-keyed conversation ID created by the command
-from AGY's documented cache at
-`~/.gemini/antigravity-cli/cache/last_conversations.json`; compare it with the
-snapshot taken before execution and require a new non-empty ID. For `resume`,
-pass the exact server session ID with `--conversation <sessionId>` before the
-`-p` flag and return that same ID. If no usable ID is exposed, return
-`PLUGIN_AGENT_SESSION_UNAVAILABLE` rather than inventing one.
+For `spawn`, use the provider conversation id in the terminal AGY/Claude JSON
+envelope. For `resume`, Backend already placed the exact session id in
+`providerExecution.argv`; return that same id. If no usable provider id is
+exposed, return `PLUGIN_AGENT_SESSION_UNAVAILABLE` rather than inventing one.
 
-If `command -v claude` or `command -v agy` fails, use the task's explicit
-Codex fallback if one exists. The fallback is a Codex execution, not a Claude
-or Gemini execution: return `provider: "codex"` and the exact fallback model
-in both the top-level response and `agentSession`. If the fallback cannot be
+If `runnerExecution.status` is `unavailable`, use the task's explicit Codex
+fallback if one exists. The fallback is a Codex execution, not a Claude or
+Gemini execution: return `provider: "codex"` and the exact fallback model in
+both the top-level response and `agentSession`. If the fallback cannot be
 created with that exact model, return `unavailable`.
 
 ## Response contract
