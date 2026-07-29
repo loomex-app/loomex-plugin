@@ -233,6 +233,7 @@ pub struct RunnerWorkflowExecutionStartOptions<'a> {
     pub workflow_id: &'a str,
     pub binding_id: &'a str,
     pub inputs: Value,
+    pub workspace_path: Option<&'a str>,
     pub session_id: Option<&'a str>,
     pub version: Option<&'a str>,
     pub execution_mode: Option<&'a str>,
@@ -347,6 +348,8 @@ pub struct RunnerHumanRequestListResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RunnerWorkflowExecutionStartRequest {
     inputs: Value,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "workspacePath")]
+    workspace_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "sessionId")]
     session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2061,6 +2064,7 @@ impl ManagementApiClient for HttpManagementApiClient {
     ) -> CoreResult<RunnerWorkflowExecutionResponse> {
         let body = RunnerWorkflowExecutionStartRequest {
             inputs,
+            workspace_path: None,
             session_id: session_id.map(str::to_string),
             version: version.map(str::to_string),
             binding_id: None,
@@ -2104,6 +2108,7 @@ impl ManagementApiClient for HttpManagementApiClient {
         let response = request
             .json(&RunnerWorkflowExecutionStartRequest {
                 inputs: options.inputs,
+                workspace_path: options.workspace_path.map(str::to_string),
                 session_id: options.session_id.map(str::to_string),
                 version: options.version.map(str::to_string),
                 binding_id: Some(options.binding_id.to_string()),
@@ -3687,6 +3692,7 @@ mod tests {
                     workflow_id: "workflow-1",
                     binding_id: "binding-1",
                     inputs: json!({"prompt":"hello"}),
+                    workspace_path: Some("/repo"),
                     session_id: Some("session-1"),
                     version: Some("3"),
                     execution_mode: Some("plugin"),
@@ -3702,6 +3708,7 @@ mod tests {
             .to_ascii_lowercase()
             .contains("idempotency-key: run-attempt-1\r\n"));
         assert!(raw_request.contains("\"bindingId\":\"binding-1\""));
+        assert!(raw_request.contains("\"workspacePath\":\"/repo\""));
         assert!(raw_request.contains("\"sessionId\":\"session-1\""));
         assert!(raw_request.contains("\"version\":\"3\""));
         assert!(raw_request.contains("\"executionMode\":\"plugin\""));
