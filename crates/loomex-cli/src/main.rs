@@ -6751,6 +6751,9 @@ fn execute_cancellable_runner_job<C: ManagementApiClient>(
     job: &Value,
     recovery: &mut RunnerJobRecoveryJournal,
 ) -> Result<Value, String> {
+    let binding_id = resolved.binding_id.as_deref().ok_or_else(|| {
+        "RUNNER_SERVICE_BINDING_REQUIRED: selected profile has no bindingId".to_string()
+    })?;
     let cancellation = ShellCancellationToken::default();
     let worker_cancellation = cancellation.clone();
     let worker_resolved = resolved.clone();
@@ -6771,6 +6774,13 @@ fn execute_cancellable_runner_job<C: ManagementApiClient>(
         .map_err(|err| format!("RUNNER_JOB_THREAD_FAILED: {err}"))?;
     let mut lease_version = initial_lease_version;
     let mut next_renewal_epoch_ms = current_epoch_ms()?.saturating_add(10_000);
+    // `run_runner_control_session` heartbeats only while idle. A provider
+    // command can run for minutes, so keep the owning control session fresh
+    // from this job loop as well; otherwise Backend fences the still-running
+    // job before it can renew its lease or submit its terminal result.
+    const SESSION_HEARTBEAT_INTERVAL_MS: u64 = 5_000;
+    let mut next_session_heartbeat_epoch_ms =
+        current_epoch_ms()?.saturating_add(SESSION_HEARTBEAT_INTERVAL_MS);
     loop {
         match receiver.try_recv() {
             Ok(result) => {
@@ -6794,6 +6804,17 @@ fn execute_cancellable_runner_job<C: ManagementApiClient>(
             cancellation.cancel();
         }
         let now_epoch_ms = current_epoch_ms()?;
+        if now_epoch_ms >= next_session_heartbeat_epoch_ms {
+            client
+                .heartbeat_runner_session(
+                    credential,
+                    session_id,
+                    runner_control_manifest(resolved, binding_id),
+                )
+                .map_err(format_core_error)?;
+            next_session_heartbeat_epoch_ms =
+                now_epoch_ms.saturating_add(SESSION_HEARTBEAT_INTERVAL_MS);
+        }
         if now_epoch_ms >= next_renewal_epoch_ms {
             let renewed = client
                 .renew_runner_job(credential, session_id, job_id, lease_version)
@@ -11734,6 +11755,61 @@ mod tests {
         let _ = fs::remove_file(log_path);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn runner_control_heartbeats_while_a_shell_job_is_running() {
+        let workspace = temp_workspace_path("runner-job-session-heartbeat");
+        let _ = fs::remove_dir_all(&workspace);
+        fs::create_dir_all(&workspace).unwrap();
+        let mut resolved = service_resolved_settings();
+        resolved.workspace_path = Some(workspace.display().to_string());
+        let credential = credential("default", "org_123");
+        let mut client = FakeManagementClient {
+            runner_jobs: vec![json!({
+                "id": "job_session_heartbeat",
+                "status": "leased",
+                "sessionId": "session_123",
+                "runnerId": "runner_123",
+                "attemptCount": 1,
+                "leaseVersion": 1,
+                "leasedUntilEpochMs": 4_102_444_800_000_u64,
+                "payloadDigest": "sha256:test-session-heartbeat",
+                "replaySafe": false,
+                "idempotencyKey": "runner-job:session-heartbeat",
+                "kind": "shell.exec",
+                "payload": {
+                    "command": ["sh", "-c", "sleep 6; printf done"],
+                    "timeout_seconds": 20,
+                    "max_output_bytes": 1024
+                }
+            })],
+            ..Default::default()
+        };
+        let recovery_path = env::temp_dir().join(format!(
+            "loomex-session-heartbeat-recovery-{}-{}.json",
+            process::id(),
+            current_epoch_ms().unwrap()
+        ));
+        let mut recovery = RunnerJobRecoveryJournal::open(&recovery_path).unwrap();
+
+        assert!(process_one_runner_control_job(
+            &mut client,
+            &credential,
+            &resolved,
+            "session_123",
+            &mut recovery,
+        )
+        .unwrap());
+        assert!(client.runner_session_heartbeat_count >= 1);
+        assert_eq!(
+            "job_session_heartbeat",
+            client.completed_runner_jobs[0]["id"]
+        );
+
+        let _ = fs::remove_file(recovery_path);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
     #[test]
     fn runner_stop_does_not_remove_live_guard_owned_by_app() {
         let config_path = temp_config_path("runner-stop-foreign-guard");
@@ -15128,6 +15204,7 @@ mod tests {
         last_human_request_id: Option<String>,
         last_human_resolution: Option<Value>,
         runner_session_response: Option<loomex_core::RunnerSessionResponse>,
+        runner_session_heartbeat_count: usize,
         runner_jobs: Vec<Value>,
         runner_job_lease_errors: Vec<Option<loomex_core::CoreError>>,
         completed_runner_jobs: Vec<Value>,
@@ -15525,6 +15602,7 @@ mod tests {
             session_id: &str,
             manifest: Value,
         ) -> loomex_core::CoreResult<loomex_core::RunnerSessionResponse> {
+            self.runner_session_heartbeat_count += 1;
             Ok(loomex_core::RunnerSessionResponse {
                 runner: json!({"id": "runner_123", "status": "online"}),
                 session: json!({"id": session_id, "manifest": manifest}),
