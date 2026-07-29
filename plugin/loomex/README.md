@@ -27,13 +27,12 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.48/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.49/install-codex.sh | sh
 ```
 
-The `0.1.48` release forwards a Backend-compiled, immutable provider prompt
-containing each node's resolved inputs, schemas, and workspace scope. Gemini,
-Claude, and Codex therefore receive the same workflow context while the Plugin
-continues to forward it without mutation.
+The `0.1.49` release keeps Claude/Gemini provider execution durable: Backend
+consumes the terminal Runner result and resumes the workflow automatically.
+Only a real human input or approval requires a user decision.
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
 releases and upgrades come from `loomex-app/loomex-plugin`; running the command
