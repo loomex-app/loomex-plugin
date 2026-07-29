@@ -8,7 +8,8 @@ or replacing the Loomex Runner.
 
 Read these fields before executing anything:
 
-- `agentTask.prompt`, `input`, `schemas`, and `workspace`.
+- `agentTask.prompt`, `promptTemplate`, `promptContext`, `input`, `schemas`, and
+  `workspace`.
 - `agentTask.requestedProvider` and `requestedModel` for the workflow choice.
 - `agentTask.resolvedProvider` and `resolvedModel` for the exact execution
   target. Use `resolvedModel`, never the parent Codex model or `inherit`.
@@ -42,7 +43,8 @@ echoed path is missing or inaccessible, return `unavailable` with
 
 For the Codex route, create a new sub-agent for `spawn` and pass the exact `resolvedModel`
 plus the exact `providerExecution.reasoningEffort` and
-`codexProfile` when present. Never inherit the parent host model or effort.
+`codexProfile` when present. Give that sub-agent the exact compiled
+`agentTask.prompt`; never inherit the parent host model, effort, or prompt.
 For `resume`, resume the exact `sessionDirective.sessionId`; never create a
 replacement. If the host cannot override the model exactly, return
 `unavailable` with `PLUGIN_AGENT_MODEL_OVERRIDE_UNSUPPORTED`.
@@ -58,19 +60,26 @@ When `providerExecution.reasoningEffort` is present, pass that exact value to
 the provider route. Do not infer a different effort from the host model or
 replace a server-resolved provider model with a base model.
 
-The server prompt is an opaque payload. Forward `agentTask.prompt` verbatim:
-do not paraphrase, translate, summarize, reorder, sanitize, add a preamble or
-append a suffix. Do not put structured input, workspace context, output schema,
-or `resumeInstructions` into the prompt text. Pass those values through their
-separate provider-native/structured-output transport fields. Verify the
+`agentTask.prompt` is the Backend-compiled, provider-ready prompt. It contains
+the workflow-authored prompt unchanged between markers plus a canonical
+`loomex.provider-context/v1` JSON envelope with the resolved `nodeInput`, input
+and output schemas, and selected workspace scope. `promptTemplate` and
+`promptContext` are audit fields only; never rebuild `agentTask.prompt` from
+them, from `input`, or from `schemas`.
+
+Forward `agentTask.prompt` verbatim for every route: do not paraphrase,
+translate, summarize, reorder, sanitize, add a preamble or append a suffix.
+Do not add workflow inputs, previous outputs, workspace context, output schema,
+or `resumeInstructions`: Backend decides which resolved node inputs may reach
+the provider and has already compiled them into the immutable prompt. Verify the
 server-provided `promptContract.sha256` against the exact UTF-8 prompt bytes
 before execution; if it does not match, return `PLUGIN_AGENT_PROMPT_TAMPERED`.
 
 For AGY 1.1.8, the Runner-installed CLI advertises the following headless options.
-The prompt must be supplied to the `-p`/`--prompt` flag. Do not run bare
-`--print` and do not append the prompt as an undocumented positional argument;
-the former executes with no prompt and the latter can terminate with a generic
-provider error.
+The compiled prompt must be supplied to the `-p`/`--prompt` flag.
+Do not run bare `--print`; do not append the prompt as an undocumented
+positional argument. The former executes with no prompt and the latter can
+terminate with a generic provider error.
 
 The Backend-generated AGY argv has this exact shape (the `--effort` pair is
 present when `providerExecution.reasoningEffort` is present):

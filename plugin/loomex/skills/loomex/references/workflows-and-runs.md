@@ -80,6 +80,11 @@ server is the source of truth for sub-agent continuity. Provider routing and
 the explicit command/fallback policy are defined in
 [plugin-agent-providers.md](plugin-agent-providers.md).
 
+`agentTask.prompt` is already the immutable provider-ready prompt. It includes
+the allowed resolved node input and schema context selected by Backend. Use
+`promptTemplate`, `promptContext`, `input`, and `schemas` for audit only; never
+reconstruct, extend, or replace the final prompt on the Plugin host.
+
 For a non-Codex provider, first call `loomex_runner_job_get` with
 `agentTask.runnerExecution.jobId`. Repeat bounded calls until the Runner job is
 terminal; do not execute `providerExecution.argv` in Codex or with a shell
