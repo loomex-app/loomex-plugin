@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.49
+
+- Let Backend consume terminal Claude/Gemini Runner results, validate the provider structured output and workspace scope, and enqueue the durable workflow resume without requiring a Codex chat to submit it.
+- Document that only real human input or approval pauses require a user decision; provider execution remains a non-terminal run state.
+
 ## 0.1.48
 
 - Treat `agentTask.prompt` as the Backend-compiled provider prompt, carrying the resolved node input, input/output schemas, and binding workspace scope.

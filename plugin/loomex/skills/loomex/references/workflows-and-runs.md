@@ -36,7 +36,8 @@ Use `loomex_run_wait` for bounded server-side waiting. Preserve the cursor or
 sequence it returns and send it back as `afterSequence` so repeated waits do not
 replay old events. Keep these bounded waits in the same task while the run is
 non-terminal; a queued or running provider job must not be reported as a
-completed interaction. `timeoutSeconds` is optional and is capped by the tool schema.
+completed interaction or as a reason for the user to say “continue”.
+`timeoutSeconds` is optional and is capped by the tool schema.
 Provide short progress updates for long runs. If the connection or Codex
 restarts, call `loomex_run_get` with the run ID, then resume waiting from the
 returned state.
@@ -85,10 +86,12 @@ the allowed resolved node input and schema context selected by Backend. Use
 `promptTemplate`, `promptContext`, `input`, and `schemas` for audit only; never
 reconstruct, extend, or replace the final prompt on the Plugin host.
 
-For a non-Codex provider, first call `loomex_runner_job_get` with
-`agentTask.runnerExecution.jobId`. Repeat bounded calls until the Runner job is
-terminal; do not execute `providerExecution.argv` in Codex or with a shell
-command.
+For a non-Codex provider, Backend already owns the terminal hand-off from
+`agentTask.runnerExecution.jobId` to the durable workflow resume queue. Do not
+execute `providerExecution.argv` in Codex or with a shell command, and do not
+submit its successful Runner output with `loomex_agent_task_respond`. You may
+read the exact `runnerExecution.jobId` for progress, but Backend advances the
+workflow after the Runner reports a terminal result.
 
 Obey `sessionDirective.action` exactly:
 
@@ -105,7 +108,8 @@ loop visit receives `spawn` and must use a distinct session. The directive's
 `visit` and `continuityKey` are server-owned correlation fields; do not alter or
 derive session policy locally.
 
-Submit exactly one structured response with `loomex_agent_task_respond`:
+For the Codex route or an explicit Codex fallback, submit exactly one structured
+response with `loomex_agent_task_respond`:
 
 - completed spawn: include the actual provider/model in both the response and
   session, for example
@@ -121,6 +125,13 @@ The `output` object must match the task's output schema when one is present.
 Never fabricate an AI result or a session ID. The server will reject a missing,
 reused, provider-mismatched, model-mismatched, or continuity-mismatched session
 and prevent the execution from advancing rather than losing continuity.
+
+Only a real pending human-input form or approval request requires a user
+decision. Continue waiting through Runner-provider work and Codex sub-agent
+work; never close the task merely because an AI node is still executing. If the
+host itself is unable to execute a directed Codex task, submit its structured
+`unavailable`/`failed` response so the server can make the execution terminal
+instead of leaving it indefinitely paused.
 
 A dispatch timeout is a terminal backend result when `loomex_run_get` reports
 the run as `failed`: the job was not leased within the dispatch grace period.
