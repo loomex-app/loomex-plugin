@@ -1,3 +1,4 @@
+use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::{CoreError, CoreResult};
@@ -215,6 +216,12 @@ StandardOutput=journal\n\
 StandardError=journal\n",
         args.join(" ")
     );
+    for (key, value) in runner_service_environment(spec) {
+        unit.push_str(&format!(
+            "Environment={}\n",
+            systemd_quote_text(&format!("{key}={value}"))
+        ));
+    }
     if let Some(log_path) = &spec.log_path {
         unit.push_str(&format!(
             "Environment=LOOMEX_RUNNER_LOG_PATH={}\n",
@@ -272,15 +279,32 @@ fn render_launch_agent(spec: &RunnerServiceSpec) -> CoreResult<String> {
         working_directory = xml_escape_path(working_directory)?,
     );
 
+    let mut environment = runner_service_environment(spec);
+    if let Some(log_path) = &spec.log_path {
+        environment.push((
+            "LOOMEX_RUNNER_LOG_PATH".to_string(),
+            log_path.to_string_lossy().to_string(),
+        ));
+    }
+    if !environment.is_empty() {
+        let environment_elements = environment
+            .into_iter()
+            .map(|(key, value)| {
+                Ok(format!(
+                    "    <key>{}</key>\n    <string>{}</string>\n",
+                    xml_escape(&key)?,
+                    xml_escape(&value)?,
+                ))
+            })
+            .collect::<CoreResult<String>>()?;
+        plist.push_str(&format!(
+            "  <key>EnvironmentVariables</key>\n  <dict>\n{environment_elements}  </dict>\n"
+        ));
+    }
     if let Some(log_path) = &spec.log_path {
         let escaped_log_path = xml_escape_path(log_path)?;
         plist.push_str(&format!(
-            "  <key>EnvironmentVariables</key>\n\
-  <dict>\n\
-    <key>LOOMEX_RUNNER_LOG_PATH</key>\n\
-    <string>{escaped_log_path}</string>\n\
-  </dict>\n\
-  <key>StandardOutPath</key>\n\
+            "  <key>StandardOutPath</key>\n\
   <string>{escaped_log_path}</string>\n\
   <key>StandardErrorPath</key>\n\
   <string>{escaped_log_path}</string>\n"
@@ -288,6 +312,42 @@ fn render_launch_agent(spec: &RunnerServiceSpec) -> CoreResult<String> {
     }
     plist.push_str("</dict>\n</plist>\n");
     Ok(plist)
+}
+
+fn runner_service_environment(spec: &RunnerServiceSpec) -> Vec<(String, String)> {
+    let home = env::var("HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            spec.config_path
+                .parent()
+                .filter(|parent| parent.file_name().is_some_and(|name| name == ".loomex"))
+                .and_then(Path::parent)
+                .map(|path| path.to_string_lossy().to_string())
+        });
+    let mut paths = Vec::new();
+    if let Some(home) = home.as_deref() {
+        let home = PathBuf::from(home);
+        paths.extend([home.join(".local/bin"), home.join(".cargo/bin")]);
+    }
+    paths.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+    ]);
+    let mut environment = Vec::new();
+    if let Some(home) = home {
+        environment.push(("HOME".to_string(), home));
+    }
+    if let Ok(path) = env::join_paths(paths) {
+        if let Ok(path) = path.into_string() {
+            environment.push(("PATH".to_string(), path));
+        }
+    }
+    environment
 }
 
 fn validate_service_name(value: &str) -> CoreResult<()> {
@@ -414,6 +474,8 @@ mod tests {
         assert!(manifest
             .content
             .contains("<key>LOOMEX_RUNNER_LOG_PATH</key>"));
+        assert!(manifest.content.contains("<key>HOME</key>"));
+        assert!(manifest.content.contains("<key>PATH</key>"));
         assert!(manifest.content.contains("<key>StandardOutPath</key>"));
         assert!(manifest.content.contains("<key>StandardErrorPath</key>"));
         assert!(manifest
