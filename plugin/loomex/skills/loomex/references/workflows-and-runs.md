@@ -34,7 +34,9 @@ all later calls. A submitted or queued response is not completion.
 
 Use `loomex_run_wait` for bounded server-side waiting. Preserve the cursor or
 sequence it returns and send it back as `afterSequence` so repeated waits do not
-replay old events. `timeoutSeconds` is optional and is capped by the tool schema.
+replay old events. Keep these bounded waits in the same task while the run is
+non-terminal; a queued or running provider job must not be reported as a
+completed interaction. `timeoutSeconds` is optional and is capped by the tool schema.
 Provide short progress updates for long runs. If the connection or Codex
 restarts, call `loomex_run_get` with the run ID, then resume waiting from the
 returned state.
