@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.48
+
+- Treat `agentTask.prompt` as the Backend-compiled provider prompt, carrying the resolved node input, input/output schemas, and binding workspace scope.
+- Require Codex sub-agents to receive that exact compiled prompt while Claude and Gemini continue to execute the immutable Runner argv.
+
 ## 0.1.47
 
 - Execute Runner `shell.exec` jobs in their explicitly declared, binding-contained working directory.
