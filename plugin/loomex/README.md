@@ -30,6 +30,9 @@ To install or upgrade to an exact plugin version:
 curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.41/install-codex.sh | sh
 ```
 
+The `0.1.41` release includes the provider workspace-path contract: workflow
+provider commands use the exact local workspace selected by the active binding.
+
 The old `loomex-app/runner` URL is retained only for historical releases. New
 releases and upgrades come from `loomex-app/loomex-plugin`; running the command
 again is sufficient and preserves the existing Codex marketplace state on
