@@ -38,8 +38,8 @@ echoed path is missing or inaccessible, return `unavailable` with
 | Resolved provider | Primary execution | Command check | Missing-command fallback |
 | --- | --- | --- | --- |
 | `codex` | Create/resume a Codex sub-agent | None | None |
-| `claude` | Watch the selected Runner job | Runner executes `claude` | Declared `codex_sub_agent`, with the exact model |
-| `gemini` | Watch the selected Runner job | Runner executes `agy` | Declared `codex_sub_agent`, with the exact model |
+| `claude` | Backend completes the selected Runner job | Runner executes `claude` | Declared `codex_sub_agent`, with the exact model |
+| `gemini` | Backend completes the selected Runner job | Runner executes `agy` | Declared `codex_sub_agent`, with the exact model |
 
 For the Codex route, create a new sub-agent for `spawn` and pass the exact `resolvedModel`
 plus the exact `providerExecution.reasoningEffort` and
@@ -52,9 +52,18 @@ replacement. If the host cannot override the model exactly, return
 For Claude or Gemini, do not execute a process in Codex and do not run
 `command -v` locally. Backend queues the exact `providerExecution.argv` array
 as a Runner `shell.exec` job and returns its opaque `runnerExecution.jobId`.
-Call `loomex_runner_job_get` with that exact id, then poll it with bounded
-waits until its status is `succeeded`, `failed`, `canceled`, or `expired`.
+The Backend is the terminal-result consumer: it parses the Runner result,
+validates the schema and workspace scope, and creates the durable workflow
+resume delivery itself. Do not call `loomex_agent_task_respond` for a normal
+Runner terminal result, and do not use the human request id as a job id.
 `commandLine` is for audit display only. The Runner is the only process executor.
+
+You may inspect a provider job with `loomex_runner_job_get` using exactly
+`runnerExecution.jobId` for progress reporting, but never make workflow
+continuation depend on a Codex chat polling it. Keep following the run with
+bounded `loomex_run_wait` calls. A pause is actionable only when the server
+returns a real human-input or approval request; a queued/running provider job
+is not a request for the user to say “continue”.
 
 When `providerExecution.reasoningEffort` is present, pass that exact value to
 the provider route. Do not infer a different effort from the host model or
@@ -87,6 +96,7 @@ present when `providerExecution.reasoningEffort` is present):
 ```text
 agy -p <agentTask.prompt> --output-format json --model <resolvedModel> \
   [--effort <reasoning-effort>] --dangerously-skip-permissions \
+  --sandbox \
   --json-schema <output-schema>
 ```
 
@@ -94,6 +104,9 @@ The canonical executable form is `providerExecution.argv`, not this display
 form. `--dangerously-skip-permissions` is part of the server-owned provider
 command so AGY can run headlessly without waiting for a permission prompt. It
 must not be removed or replaced with a different permission mode.
+AGY's documented `--sandbox` flag is also server-owned and enables its terminal
+restrictions. The Runner starts the command only in the bound workspace, and
+Backend rejects any declared `changed_files` that escape that workspace.
 For a `resume` directive, Backend places `--conversation <sessionId>` before
 `-p` in that same argv; use it exactly and return the same session ID.
 
@@ -103,14 +116,15 @@ by rewriting the prompt or by allowing unrelated workspace exploration. Include
 the exit status and sanitized Runner/provider stderr in the failure message when
 available.
 
-For AGY, parse stdout as the provider JSON envelope. When
-`providerExecution.structuredOutput.responsePath` is
-`response.structured_output`, use exactly that nested object as the response
-`output`; do not return the whole AGY envelope, its textual `response`, usage,
-or metadata. The Backend validates that object against
+Backend parses AGY/Claude stdout as the provider JSON envelope and follows the
+provider-specific `providerExecution.structuredOutput.responsePath`: AGY uses
+`response.structured_output`, while Claude uses root `structured_output`.
+It uses exactly that object as the node output; it never returns the whole
+provider envelope, textual `response`, usage, or metadata. Backend validates it against
 `providerExecution.structuredOutput.schema` and the workflow node output
-schema. If the path is missing or is not an object, return
-`PLUGIN_AGENT_FAILED` with the provider envelope and stderr details.
+schema. If the path is missing or is not an object, Backend fails the agent
+node with the Runner/provider diagnostics instead of leaving the workflow
+waiting.
 
 For `spawn`, use the provider conversation id in the terminal AGY/Claude JSON
 envelope. For `resume`, Backend already placed the exact session id in
@@ -124,6 +138,9 @@ both the top-level response and `agentSession`. If the fallback cannot be
 created with that exact model, return `unavailable`.
 
 ## Response contract
+
+This section applies to the Codex route and an explicit declared Codex fallback
+only. Claude/Gemini Runner jobs are responded to automatically by Backend.
 
 Submit exactly one response through `loomex_agent_task_respond`:
 
