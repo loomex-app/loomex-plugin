@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.43
+
+- Dispatch Claude and Gemini provider commands through the local Runner and let Codex watch the durable Runner job.
+- Add the `loomex_runner_job_get` MCP tool for provider-job polling and structured output handoff.
+- Keep provider command argv and workflow prompts server-built and unchanged through plugin execution.
+
 ## 0.1.42
 
 - Build provider-specific command argv on the Backend and execute it unchanged on the Plugin host.
