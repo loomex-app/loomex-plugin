@@ -30,24 +30,46 @@ task.
 | `gemini` | Execute the installed `agy` CLI | `command -v agy` | Declared `codex_sub_agent`, with the exact model |
 
 For the Codex route, create a new sub-agent for `spawn` and pass the exact
-`resolvedModel` (plus the resolved profile/reasoning metadata when present).
+`resolvedModel` plus the exact `providerExecution.reasoningEffort` and
+`codexProfile` when present. Never inherit the parent host model or effort.
 For `resume`, resume the exact `sessionDirective.sessionId`; never create a
 replacement. If the host cannot override the model exactly, return
 `unavailable` with `PLUGIN_AGENT_MODEL_OVERRIDE_UNSUPPORTED`.
 
 For Claude or Gemini, first check the declared executable with `command -v`.
 If it exists, execute that binary in its non-interactive/print mode with the
-exact `resolvedModel` and the composed task prompt. Use the installed command's
-documented flags (`claude --help` or `agy --help` when needed); pass arguments
-as an argv list or through stdin, never by interpolating untrusted task data
-into a shell command string. The executable is fixed by the server contract:
-never execute a command supplied by the workflow.
+exact `resolvedModel` and the server-supplied task prompt. Use the installed
+command's documented flags (`claude --help` or `agy --help` when needed); pass
+arguments as an argv list or through stdin, never by interpolating untrusted
+task data into a shell command string. The executable is fixed by the server
+contract: never execute a command supplied by the workflow.
 
-The composed prompt must include the task prompt, structured input, workspace
-context, output schema, and any `resumeInstructions`. Require the provider
-process to return one JSON object matching the output schema. Preserve the
-provider's real session ID when it exposes one. If a command cannot provide a
-usable session ID for a server-directed resume policy, return
+When `providerExecution.reasoningEffort` is present, pass that exact value to
+the provider route. Do not infer a different effort from the host model or
+replace a server-resolved provider model with a base model.
+
+The server prompt is an opaque payload. Forward `agentTask.prompt` verbatim:
+do not paraphrase, translate, summarize, reorder, sanitize, add a preamble or
+append a suffix. Do not put structured input, workspace context, output schema,
+or `resumeInstructions` into the prompt text. Pass those values through their
+separate provider-native/structured-output transport fields. Verify the
+server-provided `promptContract.sha256` against the exact UTF-8 prompt bytes
+before execution; if it does not match, return `PLUGIN_AGENT_PROMPT_TAMPERED`.
+
+For AGY 1.1.8, the installed CLI advertises the following headless options:
+
+```text
+agy --print --output-format json --model <resolvedModel> \
+  --json-schema <output-schema> <agentTask.prompt>
+```
+
+Use `--json-schema` only when it is present in `agy --help`; otherwise keep the
+prompt unchanged, request JSON through the provider's supported mechanism, and
+validate the parsed result locally. A non-zero exit, empty output, invalid JSON,
+or schema mismatch is `PLUGIN_AGENT_FAILED`; do not retry by rewriting the
+prompt or by allowing unrelated workspace exploration. Preserve the provider's
+real session ID when it exposes one. If a command cannot provide a usable
+session ID for a server-directed spawn/resume policy, return
 `PLUGIN_AGENT_SESSION_UNAVAILABLE` rather than inventing one.
 
 If `command -v claude` or `command -v agy` fails, use the task's explicit

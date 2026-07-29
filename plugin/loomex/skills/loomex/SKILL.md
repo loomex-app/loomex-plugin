@@ -65,10 +65,13 @@ Read every reference needed for the user's request before calling its tools.
    [plugin-agent-providers.md](references/plugin-agent-providers.md), then
    execute the declared provider route on the local plugin host according to
    `agentTask.providerExecution` and the server-managed
-   `agentTask.sessionDirective`. Submit the result and actual `agentSession`
-   with `loomex_agent_task_respond`. `spawn` requires a new sub-agent; `resume`
-   requires the exact prior session ID. Report the actual provider/model used;
-   never claim that a Codex fallback executed Claude or Gemini.
+   `agentTask.sessionDirective`. Treat `agentTask.prompt` as a server-managed
+   opaque string and forward it exactly; never edit it to add context, translate
+   it, summarize it, or append output-format instructions. Submit the result
+   and actual `agentSession` with `loomex_agent_task_respond`. `spawn` requires
+   a new sub-agent; `resume` requires the exact prior session ID. Report the
+   actual provider/model used; never claim that a Codex fallback executed
+   Claude or Gemini.
 10. When a wait returns a typed human request, route by `inputSpec.inputType`:
    collect `text` in the Codex chat and submit it with `loomex_human_respond`;
    call `loomex_human_open` for `boolean`, `single_select`/`radio`, and

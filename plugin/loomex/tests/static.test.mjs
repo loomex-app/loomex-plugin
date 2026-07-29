@@ -105,6 +105,11 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(providers, /command -v claude/);
   assert.match(providers, /command -v agy/);
   assert.match(providers, /exact `resolvedModel`/);
+  assert.match(providers, /Forward `agentTask\.prompt` verbatim/);
+  assert.match(providers, /promptContract\.sha256/);
+  assert.match(providers, /--print --output-format json --model/);
+  assert.match(providers, /--json-schema <output-schema>/);
+  assert.match(providers, /PLUGIN_AGENT_PROMPT_TAMPERED/);
   assert.match(providers, /PLUGIN_AGENT_PROVIDER_NOT_INSTALLED/);
   assert.match(providers, /Do not silently substitute a different provider or model/);
 });
