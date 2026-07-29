@@ -5,6 +5,7 @@
 - Forward plugin agent prompts verbatim without mixing schemas or workspace context into the prompt.
 - Route AGY with the resolved model and fail closed when structured output or prompt integrity is invalid.
 - Preserve exact provider effort and Codex profile metadata for sub-agent execution.
+- Publish the 0.1.39 package through the standard main-branch release provenance gate.
 
 ## 0.1.38
 
