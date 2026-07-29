@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.45
+
+- Fix PostgreSQL-compatible Runner job leasing and stale pre-start job recovery.
+- Preserve safe `HOME`/`PATH` settings for provider CLIs running under launchd or systemd.
+- Keep retryable runner job-control validation failures from stopping the Runner service.
+
 ## 0.1.44
 
 - Keep workflow tasks open while non-terminal Runner jobs are executing.
