@@ -106,6 +106,10 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(providers, /Runner is the only process executor/);
   assert.match(providers, /exact `resolvedModel`/);
   assert.match(providers, /Forward `agentTask\.prompt` verbatim/);
+  assert.match(providers, /Backend-compiled, provider-ready prompt/);
+  assert.match(providers, /loomex\.provider-context\/v1/);
+  assert.match(providers, /never rebuild `agentTask\.prompt`/);
+  assert.match(providers, /exact compiled\s+`agentTask\.prompt`/);
   assert.match(providers, /promptContract\.sha256/);
   assert.match(providers, /exact `providerExecution\.argv`/);
   assert.match(providers, /`commandLine` is for audit/);
@@ -213,7 +217,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.47");
+  assert.equal(manifest.version, "0.1.48");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);
