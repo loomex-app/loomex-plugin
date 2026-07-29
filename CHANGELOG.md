@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.41
+
+- Forward the exact local binding workspace path through `workflow.run` and the Backend plugin-agent task.
+- Use the echoed runner workspace as the provider working directory and fail closed when it is unavailable.
+
 ## 0.1.40
 
 - Invoke AGY headless prompts with its documented `-p` flag and preserve the exact workflow prompt.
