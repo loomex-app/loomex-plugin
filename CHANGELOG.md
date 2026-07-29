@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.44
+
+- Keep workflow tasks open while non-terminal Runner jobs are executing.
+- Poll durable Runner jobs until terminal completion and preserve provider output handoff.
+
 ## 0.1.43
 
 - Dispatch Claude and Gemini provider commands through the local Runner and let Codex watch the durable Runner job.
