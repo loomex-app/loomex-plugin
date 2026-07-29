@@ -383,6 +383,13 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                     )?)
                 })
             }
+            "runner.job.get" => {
+                let job_id = required_string(params, "jobId")?;
+                self.with_client(|client| {
+                    serde_json::to_value(client.get_runner_job(&self.credential, job_id)?)
+                        .map_err(json_error)
+                })
+            }
             "binding.list" => {
                 self.with_client(|client| client.list_runner_binding_statuses_filtered(
                     &self.credential,

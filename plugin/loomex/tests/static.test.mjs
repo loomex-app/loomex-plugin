@@ -14,14 +14,14 @@ const tools = [
   "loomex_workflow_list", "loomex_workflow_show", "loomex_workflow_run",
   "loomex_run_list", "loomex_run_get", "loomex_run_wait", "loomex_run_cancel",
   "loomex_human_list", "loomex_human_open", "loomex_human_respond",
-  "loomex_agent_task_list", "loomex_agent_task_respond",
+  "loomex_agent_task_list", "loomex_agent_task_respond", "loomex_runner_job_get",
   "loomex_approval_list", "loomex_approval_decide",
   "loomex_runner_status", "loomex_runner_control", "loomex_runner_doctor", "loomex_runner_logs",
 ];
 
 test("skill exposes the settled MCP tool contract exactly", async () => {
   const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
-  assert.equal(tools.length, 33);
+  assert.equal(tools.length, 34);
   for (const name of tools) assert.match(skill, new RegExp(`\\b${name}\\b`), name);
   assert.doesNotMatch(skill, /loomex_organization_|loomex_human_request_/);
 });
@@ -102,8 +102,8 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(runner, /does not accept time-range or run-ID filters/);
   assert.match(runs, /resolvedProvider.*resolvedModel.*execution contract/);
   assert.match(runs, /provider-mismatched, model-mismatched/);
-  assert.match(providers, /command -v claude/);
-  assert.match(providers, /command -v agy/);
+  assert.match(providers, /loomex_runner_job_get/);
+  assert.match(providers, /Runner is the only process executor/);
   assert.match(providers, /exact `resolvedModel`/);
   assert.match(providers, /Forward `agentTask\.prompt` verbatim/);
   assert.match(providers, /promptContract\.sha256/);
@@ -116,7 +116,6 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(providers, /PLUGIN_AGENT_WORKSPACE_UNAVAILABLE/);
   assert.match(providers, /--json-schema <output-schema>/);
   assert.match(providers, /Do not run bare\s+`--print`/);
-  assert.match(providers, /last_conversations\.json/);
   assert.match(providers, /--conversation <sessionId>/);
   assert.match(providers, /PLUGIN_AGENT_PROMPT_TAMPERED/);
   assert.match(providers, /PLUGIN_AGENT_PROVIDER_NOT_INSTALLED/);
