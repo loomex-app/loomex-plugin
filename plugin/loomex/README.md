@@ -27,12 +27,13 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.46/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.47/install-codex.sh | sh
 ```
 
-The `0.1.46` release keeps the durable Runner control session alive while a
-provider command runs, so long-running Gemini or Claude jobs can renew their
-lease and return their terminal structured output.
+The `0.1.47` release runs provider commands from their declared workspace
+directory while keeping the durable Runner control session alive, so long-running
+Gemini or Claude jobs can renew their lease and return their terminal structured
+output.
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
 releases and upgrades come from `loomex-app/loomex-plugin`; running the command
