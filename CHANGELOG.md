@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.46
+
+- Keep the durable Runner control session fresh while provider commands run, so a long-running Gemini or Claude command can renew its lease and submit its terminal result.
+
 ## 0.1.45
 
 - Fix PostgreSQL-compatible Runner job leasing and stale pre-start job recovery.
