@@ -15,11 +15,20 @@ Read these fields before executing anything:
 - `agentTask.providerExecution` for the primary route, command, and explicit
   fallback responses.
 - `agentTask.sessionDirective` for the required `spawn`/`resume` action.
+- `agentTask.runnerWorkspacePath` for the exact local workspace path sent by the
+  Plugin and echoed by Backend. This is the only valid provider process `cwd`.
 
 If an older task has no `providerExecution`, derive only this compatibility
 mapping: `codex`/`openai` → Codex sub-agent, `claude` → `claude`, and
 `gemini` → `agy`. Do not invent a model or fallback that is not present in the
 task.
+
+The server execution workspace and the local runner workspace are different
+hosts. Use `agentTask.runnerWorkspacePath` exactly as returned by Backend for
+the provider process `cwd`. Never substitute `agentTask.workspace.absolutePath`,
+the current Codex directory, or another locally selected directory. If the
+echoed path is missing or inaccessible, return `unavailable` with
+`PLUGIN_AGENT_WORKSPACE_UNAVAILABLE`; do not silently fall back.
 
 ## Route matrix
 

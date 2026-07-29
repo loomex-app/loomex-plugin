@@ -108,6 +108,8 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(providers, /Forward `agentTask\.prompt` verbatim/);
   assert.match(providers, /promptContract\.sha256/);
   assert.match(providers, /agy -p <agentTask\.prompt> --output-format json --model/);
+  assert.match(providers, /agentTask\.runnerWorkspacePath/);
+  assert.match(providers, /PLUGIN_AGENT_WORKSPACE_UNAVAILABLE/);
   assert.match(providers, /--json-schema <output-schema>/);
   assert.match(providers, /Do not run bare\s+`--print`/);
   assert.match(providers, /last_conversations\.json/);

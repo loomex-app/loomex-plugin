@@ -271,6 +271,7 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                             workflow_id,
                             binding_id,
                             inputs,
+                            workspace_path: self.workspace_path.as_deref(),
                             session_id,
                             version,
                             execution_mode: Some("plugin"),
