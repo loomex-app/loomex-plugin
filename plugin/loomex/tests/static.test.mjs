@@ -107,7 +107,11 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(providers, /exact `resolvedModel`/);
   assert.match(providers, /Forward `agentTask\.prompt` verbatim/);
   assert.match(providers, /promptContract\.sha256/);
+  assert.match(providers, /exact `providerExecution\.argv`/);
+  assert.match(providers, /`commandLine` is for audit/);
   assert.match(providers, /agy -p <agentTask\.prompt> --output-format json --model/);
+  assert.match(providers, /--dangerously-skip-permissions/);
+  assert.match(providers, /response\.structured_output/);
   assert.match(providers, /agentTask\.runnerWorkspacePath/);
   assert.match(providers, /PLUGIN_AGENT_WORKSPACE_UNAVAILABLE/);
   assert.match(providers, /--json-schema <output-schema>/);
