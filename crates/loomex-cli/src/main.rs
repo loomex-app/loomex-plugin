@@ -5550,7 +5550,10 @@ impl RunnerServiceOptions {
             binary_path: env::current_exe().unwrap_or_else(|_| PathBuf::from("loomex")),
             config_path: cli_config_path(),
             profile: options.profile.clone(),
-            log_path: None,
+            // Keep daemon stderr durable. Without this, launchd only reports a
+            // generic exit status and a Runner failure before its first job
+            // event is impossible to diagnose.
+            log_path: Some(default_log_path()),
             output_path: None,
             uninstall_output_path: None,
             dry_run: false,
@@ -6101,7 +6104,17 @@ fn run_runner_control_service_loop<C: ManagementApiClient>(
         }
         match result {
             Ok(()) => return Ok(()),
-            Err(err) if is_terminal_service_runtime_error(&err) => return Err(err),
+            Err(err) if is_terminal_service_runtime_error(&err) => {
+                let _ = append_runner_service_log(
+                    log_path,
+                    credential,
+                    "error",
+                    "runner.service.stopped",
+                    "runner control service stopped on a terminal error",
+                    json!({"error": err}),
+                );
+                return Err(err);
+            }
             Err(err) => {
                 let retry_delay = backoff.next_retry_delay();
                 let _ = append_runner_service_log(
@@ -7587,10 +7600,8 @@ fn is_terminal_service_runtime_error(error: &str) -> bool {
         || code.contains("UNAUTHORIZED")
         || code.contains("PROTOCOL")
         || code.contains("VERSION")
-        || code.contains("INVALID")
         || code.contains("EXPIRED")
         || code.contains("STREAM_CREDENTIAL")
-        || code.contains("OUT_OF_ORDER")
 }
 
 #[allow(dead_code)]
@@ -11627,6 +11638,19 @@ mod tests {
 
         assert_eq!(Duration::from_secs(1), backoff.next_retry_delay());
         assert_eq!(Duration::from_secs(2), backoff.next_retry_delay());
+    }
+
+    #[test]
+    fn job_or_response_invalid_errors_do_not_stop_the_runner_service() {
+        assert!(!is_terminal_service_runtime_error(
+            "RUNNER_JOB_LEASE_INVALID: lease ownership changed"
+        ));
+        assert!(!is_terminal_service_runtime_error(
+            "MANAGEMENT_RESPONSE_INVALID: invalid response envelope"
+        ));
+        assert!(is_terminal_service_runtime_error(
+            "AUTH_TOKEN_EXPIRED: credentials expired"
+        ));
     }
 
     #[test]

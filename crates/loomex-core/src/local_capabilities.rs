@@ -1033,9 +1033,19 @@ impl LocalCapabilityExecutor {
     }
 
     fn filtered_env(&self, env: BTreeMap<String, String>) -> BTreeMap<String, String> {
-        self.security
-            .child_environment
-            .filter_env(env, &self.secret_env_names)
+        // `shell.exec` deliberately uses `env_clear` before spawning a child so
+        // arbitrary credentials from the Runner process never leak into a job.
+        // Keep the small, non-secret execution baseline that a user-level CLI
+        // needs under launchd/systemd though. In particular, a LaunchAgent's
+        // PATH does not normally include ~/.local/bin and an unset HOME makes
+        // provider CLIs unable to read their own user configuration.
+        let mut filtered = default_child_environment();
+        filtered.extend(
+            self.security
+                .child_environment
+                .filter_env(env, &self.secret_env_names),
+        );
+        filtered
     }
 
     fn validate_git_scope(&self, pathspecs: Option<&[String]>) -> CoreResult<()> {
@@ -2310,21 +2320,70 @@ fn expanded_output_limit(value: Option<usize>) -> CoreResult<usize> {
     Ok(value)
 }
 
-fn command_env_with_path() -> BTreeMap<String, String> {
+fn default_child_environment() -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
-    if let Ok(path) = std::env::var("PATH") {
+    for key in [
+        "HOME", "USER", "LOGNAME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            env.insert(key.to_string(), value);
+        }
+    }
+    if let Some(path) = command_search_path(
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    ) {
         env.insert("PATH".to_string(), path);
     }
     env
 }
 
+fn command_env_with_path() -> BTreeMap<String, String> {
+    default_child_environment()
+}
+
 fn command_env_with_path_and(mut env: BTreeMap<String, String>) -> BTreeMap<String, String> {
     if !env.contains_key("PATH") {
-        if let Ok(path) = std::env::var("PATH") {
+        if let Some(path) = command_search_path(
+            std::env::var_os("PATH").as_deref(),
+            std::env::var_os("HOME").as_deref(),
+        ) {
             env.insert("PATH".to_string(), path);
         }
     }
     env
+}
+
+fn command_search_path(
+    inherited_path: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+) -> Option<String> {
+    let mut paths = inherited_path
+        .map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if let Some(home) = home {
+        let home = PathBuf::from(home);
+        paths.extend([home.join(".local/bin"), home.join(".cargo/bin")]);
+    }
+    paths.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+    ]);
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.iter().any(|candidate| candidate == &path) {
+            unique.push(path);
+        }
+    }
+    std::env::join_paths(unique)
+        .ok()
+        .and_then(|path| path.into_string().ok())
 }
 
 fn validate_browser_name(browser: &str) -> CoreResult<()> {
@@ -2920,6 +2979,58 @@ mod tests {
         assert_eq!(0, success.exit_code);
         assert_eq!("ok", success.artifacts.stdout);
         assert_eq!(7, failure.exit_code);
+    }
+
+    #[test]
+    fn command_search_path_includes_user_cli_locations() {
+        let path = command_search_path(
+            Some(std::ffi::OsStr::new("/usr/bin")),
+            Some(std::ffi::OsStr::new("/tmp/loomex-home")),
+        )
+        .unwrap();
+        let entries = std::env::split_paths(&std::ffi::OsString::from(path)).collect::<Vec<_>>();
+
+        assert!(entries.contains(&PathBuf::from("/tmp/loomex-home/.local/bin")));
+        assert!(entries.contains(&PathBuf::from("/tmp/loomex-home/.cargo/bin")));
+        assert!(entries.contains(&PathBuf::from("/usr/bin")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_exec_finds_a_provider_in_user_local_bin() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_workspace("shell_user_local_bin");
+        let home = root.join("home");
+        let provider_dir = home.join(".local/bin");
+        fs::create_dir_all(&provider_dir).unwrap();
+        let provider = provider_dir.join("agy");
+        fs::write(&provider, "#!/bin/sh\nprintf provider-ok\n").unwrap();
+        let mut permissions = fs::metadata(&provider).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&provider, permissions).unwrap();
+        let mut env = BTreeMap::new();
+        env.insert("HOME".to_string(), home.to_string_lossy().to_string());
+        env.insert(
+            "PATH".to_string(),
+            command_search_path(
+                Some(std::ffi::OsStr::new("/usr/bin")),
+                Some(home.as_os_str()),
+            )
+            .unwrap(),
+        );
+
+        let output = LocalCapabilityExecutor::new(&root)
+            .unwrap()
+            .shell_exec(ShellExecInput {
+                command: vec!["agy".to_string()],
+                env,
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(0, output.exit_code);
+        assert_eq!("provider-ok", output.artifacts.stdout);
     }
 
     #[test]
