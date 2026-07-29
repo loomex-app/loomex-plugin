@@ -12,8 +12,8 @@ Read these fields before executing anything:
 - `agentTask.requestedProvider` and `requestedModel` for the workflow choice.
 - `agentTask.resolvedProvider` and `resolvedModel` for the exact execution
   target. Use `resolvedModel`, never the parent Codex model or `inherit`.
-- `agentTask.providerExecution` for the primary route, command, and explicit
-  fallback responses.
+- `agentTask.providerExecution` for the primary route, the server-built
+  executable argv, output extraction contract, and explicit fallback responses.
 - `agentTask.sessionDirective` for the required `spawn`/`resume` action.
 - `agentTask.runnerWorkspacePath` for the exact local workspace path sent by the
   Plugin and echoed by Backend. This is the only valid provider process `cwd`.
@@ -38,20 +38,20 @@ echoed path is missing or inaccessible, return `unavailable` with
 | `claude` | Execute the installed `claude` CLI | `command -v claude` | Declared `codex_sub_agent`, with the exact model |
 | `gemini` | Execute the installed `agy` CLI | `command -v agy` | Declared `codex_sub_agent`, with the exact model |
 
-For the Codex route, create a new sub-agent for `spawn` and pass the exact
-`resolvedModel` plus the exact `providerExecution.reasoningEffort` and
+For the Codex route, create a new sub-agent for `spawn` and pass the exact `resolvedModel`
+plus the exact `providerExecution.reasoningEffort` and
 `codexProfile` when present. Never inherit the parent host model or effort.
 For `resume`, resume the exact `sessionDirective.sessionId`; never create a
 replacement. If the host cannot override the model exactly, return
 `unavailable` with `PLUGIN_AGENT_MODEL_OVERRIDE_UNSUPPORTED`.
 
 For Claude or Gemini, first check the declared executable with `command -v`.
-If it exists, execute that binary in its non-interactive/print mode with the
-exact `resolvedModel` and the server-supplied task prompt. Use the installed
-command's documented flags (`claude --help` or `agy --help` when needed); pass
-arguments as an argv list or through stdin, never by interpolating untrusted
-task data into a shell command string. The executable is fixed by the server
-contract: never execute a command supplied by the workflow.
+If it exists, execute the exact `providerExecution.argv` array produced by the
+Backend, in `providerExecution.cwd`. Do not reconstruct, reorder, quote,
+remove, or append arguments. The executable is fixed by the server contract:
+never execute a command supplied by the workflow. `commandLine` is for audit
+display only; use `argv` for execution and never interpolate it into a shell
+string.
 
 When `providerExecution.reasoningEffort` is present, pass that exact value to
 the provider route. Do not infer a different effort from the host model or
@@ -71,10 +71,21 @@ The prompt must be supplied to the `-p`/`--prompt` flag. Do not run bare
 the former executes with no prompt and the latter can terminate with a generic
 provider error.
 
+The Backend-generated AGY argv has this exact shape (the `--effort` pair is
+present when `providerExecution.reasoningEffort` is present):
+
 ```text
 agy -p <agentTask.prompt> --output-format json --model <resolvedModel> \
+  [--effort <reasoning-effort>] --dangerously-skip-permissions \
   --json-schema <output-schema>
 ```
+
+The canonical executable form is `providerExecution.argv`, not this display
+form. `--dangerously-skip-permissions` is part of the server-owned provider
+command so AGY can run headlessly without waiting for a permission prompt. It
+must not be removed or replaced with a different permission mode.
+For a `resume` directive, Backend places `--conversation <sessionId>` before
+`-p` in that same argv; use it exactly and return the same session ID.
 
 Use `--json-schema` only when it is present in `agy --help`; otherwise keep the
 prompt unchanged, request JSON through the provider's supported mechanism, and
@@ -83,6 +94,15 @@ or schema mismatch is `PLUGIN_AGENT_FAILED`; do not retry by rewriting the
 prompt or by allowing unrelated workspace exploration. Include the exit status
 and sanitized provider stderr in the failure message when available so the
 actual provider failure is diagnosable.
+
+For AGY, parse stdout as the provider JSON envelope. When
+`providerExecution.structuredOutput.responsePath` is
+`response.structured_output`, use exactly that nested object as the response
+`output`; do not return the whole AGY envelope, its textual `response`, usage,
+or metadata. The Backend validates that object against
+`providerExecution.structuredOutput.schema` and the workflow node output
+schema. If the path is missing or is not an object, return
+`PLUGIN_AGENT_FAILED` with the provider envelope and stderr details.
 
 AGY does not guarantee that the JSON response contains a conversation ID. For
 `spawn`, capture the workspace-keyed conversation ID created by the command
@@ -106,15 +126,15 @@ Submit exactly one response through `loomex_agent_task_respond`:
 ```json
 {
   "status": "completed",
-  "output": {"response_text": "..."},
-  "provider": "claude",
-  "model": "claude-sonnet",
+  "output": {"questions": []},
+  "provider": "gemini",
+  "model": "gemini-3.5-flash-medium",
   "agentSession": {
     "id": "actual-provider-session-id",
     "host": "codex",
     "action": "spawned",
-    "provider": "claude",
-    "model": "claude-sonnet"
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-medium"
   }
 }
 ```
