@@ -56,20 +56,32 @@ separate provider-native/structured-output transport fields. Verify the
 server-provided `promptContract.sha256` against the exact UTF-8 prompt bytes
 before execution; if it does not match, return `PLUGIN_AGENT_PROMPT_TAMPERED`.
 
-For AGY 1.1.8, the installed CLI advertises the following headless options:
+For AGY 1.1.8, the installed CLI advertises the following headless options.
+The prompt must be supplied to the `-p`/`--prompt` flag. Do not run bare
+`--print` and do not append the prompt as an undocumented positional argument;
+the former executes with no prompt and the latter can terminate with a generic
+provider error.
 
 ```text
-agy --print --output-format json --model <resolvedModel> \
-  --json-schema <output-schema> <agentTask.prompt>
+agy -p <agentTask.prompt> --output-format json --model <resolvedModel> \
+  --json-schema <output-schema>
 ```
 
 Use `--json-schema` only when it is present in `agy --help`; otherwise keep the
 prompt unchanged, request JSON through the provider's supported mechanism, and
 validate the parsed result locally. A non-zero exit, empty output, invalid JSON,
 or schema mismatch is `PLUGIN_AGENT_FAILED`; do not retry by rewriting the
-prompt or by allowing unrelated workspace exploration. Preserve the provider's
-real session ID when it exposes one. If a command cannot provide a usable
-session ID for a server-directed spawn/resume policy, return
+prompt or by allowing unrelated workspace exploration. Include the exit status
+and sanitized provider stderr in the failure message when available so the
+actual provider failure is diagnosable.
+
+AGY does not guarantee that the JSON response contains a conversation ID. For
+`spawn`, capture the workspace-keyed conversation ID created by the command
+from AGY's documented cache at
+`~/.gemini/antigravity-cli/cache/last_conversations.json`; compare it with the
+snapshot taken before execution and require a new non-empty ID. For `resume`,
+pass the exact server session ID with `--conversation <sessionId>` before the
+`-p` flag and return that same ID. If no usable ID is exposed, return
 `PLUGIN_AGENT_SESSION_UNAVAILABLE` rather than inventing one.
 
 If `command -v claude` or `command -v agy` fails, use the task's explicit

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.40
+
+- Invoke AGY headless prompts with its documented `-p` flag and preserve the exact workflow prompt.
+- Recover AGY conversation IDs from its workspace cache for strict plugin-agent session continuity.
+- Surface provider exit status and sanitized stderr when a local provider fails.
+
 ## 0.1.39
 
 - Forward plugin agent prompts verbatim without mixing schemas or workspace context into the prompt.
