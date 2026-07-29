@@ -27,10 +27,10 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.43/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.44/install-codex.sh | sh
 ```
 
-The `0.1.43` release includes Runner-owned provider command execution:
+The `0.1.44` release includes Runner-owned provider command execution:
 workflow provider commands use the exact mapped model, effort, schema, prompt,
 and local workspace selected by the active binding. Codex watches the durable
 Runner job and returns its structured provider output to the Backend.

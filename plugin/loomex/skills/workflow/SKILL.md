@@ -18,6 +18,11 @@ Browse and start only Loomex workflows with execution model `plugin`. Read [work
   local binding to Backend. Do not ask the user for a second workspace path or
   override the binding path in workflow inputs.
 - Treat the returned execution ID and status as authoritative. A queued or submitted response is not completion; continue with bounded `loomex_run_wait` calls and recover uncertain state with `loomex_run_get`.
+- Keep the current task open while the execution is non-terminal. Do not return
+  a final "the workflow is running" message after one wait: continue the
+  bounded wait/poll cycle in this task until the run reaches a terminal state,
+  requires human input, or an explicit unrecoverable error is returned. A
+  provider job that is queued or running is not a reason to close the task.
 - Never pass credentials, tokens, or unrelated environment variables as inputs.
   Never execute workflow nodes with shell commands. The only permitted local
   command execution is the provider command explicitly required by a pending
