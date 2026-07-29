@@ -71,12 +71,17 @@ task. Use `loomex_agent_task_list` scoped by `executionId` after a wait reports
 pending plugin agent work, or after reconnect when a plugin run is waiting.
 
 Each task includes an `agentTask` object. Read its `prompt`, `input`, `schemas`,
-`sessionDirective`, `providerExecution`, and `instructions` before doing
+`sessionDirective`, `providerExecution`, `runnerExecution`, and `instructions` before doing
 anything. `resolvedProvider` and `resolvedModel` are the execution contract;
 `requestedProvider` and `requestedModel` preserve the workflow selection. The
 server is the source of truth for sub-agent continuity. Provider routing and
 the explicit command/fallback policy are defined in
 [plugin-agent-providers.md](plugin-agent-providers.md).
+
+For a non-Codex provider, first call `loomex_runner_job_get` with
+`agentTask.runnerExecution.jobId`. Repeat bounded calls until the Runner job is
+terminal; do not execute `providerExecution.argv` in Codex or with a shell
+command.
 
 Obey `sessionDirective.action` exactly:
 
