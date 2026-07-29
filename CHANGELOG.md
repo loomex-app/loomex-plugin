@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.47
+
+- Execute Runner `shell.exec` jobs in their explicitly declared, binding-contained working directory.
+- Preserve the provider command working directory from Backend through the Runner job payload.
+
 ## 0.1.46
 
 - Keep the durable Runner control session fresh while provider commands run, so a long-running Gemini or Claude command can renew its lease and submit its terminal result.

@@ -6909,12 +6909,25 @@ fn execute_local_capability_job(
     supplied_cancellation: Option<&ShellCancellationToken>,
 ) -> Result<Value, String> {
     let payload = job.get("payload").cloned().unwrap_or_else(|| json!({}));
-    let requested_path = payload.get("path").and_then(Value::as_str).unwrap_or(".");
-    authorize_runner_path(resolved, session_id, capability, requested_path)?;
+    let working_directory = if capability == "shell.exec" {
+        runner_job_working_directory(&payload)?
+    } else {
+        payload
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or(".")
+            .to_string()
+    };
+    authorize_runner_path(resolved, session_id, capability, &working_directory)?;
     let executor = LocalCapabilityExecutor::new(runner_workspace_root(resolved)?)
         .map_err(format_core_error)?;
     if capability == "shell.exec" {
-        let input: ShellExecInput = serde_json::from_value(payload)
+        let mut shell_payload = payload;
+        shell_payload
+            .as_object_mut()
+            .ok_or_else(|| "RUNNER_JOB_PAYLOAD_INVALID: payload must be an object".to_string())?
+            .remove("cwd");
+        let input: ShellExecInput = serde_json::from_value(shell_payload)
             .map_err(|err| format!("RUNNER_JOB_PAYLOAD_INVALID: {err}"))?;
         let cancellation = supplied_cancellation.cloned().unwrap_or_default();
         if job.get("status").and_then(Value::as_str) == Some("canceling")
@@ -6926,9 +6939,10 @@ fn execute_local_capability_job(
             cancellation.cancel();
         }
         let output = executor
-            .shell_exec_with_cancel(input, &cancellation)
+            .shell_exec_with_working_directory(input, &working_directory, &cancellation)
             .map_err(format_core_error)?;
         return Ok(json!({
+            "cwd": working_directory,
             "exitCode": output.exit_code,
             "durationMs": output.duration_ms,
             "stdoutRef": output.stdout_ref,
@@ -6948,6 +6962,19 @@ fn execute_local_capability_job(
         })
         .map_err(format_core_error)?;
     serde_json::from_str(&result.output).map_err(|err| format!("RUNNER_JOB_RESULT_INVALID: {err}"))
+}
+
+fn runner_job_working_directory(payload: &Value) -> Result<String, String> {
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .unwrap_or(".")
+        .trim();
+    if cwd.is_empty() {
+        return Err("RUNNER_JOB_CWD_INVALID: cwd must not be empty".to_string());
+    }
+    validate_runner_relative_path(cwd).map_err(|err| format!("RUNNER_JOB_CWD_INVALID: {err}"))?;
+    Ok(cwd.to_string())
 }
 
 fn runner_workspace_root(resolved: &loomex_core::ResolvedCliSettings) -> Result<PathBuf, String> {
@@ -15774,6 +15801,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cancelled["cancelled"], true);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_control_shell_job_uses_declared_workspace_cwd() {
+        let workspace = temp_workspace_path("runner-shell-cwd");
+        let _ = fs::remove_dir_all(&workspace);
+        fs::create_dir_all(workspace.join("project")).unwrap();
+        let mut resolved = service_resolved_settings();
+        resolved.workspace_path = Some(workspace.display().to_string());
+
+        let result = execute_runner_control_job_for_session(
+            &resolved,
+            "session-shell-cwd",
+            &json!({
+                "kind": "shell.exec",
+                "payload": {
+                    "command": ["sh", "-c", "basename \"$PWD\""],
+                    "cwd": "project",
+                    "timeout_seconds": 10,
+                    "max_output_bytes": 1024
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(0, result["exitCode"]);
+        assert_eq!("project", result["stdout"].as_str().unwrap().trim());
+        assert_eq!("project", result["cwd"]);
         let _ = fs::remove_dir_all(workspace);
     }
 
