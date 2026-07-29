@@ -27,11 +27,12 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.41/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.42/install-codex.sh | sh
 ```
 
-The `0.1.41` release includes the provider workspace-path contract: workflow
-provider commands use the exact local workspace selected by the active binding.
+The `0.1.42` release includes the server-built provider command contract:
+workflow provider commands use the exact mapped model, effort, schema, prompt,
+and local workspace selected by the active binding.
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
 releases and upgrades come from `loomex-app/loomex-plugin`; running the command

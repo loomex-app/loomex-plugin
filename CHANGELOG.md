@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.42
+
+- Build provider-specific command argv on the Backend and execute it unchanged on the Plugin host.
+- Run AGY headlessly with the mapped model, effort, JSON schema, and structured-output extraction contract.
+- Validate plugin-agent output against the workflow node schema before resuming execution.
+
 ## 0.1.41
 
 - Forward the exact local binding workspace path through `workflow.run` and the Backend plugin-agent task.
