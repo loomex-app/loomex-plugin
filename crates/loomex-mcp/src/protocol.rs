@@ -78,7 +78,7 @@ impl Server {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
             "serverInfo": {"name": "loomex", "title": "Loomex Local Workflow Runner", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "For every Loomex request, first call loomex_setup_status and follow recommendedNextAction. For setup.plan, immediately call read-only loomex_setup_plan. Ask approval only before loomex_setup_apply. For binding.create after an identity mismatch, show the exact repair and ask before loomex_binding_create; never rewrite identity silently. Complete auth, scope, and binding, then resume the original request. Never require a special setup phrase."
+            "instructions": "For every Loomex request, first call loomex_setup_status and follow recommendedNextAction. For setup.plan, immediately call read-only loomex_setup_plan. Ask approval only before loomex_setup_apply. For binding mismatch, show repair; ask before loomex_binding_create; never rewrite identity. Complete auth, scope, binding; resume the original request. Never require a special setup phrase. Plugin agents are internal: Claude/Gemini Runner completes automatically; wait for input, approval, or terminal state."
         }))
     }
 
@@ -230,15 +230,45 @@ impl Server {
         };
         debug_assert!(tools::validate_output(&definition.output_schema, &envelope).is_ok());
         let is_error = envelope.get("ok") == Some(&Value::Bool(false));
-        let text = serde_json::to_string(&envelope).map_err(|error| {
-            RpcError::new(-32603, format!("could not encode tool result: {error}"))
-        })?;
+        let text = tool_result_text(name, &envelope)?;
         Ok(json!({
             "content": [{"type":"text", "text":text}],
             "structuredContent": envelope,
             "isError": is_error
         }))
     }
+}
+
+fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
+    let provider_task = envelope
+        .pointer("/data/humanRequests")
+        .and_then(Value::as_array)
+        .and_then(|requests| {
+            requests.iter().find(|request| {
+                request
+                    .pointer("/agentTask/runnerExecution/jobId")
+                    .and_then(Value::as_str)
+                    .is_some()
+                    && matches!(
+                        request
+                            .pointer("/agentTask/resolvedProvider")
+                            .and_then(Value::as_str),
+                        Some("gemini" | "claude")
+                    )
+            })
+        })
+        .is_some();
+    let waiting_provider_task = envelope
+        .pointer("/data/humanRequest/type")
+        .and_then(Value::as_str)
+        == Some("plugin_agent");
+    if (name == "loomex_agent_task_list" && provider_task)
+        || (name == "loomex_run_wait" && waiting_provider_task)
+    {
+        return Ok("Internal provider work is queued or running on the durable Runner. This is not a question for the user. Do not end this task, ask the user to continue, expose the internal task ID, execute the command in Codex, or submit the normal result. Continue bounded loomex_run_wait calls for the same execution until Loomex returns a real human-input/approval request or a terminal state.".to_string());
+    }
+    serde_json::to_string(envelope)
+        .map_err(|error| RpcError::new(-32603, format!("could not encode tool result: {error}")))
 }
 
 fn normalize_daemon_arguments(tool: &str, mut arguments: Value) -> Value {
@@ -610,6 +640,30 @@ mod tests {
             human_request
         );
         assert_eq!(response["result"]["isError"], false);
+    }
+
+    #[test]
+    fn provider_agent_task_result_instructs_the_host_to_keep_waiting() {
+        let text = tool_result_text(
+            "loomex_agent_task_list",
+            &success_envelope(
+                "loomex_agent_task_list",
+                "request-1".to_string(),
+                json!({
+                    "humanRequests": [{
+                        "agentTask": {
+                            "resolvedProvider": "gemini",
+                            "runnerExecution": {"jobId": "job-1"}
+                        }
+                    }]
+                }),
+            ),
+        )
+        .unwrap();
+
+        assert!(text.contains("not a question for the user"));
+        assert!(text.contains("Do not end this task"));
+        assert!(text.contains("Continue bounded loomex_run_wait"));
     }
 
     #[tokio::test]

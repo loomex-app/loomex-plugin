@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.50
+
+- Accept both successful AGY structured-output envelope shapes before validating and resuming the provider node.
+- Mark Claude/Gemini plugin-agent work as internal in the MCP contract and workflow skill, keeping the chat in bounded follow-up until a real human decision or terminal result.
+
 ## 0.1.49
 
 - Let Backend consume terminal Claude/Gemini Runner results, validate the provider structured output and workspace scope, and enqueue the durable workflow resume without requiring a Codex chat to submit it.
