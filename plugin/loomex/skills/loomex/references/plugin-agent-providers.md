@@ -92,8 +92,9 @@ Do not run bare `--print`; do not append the prompt as an undocumented
 positional argument. The former executes with no prompt and the latter can
 terminate with a generic provider error.
 
-The Backend-generated AGY argv has this exact shape (the `--effort` pair is
-present when `providerExecution.reasoningEffort` is present):
+The Backend-generated AGY argv has this exact shape. The model is always the
+base model identifier; the optional `--effort` pair carries the independent
+reasoning selection:
 
 ```text
 agy -p <agentTask.prompt> --add-dir <runnerWorkspacePath> \
@@ -164,13 +165,15 @@ Submit exactly one response through `loomex_agent_task_respond`:
   "status": "completed",
   "output": {"questions": []},
   "provider": "gemini",
-  "model": "gemini-3.5-flash-medium",
+  "model": "gemini-3.6-flash",
+  "reasoningEffort": "medium",
   "agentSession": {
     "id": "actual-provider-session-id",
     "host": "codex",
     "action": "spawned",
     "provider": "gemini",
-    "model": "gemini-3.5-flash-medium"
+    "model": "gemini-3.6-flash",
+    "reasoningEffort": "medium"
   }
 }
 ```
