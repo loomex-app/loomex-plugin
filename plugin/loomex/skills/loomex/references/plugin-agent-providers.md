@@ -63,7 +63,9 @@ You may inspect a provider job with `loomex_runner_job_get` using exactly
 continuation depend on a Codex chat polling it. Keep following the run with
 bounded `loomex_run_wait` calls. A pause is actionable only when the server
 returns a real human-input or approval request; a queued/running provider job
-is not a request for the user to say “continue”.
+is not a request for the user to say “continue”. Do not end the Codex task at
+this point: keep bounded waits running until Loomex returns a real human-input
+or approval request, or a terminal execution state.
 
 When `providerExecution.reasoningEffort` is present, pass that exact value to
 the provider route. Do not infer a different effort from the host model or
@@ -117,8 +119,9 @@ the exit status and sanitized Runner/provider stderr in the failure message when
 available.
 
 Backend parses AGY/Claude stdout as the provider JSON envelope and follows the
-provider-specific `providerExecution.structuredOutput.responsePath`: AGY uses
-`response.structured_output`, while Claude uses root `structured_output`.
+server-declared compatible structured-output paths. AGY accepts both
+`response.structured_output` and root `structured_output` because successful
+AGY turns can emit either envelope shape; Claude uses root `structured_output`.
 It uses exactly that object as the node output; it never returns the whole
 provider envelope, textual `response`, usage, or metadata. Backend validates it against
 `providerExecution.structuredOutput.schema` and the workflow node output

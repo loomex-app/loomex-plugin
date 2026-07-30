@@ -116,6 +116,8 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(providers, /agy -p <agentTask\.prompt> --output-format json --model/);
   assert.match(providers, /--dangerously-skip-permissions/);
   assert.match(providers, /response\.structured_output/);
+  assert.match(providers, /root `structured_output`/);
+  assert.match(providers, /Do not end the Codex task/);
   assert.match(providers, /agentTask\.runnerWorkspacePath/);
   assert.match(providers, /PLUGIN_AGENT_WORKSPACE_UNAVAILABLE/);
   assert.match(providers, /--json-schema <output-schema>/);
@@ -217,7 +219,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.49");
+  assert.equal(manifest.version, "0.1.50");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);
