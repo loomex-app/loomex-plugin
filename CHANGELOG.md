@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.51
+
+- Confine Claude and AGY provider processes to the selected Runner workspace at the OS process boundary, with only their dedicated runtime state writable outside it.
+- Remove AGY's scratch-directory sandbox flag so workflow changes are applied in the selected workspace.
+
 ## 0.1.50
 
 - Accept both successful AGY structured-output envelope shapes before validating and resuming the provider node.
