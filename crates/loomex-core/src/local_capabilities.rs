@@ -2361,38 +2361,85 @@ fn provider_write_confined_command(command_argv: &[String], cwd: &Path) -> CoreR
             "macOS sandbox-exec is unavailable; refusing to run a provider without workspace confinement",
         ));
     }
-    let workspace = cwd
+    let workspace_path = cwd
         .canonicalize()
         .map_err(fs_error("WORKSPACE_PATH_RESOLVE_FAILED"))?;
-    let workspace = sandbox_profile_path(&workspace)?;
-    let provider_state_rules = provider_state_write_rules(&command_argv[0])?;
+    let execution_argv = provider_workspace_command_argv(command_argv, &workspace_path)?;
+    let workspace = sandbox_profile_path(&workspace_path)?;
+    let provider_state_policy = provider_state_write_policy(&execution_argv[0])?;
     // A provider's cwd is only a convenience. The sandbox is the actual
     // boundary inherited by all child processes: reads and network access are
     // available for CLI/runtime compatibility, while writes are allowed only
     // inside the selected Runner workspace plus the provider's narrowly scoped
-    // runtime state directory (credentials and conversation metadata).
+    // runtime state directory (credentials and conversation metadata). AGY's
+    // own scratch directory is explicitly denied: it is a second workspace,
+    // not provider state, and allowing it would bypass the selected binding.
     let profile = format!(
-        "(version 1)\n(deny default)\n(import \"system.sb\")\n(allow file-read*)\n(allow process*)\n(allow mach-lookup)\n(allow network-outbound)\n(allow network-inbound)\n(allow file-write* (subpath \"{workspace}\"){provider_state_rules})"
+        "(version 1)\n(deny default)\n(import \"system.sb\")\n(allow file-read*)\n(allow process*)\n(allow mach-lookup)\n(allow network-outbound)\n(allow network-inbound)\n(allow file-write* (subpath \"{workspace}\")){provider_state_policy}"
     );
     let mut sandboxed = Command::new(SANDBOX_EXECUTABLE);
     sandboxed
         .arg("-p")
         .arg(profile)
-        .arg(&command_argv[0])
-        .args(&command_argv[1..]);
+        .arg(&execution_argv[0])
+        .args(&execution_argv[1..]);
     Ok(sandboxed)
 }
 
 #[cfg(target_os = "macos")]
-fn provider_state_write_rules(command: &str) -> CoreResult<String> {
+fn provider_workspace_command_argv(
+    command_argv: &[String],
+    workspace: &Path,
+) -> CoreResult<Vec<String>> {
+    let provider = Path::new(&command_argv[0])
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if provider != "agy" || command_argv.iter().any(|argument| argument == "--add-dir") {
+        return Ok(command_argv.to_vec());
+    }
+    let prompt_index = command_argv
+        .iter()
+        .position(|argument| argument == "-p" || argument == "--prompt")
+        .ok_or_else(|| {
+            CoreError::new(
+                "PROVIDER_WORKSPACE_ARGUMENT_INVALID",
+                "AGY provider command is missing its required prompt argument",
+            )
+        })?;
+    if prompt_index + 1 >= command_argv.len() {
+        return Err(CoreError::new(
+            "PROVIDER_WORKSPACE_ARGUMENT_INVALID",
+            "AGY provider command has no prompt value",
+        ));
+    }
+    let workspace = workspace.to_str().ok_or_else(|| {
+        CoreError::new(
+            "PROVIDER_WORKSPACE_ARGUMENT_INVALID",
+            "workspace path is not valid UTF-8 for AGY --add-dir",
+        )
+    })?;
+    let mut argv = command_argv.to_vec();
+    argv.splice(
+        prompt_index + 2..prompt_index + 2,
+        ["--add-dir".to_string(), workspace.to_string()],
+    );
+    Ok(argv)
+}
+
+#[cfg(target_os = "macos")]
+fn provider_state_write_policy(command: &str) -> CoreResult<String> {
     let provider = Path::new(command)
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
-    let relative_state_path = match provider {
-        "agy" => Some(".gemini/antigravity-cli"),
-        "claude" => Some(".claude"),
-        _ => None,
+    let (relative_state_path, denied_child) = match provider {
+        // AGY's scratch tree is a provider-created project workspace. It must
+        // never inherit the runtime-state exception, otherwise AGY can report
+        // changes outside the Runner binding while still running sandboxed.
+        "agy" => (Some(".gemini/antigravity-cli"), Some("scratch")),
+        "claude" => (Some(".claude"), None),
+        _ => (None, None),
     };
     let Some(relative_state_path) = relative_state_path else {
         return Ok(String::new());
@@ -2403,9 +2450,14 @@ fn provider_state_write_rules(command: &str) -> CoreResult<String> {
             "Runner HOME is required to confine provider runtime state",
         )
     })?;
-    let state_path = PathBuf::from(home).join(relative_state_path);
-    let state_path = sandbox_profile_path(&state_path)?;
-    Ok(format!(" (subpath \"{state_path}\")"))
+    let state_root = PathBuf::from(home).join(relative_state_path);
+    let state_path = sandbox_profile_path(&state_root)?;
+    let mut policy = format!("\n(allow file-write* (subpath \"{state_path}\"))");
+    if let Some(denied_child) = denied_child {
+        let denied_path = sandbox_profile_path(&state_root.join(denied_child))?;
+        policy.push_str(&format!("\n(deny file-write* (subpath \"{denied_path}\"))"));
+    }
+    Ok(policy)
 }
 
 #[cfg(target_os = "macos")]
@@ -3258,6 +3310,45 @@ mod tests {
             assert!(root.join(format!("inside-{provider}.txt")).exists());
             assert!(!outside.exists());
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn agy_runtime_state_policy_explicitly_denies_its_scratch_workspace() {
+        let policy = provider_state_write_policy("agy").unwrap();
+
+        assert!(policy.contains("(allow file-write* (subpath \""));
+        assert!(policy.contains(".gemini/antigravity-cli\"))"));
+        assert!(policy.contains("(deny file-write* (subpath \""));
+        assert!(policy.contains(".gemini/antigravity-cli/scratch\"))"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn agy_provider_command_gets_the_selected_workspace_once() {
+        let root = test_workspace("agy_provider_workspace_argument");
+        let command = vec![
+            "agy".to_string(),
+            "-p".to_string(),
+            "opaque prompt".to_string(),
+            "--output-format".to_string(),
+            "json".to_string(),
+        ];
+
+        let argv = provider_workspace_command_argv(&command, &root).unwrap();
+        assert_eq!(
+            vec![
+                "agy",
+                "-p",
+                "opaque prompt",
+                "--add-dir",
+                root.to_string_lossy().as_ref(),
+                "--output-format",
+                "json",
+            ],
+            argv
+        );
+        assert_eq!(argv, provider_workspace_command_argv(&argv, &root).unwrap());
     }
 
     #[test]
