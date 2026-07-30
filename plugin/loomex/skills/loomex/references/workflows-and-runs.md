@@ -91,7 +91,10 @@ For a non-Codex provider, Backend already owns the terminal hand-off from
 execute `providerExecution.argv` in Codex or with a shell command, and do not
 submit its successful Runner output with `loomex_agent_task_respond`. You may
 read the exact `runnerExecution.jobId` for progress, but Backend advances the
-workflow after the Runner reports a terminal result.
+workflow after the Runner reports a terminal result. This is internal work,
+not a user decision: do not end the Codex task or expose the plugin-agent task
+to the user. Continue bounded waits until a real human request/approval or a
+terminal run state is returned.
 
 Obey `sessionDirective.action` exactly:
 

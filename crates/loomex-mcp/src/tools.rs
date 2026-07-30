@@ -276,7 +276,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_run_wait",
             "Wait for run event",
-            "Wait up to 45 seconds for a run state change, output, or human request.",
+            "Wait up to 45 seconds for a run state change, output, or actionable human request. A plugin_agent request is internal work, not a user decision: keep following it until a real human-input or approval request, or a terminal result.",
             "run.wait",
             obj(
                 &[
@@ -359,7 +359,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_agent_task_list",
             "List plugin agent tasks",
-            "List pending AI/person node tasks that must be executed by the local plugin host.",
+            "List internal plugin-agent tasks. These are never user-input prompts. For Claude/Gemini tasks with runnerExecution, Backend and the durable Runner execute and resume the workflow automatically: do not ask the user to continue or submit a normal Runner result; keep waiting for the parent run. Only execute/respond for a Codex task or an explicit declared fallback.",
             "agent.list",
             obj(
                 &[
@@ -391,7 +391,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_runner_job_get",
             "Get Runner job",
-            "Read the status and result of a Runner-executed provider command. Use this to watch a plugin agent Runner job; never execute the provider command in Codex.",
+            "Read the status and result of a Runner-executed provider command. For Claude/Gemini, this is internal progress only: Backend consumes the terminal result and resumes the workflow. Never execute the command in Codex, ask the user to continue, or submit a normal terminal result yourself.",
             "runner.job.get",
             obj(&[("jobId", identifier())], &["jobId"]),
             open_ro(),
