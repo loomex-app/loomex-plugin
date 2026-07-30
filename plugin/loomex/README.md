@@ -27,12 +27,12 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.50/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.51/install-codex.sh | sh
 ```
 
-The `0.1.50` release keeps Claude/Gemini provider execution durable and accepts
-both successful AGY structured-output envelopes. Plugin-agent tasks stay
-internal; only real human input or approval requires a user decision.
+The `0.1.51` release confines Claude and AGY provider writes to the selected
+workspace (plus their narrowly scoped runtime state) and keeps AGY out of its
+scratch-directory execution mode.
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
 releases and upgrades come from `loomex-app/loomex-plugin`; running the command
