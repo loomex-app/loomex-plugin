@@ -319,11 +319,10 @@ impl LocalCapabilityExecutor {
             .max_output_bytes
             .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES)
             .max(1);
+        let mut command = command_with_workspace_scope(&input, &cwd)?;
         let env = self.filtered_env(input.env);
         let started = Instant::now();
-        let mut command = Command::new(&input.command[0]);
         command
-            .args(&input.command[1..])
             .current_dir(cwd)
             .env_clear()
             .envs(
@@ -555,6 +554,7 @@ impl LocalCapabilityExecutor {
         }
         let shell_output = self.shell_exec(ShellExecInput {
             command,
+            workspace_scope: ShellWorkspaceScope::Unrestricted,
             env: command_env_with_path(),
             timeout_seconds: Some(timeout_seconds),
             max_output_bytes: Some(max_output_bytes),
@@ -722,6 +722,7 @@ impl LocalCapabilityExecutor {
         let started = Instant::now();
         let shell_output = self.shell_exec(ShellExecInput {
             command,
+            workspace_scope: ShellWorkspaceScope::Unrestricted,
             env: command_env_with_path(),
             timeout_seconds: Some(timeout_seconds),
             max_output_bytes: Some(max_output_bytes),
@@ -758,6 +759,7 @@ impl LocalCapabilityExecutor {
         let output = self.shell_exec_with_working_directory(
             ShellExecInput {
                 command,
+                workspace_scope: ShellWorkspaceScope::Unrestricted,
                 env: command_env_with_path_and(input.env.clone()),
                 timeout_seconds: Some(timeout_seconds),
                 max_output_bytes: Some(max_output_bytes),
@@ -863,6 +865,7 @@ impl LocalCapabilityExecutor {
                 resolved.to_string_lossy().to_string(),
                 input.query.clone(),
             ],
+            workspace_scope: ShellWorkspaceScope::Unrestricted,
             env: command_env_with_path(),
             timeout_seconds: Some(timeout_seconds),
             max_output_bytes: Some(max_output_bytes),
@@ -898,6 +901,7 @@ impl LocalCapabilityExecutor {
                 "--command".to_string(),
                 input.query.clone(),
             ],
+            workspace_scope: ShellWorkspaceScope::Unrestricted,
             env: command_env_with_path(),
             timeout_seconds: Some(timeout_seconds),
             max_output_bytes: Some(max_output_bytes),
@@ -1345,11 +1349,26 @@ pub struct FileChange {
 pub struct ShellExecInput {
     pub command: Vec<String>,
     #[serde(default)]
+    pub workspace_scope: ShellWorkspaceScope,
+    #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
     #[serde(default)]
     pub max_output_bytes: Option<usize>,
+}
+
+/// Process-level workspace restriction requested by a trusted Runner job.
+///
+/// This is deliberately separate from the command's cwd: a cwd merely sets a
+/// starting directory and does not stop a provider CLI from using an absolute
+/// path elsewhere on the machine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellWorkspaceScope {
+    #[default]
+    Unrestricted,
+    ProviderWriteConfined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2320,6 +2339,103 @@ fn expanded_output_limit(value: Option<usize>) -> CoreResult<usize> {
     Ok(value)
 }
 
+fn command_with_workspace_scope(input: &ShellExecInput, cwd: &Path) -> CoreResult<Command> {
+    match input.workspace_scope {
+        ShellWorkspaceScope::Unrestricted => {
+            let mut command = Command::new(&input.command[0]);
+            command.args(&input.command[1..]);
+            Ok(command)
+        }
+        ShellWorkspaceScope::ProviderWriteConfined => {
+            provider_write_confined_command(&input.command, cwd)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn provider_write_confined_command(command_argv: &[String], cwd: &Path) -> CoreResult<Command> {
+    const SANDBOX_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
+    if !Path::new(SANDBOX_EXECUTABLE).is_file() {
+        return Err(CoreError::new(
+            "PROVIDER_WORKSPACE_SANDBOX_UNAVAILABLE",
+            "macOS sandbox-exec is unavailable; refusing to run a provider without workspace confinement",
+        ));
+    }
+    let workspace = cwd
+        .canonicalize()
+        .map_err(fs_error("WORKSPACE_PATH_RESOLVE_FAILED"))?;
+    let workspace = sandbox_profile_path(&workspace)?;
+    let provider_state_rules = provider_state_write_rules(&command_argv[0])?;
+    // A provider's cwd is only a convenience. The sandbox is the actual
+    // boundary inherited by all child processes: reads and network access are
+    // available for CLI/runtime compatibility, while writes are allowed only
+    // inside the selected Runner workspace plus the provider's narrowly scoped
+    // runtime state directory (credentials and conversation metadata).
+    let profile = format!(
+        "(version 1)\n(deny default)\n(import \"system.sb\")\n(allow file-read*)\n(allow process*)\n(allow mach-lookup)\n(allow network-outbound)\n(allow network-inbound)\n(allow file-write* (subpath \"{workspace}\"){provider_state_rules})"
+    );
+    let mut sandboxed = Command::new(SANDBOX_EXECUTABLE);
+    sandboxed
+        .arg("-p")
+        .arg(profile)
+        .arg(&command_argv[0])
+        .args(&command_argv[1..]);
+    Ok(sandboxed)
+}
+
+#[cfg(target_os = "macos")]
+fn provider_state_write_rules(command: &str) -> CoreResult<String> {
+    let provider = Path::new(command)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let relative_state_path = match provider {
+        "agy" => Some(".gemini/antigravity-cli"),
+        "claude" => Some(".claude"),
+        _ => None,
+    };
+    let Some(relative_state_path) = relative_state_path else {
+        return Ok(String::new());
+    };
+    let home = std::env::var_os("HOME").ok_or_else(|| {
+        CoreError::new(
+            "PROVIDER_WORKSPACE_SANDBOX_HOME_UNAVAILABLE",
+            "Runner HOME is required to confine provider runtime state",
+        )
+    })?;
+    let state_path = PathBuf::from(home).join(relative_state_path);
+    let state_path = sandbox_profile_path(&state_path)?;
+    Ok(format!(" (subpath \"{state_path}\")"))
+}
+
+#[cfg(target_os = "macos")]
+fn sandbox_profile_path(path: &Path) -> CoreResult<String> {
+    let value = path.to_str().ok_or_else(|| {
+        CoreError::new(
+            "PROVIDER_WORKSPACE_SANDBOX_INVALID",
+            "workspace path is not valid UTF-8 for the macOS sandbox profile",
+        )
+    })?;
+    if value.contains('\0') {
+        return Err(CoreError::new(
+            "PROVIDER_WORKSPACE_SANDBOX_INVALID",
+            "workspace path contains a NUL byte",
+        ));
+    }
+    Ok(value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn provider_write_confined_command(_command_argv: &[String], _cwd: &Path) -> CoreResult<Command> {
+    // Do not silently downgrade to an unrestricted process on platforms that
+    // do not yet have a native confinement adapter. The Backend converts this
+    // into a durable provider failure instead of allowing an escape.
+    Err(CoreError::new(
+        "PROVIDER_WORKSPACE_SANDBOX_UNAVAILABLE",
+        "this Runner platform has no native provider workspace sandbox",
+    ))
+}
+
 fn default_child_environment() -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     for key in [
@@ -3072,6 +3188,76 @@ mod tests {
             .unwrap_err();
 
         assert_eq!("WORKSPACE_PATH_OUTSIDE_ROOT", error.code);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn provider_workspace_scope_allows_writes_inside_and_blocks_outside() {
+        let root = test_workspace("provider_workspace_scope");
+        let outside = root.parent().unwrap().join(format!(
+            "{}-outside.txt",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        let script = format!(
+            "printf inside > inside.txt; printf blocked > {}",
+            outside.display()
+        );
+
+        let output = LocalCapabilityExecutor::new(&root)
+            .unwrap()
+            .shell_exec(ShellExecInput {
+                command: vec!["sh".to_string(), "-c".to_string(), script],
+                workspace_scope: ShellWorkspaceScope::ProviderWriteConfined,
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_ne!(0, output.exit_code);
+        assert_eq!(
+            "inside",
+            fs::read_to_string(root.join("inside.txt")).unwrap()
+        );
+        assert!(!outside.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn provider_runtime_state_exception_does_not_open_other_workspace_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_workspace("provider_runtime_state_scope");
+        for provider in ["agy", "claude"] {
+            let executable = root.join(provider);
+            fs::write(
+                &executable,
+                "#!/bin/sh\nprintf inside > inside-$1.txt; printf blocked > $2\n",
+            )
+            .unwrap();
+            let mut permissions = fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).unwrap();
+            let outside = root
+                .parent()
+                .unwrap()
+                .join(format!("{provider}-outside.txt"));
+
+            let output = LocalCapabilityExecutor::new(&root)
+                .unwrap()
+                .shell_exec(ShellExecInput {
+                    command: vec![
+                        executable.to_string_lossy().to_string(),
+                        provider.to_string(),
+                        outside.to_string_lossy().to_string(),
+                    ],
+                    workspace_scope: ShellWorkspaceScope::ProviderWriteConfined,
+                    ..Default::default()
+                })
+                .unwrap();
+
+            assert_ne!(0, output.exit_code, "{provider} escaped the workspace");
+            assert!(root.join(format!("inside-{provider}.txt")).exists());
+            assert!(!outside.exists());
+        }
     }
 
     #[test]

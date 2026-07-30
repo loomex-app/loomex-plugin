@@ -98,7 +98,6 @@ present when `providerExecution.reasoningEffort` is present):
 ```text
 agy -p <agentTask.prompt> --output-format json --model <resolvedModel> \
   [--effort <reasoning-effort>] --dangerously-skip-permissions \
-  --sandbox \
   --json-schema <output-schema>
 ```
 
@@ -106,9 +105,16 @@ The canonical executable form is `providerExecution.argv`, not this display
 form. `--dangerously-skip-permissions` is part of the server-owned provider
 command so AGY can run headlessly without waiting for a permission prompt. It
 must not be removed or replaced with a different permission mode.
-AGY's documented `--sandbox` flag is also server-owned and enables its terminal
-restrictions. The Runner starts the command only in the bound workspace, and
-Backend rejects any declared `changed_files` that escape that workspace.
+Do not add AGY's `--sandbox` flag: AGY may redirect edits into its own scratch
+directory instead of the selected Runner workspace. For both AGY and Claude,
+`runnerExecution.workspaceScope=provider_write_confined` requires the Runner to
+apply its native process-level write sandbox before starting the provider. The
+provider and all of its child processes can write only in the selected binding,
+apart from the provider's own narrow runtime-state directory needed for
+credentials and conversation metadata (`.gemini/antigravity-cli` for AGY and
+`.claude` for Claude). No other user project path is writable; if the native
+sandbox is unavailable, the Runner fails closed. Backend still validates every
+declared `changed_files` path as a separate result-contract check.
 For a `resume` directive, Backend places `--conversation <sessionId>` before
 `-p` in that same argv; use it exactly and return the same session ID.
 
