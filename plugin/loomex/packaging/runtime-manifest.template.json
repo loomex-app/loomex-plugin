@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pluginVersion": null,
-  "runtimeVersion": "0.1.51",
+  "runtimeVersion": "0.1.52",
   "channel": "stable",
   "distributionKind": null,
   "developmentOverridesAllowed": false,

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.52
+
+- Make AGY use the selected Runner workspace with its supported `--add-dir` argument.
+- Deny AGY's scratch workspace at the process boundary so it cannot escape the selected binding.
+
 ## 0.1.51
 
 - Confine Claude and AGY provider processes to the selected Runner workspace at the OS process boundary, with only their dedicated runtime state writable outside it.

@@ -27,12 +27,11 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.51/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.52/install-codex.sh | sh
 ```
 
-The `0.1.51` release confines Claude and AGY provider writes to the selected
-workspace (plus their narrowly scoped runtime state) and keeps AGY out of its
-scratch-directory execution mode.
+The `0.1.52` release makes AGY use the selected Runner workspace and blocks
+its scratch workspace from escaping that boundary.
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
 releases and upgrades come from `loomex-app/loomex-plugin`; running the command
