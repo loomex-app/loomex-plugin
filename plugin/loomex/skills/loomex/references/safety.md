@@ -15,5 +15,10 @@
   and terminal results. Transport success alone is not operation success.
 - Keep logs and outputs scoped and redacted. Ask before revealing sensitive
   local paths or content the user did not request.
+- When a scope request is rejected with an authentication-invalid result, the
+  Plugin may automatically clear only the rejected profile's local
+  credentials/scope and start a replacement device-auth flow. It must not
+  attempt remote revocation as part of that recovery; present the returned
+  verification URI/code and wait for the user to complete authentication.
 - The Tauri app and Codex may act concurrently. Refresh a mutable request before
   a response or approval to avoid stale decisions.

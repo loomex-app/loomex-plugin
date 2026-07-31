@@ -2042,6 +2042,54 @@ fn plugin_required_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, S
         .ok_or_else(|| format!("PLUGIN_CONTROL_PARAMETER_REQUIRED: {key} is required"))
 }
 
+fn is_stale_management_credential_error(error: &loomex_core::CoreError) -> bool {
+    matches!(
+        error.code,
+        "AUTH_TOKEN_EXPIRED"
+            | "AUTH_TOKEN_INVALID"
+            | "MANAGEMENT_AUTH_FAILED"
+            | "MANAGEMENT_PERMISSION_DENIED"
+            | "RUNNER_TOKEN_INVALID"
+            | "RUNNER_TOKEN_REVOKED"
+    )
+}
+
+fn recover_stale_profile_auth(
+    options: &GlobalOptions,
+    resolved: &loomex_core::ResolvedCliSettings,
+    reason: &loomex_core::CoreError,
+) -> Result<Value, String> {
+    let _lifecycle_lock = PluginSetupTransactionLock::acquire()?;
+    plugin_reject_unfinished_setup_transaction()?;
+
+    // A database reset invalidates both the user and runner credentials. Clear
+    // only this local profile and its local-control files; do not attempt a
+    // remote revoke with the credential that was just rejected.
+    plugin_invalidate_local_control_files()?;
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
+    clear_plugin_runner_scope(&mut config, &resolved.profile, true)?;
+    config.save(&config_path).map_err(format_core_error)?;
+
+    let store = SystemCredentialStore::new(credential_dir());
+    store.delete(&resolved.profile).map_err(format_core_error)?;
+    store
+        .delete(&user_credential_profile(&resolved.profile))
+        .map_err(format_core_error)?;
+
+    let auth = plugin_auth_start(&json!({"serverUrl": resolved.server_url}), options)?;
+    Ok(json!({
+        "items": [],
+        "reauthRequired": true,
+        "reauthReason": {
+            "code": reason.code,
+            "message": "The saved local Loomex credential was rejected by the configured server; local credentials and stale scope were cleared.",
+        },
+        "nextAction": "auth.wait",
+        "auth": auth,
+    }))
+}
+
 fn plugin_org_list(options: &GlobalOptions) -> Result<Value, String> {
     let config = load_cli_config()?;
     let resolved = config
@@ -2049,11 +2097,16 @@ fn plugin_org_list(options: &GlobalOptions) -> Result<Value, String> {
         .map_err(format_core_error)?;
     let store = SystemCredentialStore::new(credential_dir());
     let credential = load_user_credential(&store, &resolved.profile)?;
-    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
-        .map_err(format_core_error)?;
-    let items = client
-        .list_organizations(&credential)
-        .map_err(format_core_error)?;
+    let mut client =
+        HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
+            .map_err(format_core_error)?;
+    let items = match client.list_organizations(&credential) {
+        Ok(items) => items,
+        Err(error) if is_stale_management_credential_error(&error) => {
+            return recover_stale_profile_auth(options, &resolved, &error);
+        }
+        Err(error) => return Err(format_core_error(error)),
+    };
     Ok(json!({"items": items}))
 }
 
@@ -2253,21 +2306,12 @@ fn plugin_binding_create(params: &Value, options: &GlobalOptions) -> Result<Valu
     let resolved = config
         .resolve(options.config_overrides(), |key| env::var(key).ok())
         .map_err(format_core_error)?;
-    let workspace_path = params
-        .get("workspacePath")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .or(resolved.workspace_path.as_deref())
-        .ok_or_else(|| {
-            "PLUGIN_CONTROL_WORKSPACE_REQUIRED: configure a local workspace before creating a binding".to_string()
-        })?;
     let store = SystemCredentialStore::new(credential_dir());
     let user_credential = load_user_credential(&store, &resolved.profile)?;
     let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
         .map_err(format_core_error)?;
     let mut result = create_plugin_binding_with(
         project_id,
-        workspace_path,
         &resolved.profile,
         &mut config,
         &config_path,
@@ -2292,7 +2336,6 @@ fn plugin_binding_create(params: &Value, options: &GlobalOptions) -> Result<Valu
 #[allow(clippy::too_many_arguments)]
 fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Sized>(
     project_id: &str,
-    workspace_path: &str,
     profile: &str,
     config: &mut CliConfig,
     config_path: &Path,
@@ -2300,7 +2343,6 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
     user_credential: &ManagementCredential,
     client: &mut C,
 ) -> Result<Value, String> {
-    let workspace = validate_workspace_path(workspace_path)?;
     let project = client
         .get_project(user_credential, project_id)
         .map_err(format_core_error)?;
@@ -2340,7 +2382,6 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
                     &project.organization_id,
                     &binding.runner_id,
                     &binding.id,
-                    &workspace.display_path,
                 )?;
                 return Ok(json!({
                     "profile": profile,
@@ -2348,10 +2389,6 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
                     "organizationId": project.organization_id,
                     "runnerId": binding.runner_id,
                     "binding": binding,
-                    "workspace": {
-                        "path": workspace.display_path,
-                        "fingerprint": workspace.fingerprint,
-                    },
                     "bootstrapped": false,
                     "reused": true,
                 }));
@@ -2455,7 +2492,6 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
         &project.organization_id,
         &runner_id,
         &binding.id,
-        &workspace.display_path,
     )?;
 
     Ok(json!({
@@ -2464,17 +2500,12 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
         "organizationId": project.organization_id,
         "runnerId": runner_id,
         "binding": binding,
-        "workspace": {
-            "path": workspace.display_path,
-            "fingerprint": workspace.fingerprint,
-        },
         "bootstrapped": bootstrapped,
         "reused": false,
         "reconciled": reconciled,
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn persist_plugin_binding_context(
     config: &mut CliConfig,
     config_path: &Path,
@@ -2483,14 +2514,12 @@ fn persist_plugin_binding_context(
     organization_id: &str,
     runner_id: &str,
     binding_id: &str,
-    workspace_path: &str,
 ) -> Result<(), String> {
     for (key, value) in [
         ("organizationId", organization_id),
         ("projectId", project_id),
         ("runnerId", runner_id),
         ("bindingId", binding_id),
-        ("workspacePath", workspace_path),
     ] {
         config
             .set_key(&format!("profiles.{profile}.{key}"), value.to_string())
@@ -3968,6 +3997,7 @@ fn plugin_auth_status(options: &GlobalOptions) -> Result<Value, String> {
         "upgradeRequired": runner_upgrade_reason.is_some(),
         "reauthReason": runner_upgrade_reason,
         "profile": resolved.profile,
+        "serverUrl": resolved.server_url,
         "organizationId": resolved.organization_id,
         "projectId": resolved.project_id,
         "expiresAt": runner_expires_at.as_ref().or(user_expires_at.as_ref()),
@@ -4619,7 +4649,6 @@ fn plugin_service_bootstrap_readiness_with<C: ManagementApiClient>(
         ("projectId", resolved.project_id.as_deref()),
         ("runnerId", resolved.runner_id.as_deref()),
         ("bindingId", resolved.binding_id.as_deref()),
-        ("workspacePath", resolved.workspace_path.as_deref()),
     ]
     .into_iter()
     .filter_map(|(name, value)| {
@@ -4629,10 +4658,6 @@ fn plugin_service_bootstrap_readiness_with<C: ManagementApiClient>(
             .then_some(name)
     })
     .collect::<Vec<_>>();
-    let workspace_ready = resolved
-        .workspace_path
-        .as_deref()
-        .is_some_and(|path| validate_workspace_path(path).is_ok());
     let identity = if credential_ready {
         match (
             runner_credential,
@@ -4670,15 +4695,13 @@ fn plugin_service_bootstrap_readiness_with<C: ManagementApiClient>(
         })
     };
     let identity_ready = identity.get("matched").and_then(Value::as_bool) == Some(true);
-    let ready = credential_ready && missing_context.is_empty() && workspace_ready && identity_ready;
+    let ready = credential_ready && missing_context.is_empty() && identity_ready;
     let reason = if let Some(reason) = reauth_reason {
         reason
     } else if !credential_ready {
         "runner authentication is not established"
     } else if !missing_context.is_empty() {
-        "organization, project, runner, binding, and workspace must be selected"
-    } else if !workspace_ready {
-        "selected workspace is not currently readable and writable"
+        "organization, project, runner, and binding must be selected"
     } else if identity.get("matched").and_then(Value::as_bool) == Some(false) {
         "authenticated runner does not match configured runnerId; recreate or reuse the exact binding for this runner"
     } else if !identity_ready {
@@ -4693,7 +4716,6 @@ fn plugin_service_bootstrap_readiness_with<C: ManagementApiClient>(
         "upgradeRequired": reauth_reason.is_some(),
         "reauthReason": reauth_reason,
         "missingContext": missing_context,
-        "workspaceReady": workspace_ready,
         "identity": identity,
         "reason": reason,
     })
@@ -13427,7 +13449,6 @@ mod tests {
 
         let result = create_plugin_binding_with(
             "prj_123",
-            &workspace.to_string_lossy(),
             "default",
             &mut config,
             &config_path,
@@ -13438,7 +13459,6 @@ mod tests {
         .unwrap();
         let repeated = create_plugin_binding_with(
             "prj_123",
-            &workspace.to_string_lossy(),
             "default",
             &mut config,
             &config_path,
@@ -13475,6 +13495,8 @@ mod tests {
             saved_config.profiles["default"].binding_id.as_deref(),
             Some("binding_123")
         );
+        assert!(saved_config.profiles["default"].workspace_path.is_none());
+        assert!(result.get("workspace").is_none());
         let _ = fs::remove_file(&config_path);
         let _ = fs::remove_dir_all(&credential_root);
         let _ = fs::remove_dir_all(&workspace);
@@ -13512,7 +13534,6 @@ mod tests {
 
         let result = create_plugin_binding_with(
             "prj_123",
-            &workspace.to_string_lossy(),
             "default",
             &mut config,
             &config_path,
@@ -13594,7 +13615,6 @@ mod tests {
 
         let result = create_plugin_binding_with(
             "prj_123",
-            &workspace.to_string_lossy(),
             "default",
             &mut config,
             &config_path,
@@ -13648,7 +13668,6 @@ mod tests {
 
         let first = create_plugin_binding_with(
             "prj_123",
-            &workspace.to_string_lossy(),
             "default",
             &mut config,
             &config_path,
@@ -13660,7 +13679,6 @@ mod tests {
         client.bindings[0].status = "revoked".to_string();
         let second = create_plugin_binding_with(
             "prj_123",
-            &workspace.to_string_lossy(),
             "default",
             &mut config,
             &config_path,

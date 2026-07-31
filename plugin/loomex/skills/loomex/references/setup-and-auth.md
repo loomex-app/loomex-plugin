@@ -52,6 +52,12 @@ even when the registered service is inactive or deferred while authentication
 or binding is incomplete. Continue with authentication, organization/project
 scope, and project binding below, then resume the original Loomex request. The
 filesystem workspace is selected per workflow execution, not during binding.
+If `loomex_org_list` or another scope call returns a successful response with
+`reauthRequired: true` and an embedded `auth` challenge, the Plugin has already
+cleared stale local credentials and started a replacement device flow. Show the
+returned verification URI/code, call `loomex_auth_wait` with the exact returned
+`loginId`, and retry the failed scope call after authentication succeeds. Do not
+ask the user to edit config, register a workspace, or manually delete tokens.
 If the action is `binding.create` with reason `runner_identity_mismatch`, treat
 it as an explicit binding repair, not a setup reinstall or automatic identity
 rewrite. Read the current organization, project, and bindings; show the exact
