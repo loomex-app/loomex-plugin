@@ -22,7 +22,7 @@ may be called after the error.
 Before `loomex_workflow_run`, confirm:
 
 - workflow ID/version;
-- selected project and exact binding;
+- selected project, execution scope, and the execution-local workspace path;
 - supplied inputs, especially secrets or environment names;
 - declared local capabilities and known approval points.
 

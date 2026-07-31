@@ -8,10 +8,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const tools = [
   "loomex_setup_status", "loomex_setup_plan", "loomex_setup_apply", "loomex_setup_rollback",
-  "loomex_auth_status", "loomex_auth_start", "loomex_auth_wait", "loomex_auth_logout",
-  "loomex_org_list", "loomex_org_select", "loomex_project_list", "loomex_project_select",
+  "loomex_auth_status", "loomex_auth_start", "loomex_auth_wait", "loomex_auth_register", "loomex_auth_register_verify", "loomex_auth_logout",
+  "loomex_org_list", "loomex_org_create", "loomex_org_select", "loomex_project_list", "loomex_project_select",
   "loomex_binding_list", "loomex_binding_create", "loomex_binding_revoke",
   "loomex_workflow_list", "loomex_workflow_show", "loomex_workflow_run",
+  "loomex_workflow_create", "loomex_workflow_create_respond",
   "loomex_run_list", "loomex_run_get", "loomex_run_wait", "loomex_run_cancel",
   "loomex_human_list", "loomex_human_open", "loomex_human_respond",
   "loomex_agent_task_list", "loomex_agent_task_respond", "loomex_runner_job_get",
@@ -21,13 +22,13 @@ const tools = [
 
 test("skill exposes the settled MCP tool contract exactly", async () => {
   const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
-  assert.equal(tools.length, 34);
+  assert.equal(tools.length, 39);
   for (const name of tools) assert.match(skill, new RegExp(`\\b${name}\\b`), name);
   assert.doesNotMatch(skill, /loomex_organization_|loomex_human_request_/);
 });
 
 test("plugin exposes only the supported focused child skills", async () => {
-  const childSkills = ["setup", "workflow"];
+  const childSkills = ["create-workflow", "login", "logout", "organization-create", "organization-switch", "setup", "workflow"];
   for (const name of childSkills) {
     const child = await readFile(path.join(root, "skills", name, "SKILL.md"), "utf8");
     assert.match(child, new RegExp(`^name: ${name}$`, "m"));
@@ -37,7 +38,7 @@ test("plugin exposes only the supported focused child skills", async () => {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
-  assert.deepEqual(skillDirectories, ["loomex", "setup", "workflow"]);
+  assert.deepEqual(skillDirectories, ["create-workflow", "login", "logout", "loomex", "organization-create", "organization-switch", "setup", "workflow"]);
   const router = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
   for (const name of childSkills) assert.match(router, new RegExp(`\\b${name}\\b`));
 });
@@ -219,7 +220,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.56");
+  assert.equal(manifest.version, "0.1.57");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);

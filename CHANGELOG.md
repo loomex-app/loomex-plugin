@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.57
+
+- Add guided Login, Logout, organization creation, and organization switching
+  skills with automatic Runner scope recovery.
+- Clear stale local account and organization scope before authentication and
+  preserve organization creation even when the local Runner service needs repair.
+- Add MCP operations for registration, organization creation, and scope changes.
+
 ## 0.1.56
 
 - Make Codex sub-agent dispatch explicitly prompt-opaque: only the exact

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Switch Loomex Organization"
+  short_description: "List and switch Loomex organizations"
+  default_prompt: "Use $organization-switch to change the active Loomex organization."

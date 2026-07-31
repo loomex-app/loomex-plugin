@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use crate::{
     read_recent_log_entries, redact_log_entry_for_local_output, CoreError, CoreResult,
     ManagementApiClient, ManagementCredential, ProjectRunnerBindingCreateRequest,
+    WorkflowBuilderStartRequest,
 };
 
 pub const LOCAL_CONTROL_PROTOCOL_VERSION: &str = "loomex.local-control/v1";
@@ -281,6 +282,40 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                             idempotency_key,
                         },
                     )?)
+                })
+            }
+            "workflow.create" => {
+                let project_id = optional_string(params, "projectId")
+                    .or(self.project_id.as_deref())
+                    .ok_or_else(|| CoreError::new("PROJECT_CONTEXT_MISSING", "projectId is required"))?;
+                let prompt = required_string(params, "prompt")?;
+                let idempotency_key = required_string(params, "idempotencyKey")?;
+                let model = optional_string(params, "model");
+                self.with_client(|client| {
+                    client.start_workflow_builder(
+                        &self.credential,
+                        &WorkflowBuilderStartRequest {
+                            project_id: project_id.to_string(),
+                            prompt: prompt.to_string(),
+                            model: model.map(str::to_string),
+                            idempotency_key: idempotency_key.to_string(),
+                        },
+                    )
+                })
+            }
+            "workflow.create.respond" => {
+                let session_id = required_string(params, "sessionId")?;
+                let response = params.get("response").ok_or_else(|| {
+                    CoreError::new("LOCAL_CONTROL_PARAMETER_REQUIRED", "response is required")
+                })?;
+                let idempotency_key = required_string(params, "idempotencyKey")?;
+                self.with_client(|client| {
+                    client.respond_workflow_builder(
+                        &self.credential,
+                        session_id,
+                        response,
+                        idempotency_key,
+                    )
                 })
             }
             "run.get" => {

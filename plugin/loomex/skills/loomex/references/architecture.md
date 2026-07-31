@@ -12,7 +12,7 @@ session, use `loomex_run_get` or `loomex_run_wait` and query the human and
 approval inboxes to recover its latest durable state.
 
 The adapter uses two local routes. Setup, authentication, organization/project
-selection, project binding, and Runner control call the bundled `loomex`
+selection, and Runner control call the bundled `loomex`
 bootstrap executable, so first use works before a service socket or credential
 exists. Workflow/run/HITL/approval calls use the authenticated durable-service
 socket. Status, diagnostics, and logs prefer that socket and may fall back to
