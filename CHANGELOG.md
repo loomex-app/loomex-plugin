@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.58
+
+- Refresh release validation for the expanded 39-tool MCP contract.
+- Keep package assembly fixtures aligned with the current immutable runtime
+  version.
+
 ## 0.1.57
 
 - Add guided Login, Logout, organization creation, and organization switching
