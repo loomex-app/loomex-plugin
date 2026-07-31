@@ -34,10 +34,10 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.58/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.59/install-codex.sh | sh
 ```
 
-The `0.1.58` release adds guided account registration, logout, organization
+The `0.1.59` release adds guided account registration, logout, organization
 creation and organization switching, while keeping pending Codex sub-agent tasks separate from
 resolved Gemini/Claude Runner tasks and routes `run_wait` by the resolved
 provider. It also makes Loomex automatically recover rejected local
