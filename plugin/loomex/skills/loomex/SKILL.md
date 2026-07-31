@@ -68,6 +68,12 @@ Read every reference needed for the user's request before calling its tools.
    organization/project scope, and project binding, then resume the user's
    original request in the same conversation. A registered service that is
    deferred or inactive pending auth/binding is not a reason to repair setup.
+   If a scope call returns `reauthRequired` with an embedded `auth` challenge,
+   treat the saved credential as stale (for example after a local database
+   reset): present the returned verification URI/code, call
+   `loomex_auth_wait` with its exact `loginId`, and retry the original scope
+   call after authentication succeeds. Do not ask the user to manually edit
+   Loomex config or register a workspace.
 5. Reuse the selected organization, project, and existing binding when they
    unambiguously match the current project and Runner. Never silently widen a binding.
 6. `loomex_workflow_list` only returns workflows whose execution model is

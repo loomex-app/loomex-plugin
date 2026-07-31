@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.54
+
+- Automatically recover stale local management and Runner credentials by
+  clearing the rejected profile scope and starting device authentication again.
+- Keep Plugin bindings pathless; execution-local workspace paths are supplied
+  only when a workflow execution starts.
+
 ## 0.1.53
 
 - Fail closed when Loomex setup, workflow, Runner, provider, or agent-task

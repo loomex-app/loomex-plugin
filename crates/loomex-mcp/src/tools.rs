@@ -922,7 +922,6 @@ fn output_data_schema(tool_name: &str) -> Value {
                 ("organizationId", identifier()),
                 ("runnerId", identifier()),
                 ("binding", binding_schema()),
-                ("workspace", workspace_schema()),
                 ("bootstrapped", boolean()),
                 ("reused", boolean()),
             ],
@@ -932,7 +931,6 @@ fn output_data_schema(tool_name: &str) -> Value {
                 "organizationId",
                 "runnerId",
                 "binding",
-                "workspace",
                 "bootstrapped",
                 "reused",
             ],
@@ -1121,13 +1119,6 @@ fn binding_schema() -> Value {
             ("status", string()),
         ],
         &["id", "organizationId", "projectId", "runnerId", "status"],
-    )
-}
-
-fn workspace_schema() -> Value {
-    evolvable_object(
-        &[("path", path_string()), ("fingerprint", string())],
-        &["path", "fingerprint"],
     )
 }
 
@@ -1419,7 +1410,7 @@ mod tests {
             }
             "loomex_binding_create" => json!({
                 "profile":"default","projectId":"project-1","organizationId":"org-1","runnerId":"runner-1",
-                "binding":binding,"workspace":{"path":"/workspace","fingerprint":"sha256:abc"},
+                "binding":binding,
                 "bootstrapped":true,"reused":false
             }),
             "loomex_binding_revoke" => {
