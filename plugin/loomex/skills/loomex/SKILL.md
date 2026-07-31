@@ -1,6 +1,6 @@
 ---
 name: loomex
-description: Use Loomex from Codex to set up its durable local Runner, authenticate, select organizations and projects, bind projects to a Runner, browse and run plugin workflows, follow long-running runs, execute plugin AI/person tasks, respond to human-in-the-loop requests, decide approvals, inspect status and logs, or repair and roll back Runner setup.
+description: Use Loomex from Codex to set up its durable local Runner, log in or register, create or switch organizations, select projects, browse and run plugin workflows, follow long-running runs, execute plugin AI/person tasks, respond to human-in-the-loop requests, decide approvals, inspect status and logs, or repair and roll back Runner setup.
 ---
 
 # Loomex
@@ -27,7 +27,8 @@ Loomex is the only execution surface for Loomex work. This is fail-closed:
 
 ## Route the request
 
-- Use the focused `setup` or `workflow` child skill when the request is
+- Use the focused `setup`, `login`, `logout`, `organization-create`,
+  `organization-switch`, `create-workflow`, or `workflow` child skill when the request is
   primarily about one of those areas. Handle scope, run follow-up, human input,
   approvals, and agent tasks through this main skill and its references. All
   skills share the same Loomex MCP contract and safety rules; do not duplicate
@@ -59,33 +60,37 @@ Read every reference needed for the user's request before calling its tools.
    verified runtime is already bundled with the plugin, but its durable
    per-user service is not set up yet. Show the concrete plan; ask for approval
    only before `loomex_setup_apply`.
-3. When the next action is `binding.create` because the configured Runner does
-   not match the authenticated Runner, do not mutate local state silently. Read
-   the selected scope and bindings, show the exact project and Runner repair,
-   obtain confirmation, then call `loomex_binding_create`; its exact-binding
-   reconciliation is safe after an uncertain prior create response.
-4. When setup is complete, continue through authentication, required
-   organization/project scope, and project binding, then resume the user's
-   original request in the same conversation. A registered service that is
-   deferred or inactive pending auth/binding is not a reason to repair setup.
+3. When setup is complete, continue through Runner authentication and the
+   required organization/project scope, then resume the user's original request
+   in the same conversation. A registered service that is deferred or
+   inactive pending authentication is not a reason to repair setup. Project
+   binding and the local workspace path are execution-scoped; they are not
+   prerequisites for the durable Runner service.
+   If authentication succeeds and `loomex_org_list` returns an empty `items`
+   array, invoke the `organization-create` child skill and ask for the
+   organization name. Do not report `ORGANIZATION_NOT_FOUND` as a final state
+   when the account simply has no organizations. If exactly one organization is
+   returned and no organization is selected, call `loomex_org_select` with its
+   exact ID without asking an unnecessary follow-up. If multiple organizations
+   are returned, invoke `organization-switch` and ask the user to choose one.
    If a scope call returns `reauthRequired` with an embedded `auth` challenge,
    treat the saved credential as stale (for example after a local database
    reset): present the returned verification URI/code, call
    `loomex_auth_wait` with its exact `loginId`, and retry the original scope
    call after authentication succeeds. Do not ask the user to manually edit
    Loomex config or register a workspace.
-5. Reuse the selected organization, project, and existing binding when they
-   unambiguously match the current project and Runner. Never silently widen a binding.
-6. `loomex_workflow_list` only returns workflows whose execution model is
+4. Reuse the selected organization and project when they unambiguously match
+   the request. Never silently widen project scope.
+5. `loomex_workflow_list` only returns workflows whose execution model is
    `plugin`. App-only and server-only workflows are intentionally hidden from
    the Codex plugin workflow picker.
-7. Before running, use `loomex_workflow_show` to confirm inputs and local
+6. Before running, use `loomex_workflow_show` to confirm inputs and local
    capabilities when the workflow or parameters are ambiguous.
-8. Treat the ID returned by `loomex_workflow_run` as authoritative. Follow it
+7. Treat the ID returned by `loomex_workflow_run` as authoritative. Follow it
    with repeated bounded `loomex_run_wait` calls while it is non-terminal; do
    not close the current task with only a "the workflow is running" message.
    Do not run shell commands to imitate its nodes.
-9. When a wait returns a plugin agent task, it is internal workflow work, never
+8. When a wait returns a plugin agent task, it is internal workflow work, never
    a user-facing question. Do not end the current task, ask the user to
    continue, or present its request ID. Read
    [plugin-agent-providers.md](references/plugin-agent-providers.md). Codex
@@ -145,13 +150,16 @@ Read every reference needed for the user's request before calling its tools.
 - Setup: `loomex_setup_status`, `loomex_setup_plan`, `loomex_setup_apply`,
   `loomex_setup_rollback`
 - Authentication: `loomex_auth_status`, `loomex_auth_start`,
-  `loomex_auth_wait`, `loomex_auth_logout`
-- Scope: `loomex_org_list`, `loomex_org_select`, `loomex_project_list`,
+  `loomex_auth_wait`, `loomex_auth_register`,
+  `loomex_auth_register_verify`, `loomex_auth_logout`
+- Scope: `loomex_org_list`, `loomex_org_create`, `loomex_org_select`,
+  `loomex_project_list`,
   `loomex_project_select`
 - Bindings: `loomex_binding_list`, `loomex_binding_create`,
   `loomex_binding_revoke`
 - Workflows: `loomex_workflow_list`, `loomex_workflow_show`,
-  `loomex_workflow_run`
+  `loomex_workflow_run`, `loomex_workflow_create`,
+  `loomex_workflow_create_respond`
 - Runs: `loomex_run_list`, `loomex_run_get`, `loomex_run_wait`,
   `loomex_run_cancel`
 - Human requests: `loomex_human_list`, `loomex_human_open`,

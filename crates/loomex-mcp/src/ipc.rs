@@ -268,6 +268,24 @@ impl ControlClient {
             return self.bootstrap.call(method, params, deadline).await;
         }
         match self.daemon.call(method, params, deadline).await {
+            Err(error)
+                if should_recover_runner_service(&error)
+                    && !is_bootstrap_fallback_method(method) =>
+            {
+                // The durable service may have been stopped, unloaded, or
+                // lost its local-control files after auth or a crash. Let the
+                // bundled CLI repair/start it once, then retry the original
+                // daemon request. Do not loop: a second failure is returned
+                // to the caller with its exact machine-readable state.
+                self.bootstrap
+                    .call(
+                        "runner.control",
+                        &json!({"action": "start", "confirm": true}),
+                        deadline,
+                    )
+                    .await?;
+                self.daemon.call(method, params, deadline).await
+            }
             Err(ClientError::Unavailable(_)) if is_bootstrap_fallback_method(method) => {
                 self.bootstrap.call(method, params, deadline).await
             }
@@ -382,8 +400,11 @@ fn is_bootstrap_method(method: &str) -> bool {
             | "auth.status"
             | "auth.start"
             | "auth.wait"
+            | "auth.register"
+            | "auth.register.verify"
             | "auth.logout"
             | "org.list"
+            | "org.create"
             | "org.select"
             | "project.list"
             | "project.select"
@@ -396,6 +417,13 @@ fn is_bootstrap_method(method: &str) -> bool {
 
 fn is_bootstrap_fallback_method(method: &str) -> bool {
     matches!(method, "status" | "doctor" | "logs.tail")
+}
+
+fn should_recover_runner_service(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Unavailable(_) | ClientError::Unauthorized(_)
+    )
 }
 
 fn default_bootstrap_executable() -> PathBuf {
@@ -578,12 +606,38 @@ mod tests {
                 json!({"loginId": "login-1", "timeoutSeconds": 1}),
             ),
             (
+                "loomex_auth_register",
+                "auth.register",
+                Bootstrap,
+                json!({
+                    "email": "new@example.com",
+                    "password": "Password1!",
+                    "confirmPassword": "Password1!"
+                }),
+            ),
+            (
+                "loomex_auth_register_verify",
+                "auth.register.verify",
+                Bootstrap,
+                json!({
+                    "challengeId": "challenge-1",
+                    "email": "new@example.com",
+                    "code": "123456"
+                }),
+            ),
+            (
                 "loomex_auth_logout",
                 "auth.logout",
                 Bootstrap,
                 json!({"confirm": true}),
             ),
             ("loomex_org_list", "org.list", Bootstrap, json!({})),
+            (
+                "loomex_org_create",
+                "org.create",
+                Bootstrap,
+                json!({"name": "Acme"}),
+            ),
             (
                 "loomex_org_select",
                 "org.select",
@@ -626,6 +680,22 @@ mod tests {
                     "bindingId": "binding-1",
                     "workspacePath": "/repo",
                     "idempotencyKey": "idem-run-123",
+                }),
+            ),
+            (
+                "loomex_workflow_create",
+                "workflow.create",
+                Daemon,
+                json!({"prompt": "Build a review workflow", "idempotencyKey": "idem-builder-123"}),
+            ),
+            (
+                "loomex_workflow_create_respond",
+                "workflow.create.respond",
+                Daemon,
+                json!({
+                    "sessionId": "builder-session-1",
+                    "response": {"status": "completed", "output": {}},
+                    "idempotencyKey": "idem-builder-response-123"
                 }),
             ),
             (
@@ -721,7 +791,7 @@ mod tests {
         use std::collections::HashSet;
 
         let contracts = tool_contracts();
-        assert_eq!(contracts.len(), 34);
+        assert_eq!(contracts.len(), 39);
         let advertised = crate::tools::definitions();
         assert_eq!(advertised.len(), contracts.len());
         let expected_names = contracts
@@ -818,7 +888,7 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
             .into_iter()
             .filter(|(_, _, transport, _)| *transport == ExpectedTransport::Daemon)
             .collect::<Vec<_>>();
-        assert_eq!(contracts.len(), 14);
+        assert_eq!(contracts.len(), 16);
 
         let temp = tempfile::tempdir().unwrap();
         let socket_path = temp.path().join("control.sock");
@@ -869,6 +939,40 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
             assert_eq!(result["method"], method);
         }
         server.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unavailable_daemon_attempts_one_runner_service_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("loomex");
+        let marker = temp.path().join("runner-control-called");
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf recovered > '{}'\nprintf '%s' '{{\"schemaVersion\":\"loomex.cli.pluginControl/v1\",\"method\":\"runner.control\",\"result\":{{\"healthy\":true}}}}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let client = ControlClient::new(
+            LocalControlClient::new(
+                temp.path().join("missing.sock"),
+                temp.path().join("missing.token"),
+            ),
+            BootstrapClient::new(executable),
+        );
+        let error = client
+            .call("workflow.list", &json!({}), Duration::from_secs(2))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), "runner_unavailable");
+        assert!(marker.exists(), "runner.control recovery was not attempted");
     }
 
     #[cfg(unix)]

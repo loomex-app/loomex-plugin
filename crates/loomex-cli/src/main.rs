@@ -727,10 +727,13 @@ fn run_logout(args: &[String], options: &GlobalOptions) -> Result<String, String
     if !args.is_empty() {
         return Err("logout does not accept positional arguments".to_string());
     }
-    let config = load_cli_config()?;
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
     let resolved = config
         .resolve(options.config_overrides(), |key| env::var(key).ok())
         .map_err(format_core_error)?;
+    clear_plugin_auth_scope(&mut config, &resolved.profile)?;
+    config.save(&config_path).map_err(format_core_error)?;
     let store = SystemCredentialStore::new(credential_dir());
     store.delete(&resolved.profile).map_err(format_core_error)?;
     store
@@ -1913,6 +1916,8 @@ fn run_runner_plugin_control(args: &[String], options: &GlobalOptions) -> Result
         "auth.status" => plugin_auth_status(options)?,
         "auth.start" => plugin_auth_start(&params, options)?,
         "auth.wait" => plugin_auth_wait(&params, options)?,
+        "auth.register" => plugin_auth_register(&params, options)?,
+        "auth.register.verify" => plugin_auth_register_verify(&params, options)?,
         "auth.logout" => {
             plugin_confirmed(&params)?;
             let mut lifecycle = plugin_stop_service_and_invalidate_local_control(options)?;
@@ -1932,12 +1937,21 @@ fn run_runner_plugin_control(args: &[String], options: &GlobalOptions) -> Result
             )
         }
         "org.list" => plugin_org_list(options)?,
+        "org.create" => plugin_org_create(&params, options)?,
         "org.select" => {
             let changing = plugin_validate_org_selection(&params, options)?;
             if changing {
                 let lifecycle = plugin_stop_service_and_invalidate_local_control(options)?;
                 match plugin_org_select(&params, options) {
-                    Ok(result) => plugin_result_with_lifecycle(result, lifecycle),
+                    Ok(mut result) => {
+                        let bootstrap = plugin_bootstrap_runner_auth(options)?;
+                        let activation = plugin_activation_result(options);
+                        if let Some(object) = result.as_object_mut() {
+                            object.insert("runnerBootstrap".to_string(), bootstrap);
+                            object.insert("serviceActivation".to_string(), activation);
+                        }
+                        plugin_result_with_lifecycle(result, lifecycle)
+                    }
                     Err(error) => return Err(plugin_transition_failure(error, options)),
                 }
             } else {
@@ -1948,11 +1962,11 @@ fn run_runner_plugin_control(args: &[String], options: &GlobalOptions) -> Result
         "project.select" => {
             let changing = plugin_validate_project_selection(&params, options)?;
             if changing {
-                let lifecycle = plugin_stop_service_and_invalidate_local_control(options)?;
-                match plugin_project_select(&params, options) {
-                    Ok(result) => plugin_result_with_lifecycle(result, lifecycle),
-                    Err(error) => return Err(plugin_transition_failure(error, options)),
-                }
+                // Project selection changes management scope only. Runner
+                // authentication and the durable local service are
+                // organization-scoped; do not stop/rebootstrap them merely
+                // because the user picked another project.
+                plugin_project_select(&params, options)?
             } else {
                 plugin_project_select(&params, options)?
             }
@@ -2011,7 +2025,10 @@ fn plugin_control_is_lifecycle_mutation(method: &str) -> bool {
             | "setup.rollback"
             | "auth.start"
             | "auth.wait"
+            | "auth.register"
+            | "auth.register.verify"
             | "auth.logout"
+            | "org.create"
             | "org.select"
             | "project.select"
             | "binding.create"
@@ -2108,6 +2125,58 @@ fn plugin_org_list(options: &GlobalOptions) -> Result<Value, String> {
         Err(error) => return Err(format_core_error(error)),
     };
     Ok(json!({"items": items}))
+}
+
+fn plugin_org_create(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
+    let name = plugin_required_string(params, "name")?;
+    let slug = params.get("slug").and_then(Value::as_str);
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let store = SystemCredentialStore::new(credential_dir());
+    let credential = load_user_credential(&store, &resolved.profile)?;
+    let mut client =
+        HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
+            .map_err(format_core_error)?;
+    let organization = client
+        .create_organization(&credential, name, slug)
+        .map_err(format_core_error)?;
+
+    clear_plugin_runner_scope(&mut config, &resolved.profile, true)?;
+    config
+        .set_key(
+            &format!("profiles.{}.organizationId", resolved.profile),
+            organization.id.clone(),
+        )
+        .map_err(format_core_error)?;
+    config.save(&config_path).map_err(format_core_error)?;
+    store.delete(&resolved.profile).map_err(format_core_error)?;
+
+    let runner_bootstrap = plugin_bootstrap_runner_auth(options)?;
+    let service_activation = plugin_activation_result(options);
+    Ok(json!({
+        "profile": resolved.profile,
+        "organization": organization,
+        "changed": true,
+        "runnerBootstrap": runner_bootstrap,
+        "serviceActivation": service_activation,
+        "nextAction": "project.list",
+    }))
+}
+
+fn plugin_activation_result(options: &GlobalOptions) -> Value {
+    match plugin_activate_installed_service_after_bootstrap(options) {
+        Ok(result) => result,
+        Err(error) => json!({
+            "attempted": true,
+            "healthy": false,
+            "status": "activation_failed",
+            "error": plugin_structured_error(&error),
+            "nextAction": "setup.status",
+        }),
+    }
 }
 
 fn plugin_org_select(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
@@ -2227,7 +2296,7 @@ fn plugin_project_select(params: &Value, options: &GlobalOptions) -> Result<Valu
     }
     let scope_changed = resolved.project_id.as_deref() != Some(project_id);
     if scope_changed {
-        clear_plugin_runner_scope(&mut config, &resolved.profile, false)?;
+        clear_plugin_execution_scope(&mut config, &resolved.profile, false)?;
     }
     config
         .set_key(
@@ -2242,9 +2311,6 @@ fn plugin_project_select(params: &Value, options: &GlobalOptions) -> Result<Valu
         )
         .map_err(format_core_error)?;
     config.save(&config_path).map_err(format_core_error)?;
-    if scope_changed {
-        store.delete(&resolved.profile).map_err(format_core_error)?;
-    }
     Ok(json!({"profile": resolved.profile, "project": project, "changed": scope_changed}))
 }
 
@@ -2292,6 +2358,38 @@ fn clear_plugin_runner_scope(
         keys.push("projectId");
     }
     for key in keys {
+        config
+            .set_key(&format!("profiles.{profile}.{key}"), String::new())
+            .map_err(format_core_error)?;
+    }
+    Ok(())
+}
+
+fn clear_plugin_execution_scope(
+    config: &mut CliConfig,
+    profile: &str,
+    clear_project: bool,
+) -> Result<(), String> {
+    let mut keys = vec!["bindingId", "workspacePath"];
+    if clear_project {
+        keys.push("projectId");
+    }
+    for key in keys {
+        config
+            .set_key(&format!("profiles.{profile}.{key}"), String::new())
+            .map_err(format_core_error)?;
+    }
+    Ok(())
+}
+
+fn clear_plugin_auth_scope(config: &mut CliConfig, profile: &str) -> Result<(), String> {
+    for key in [
+        "organizationId",
+        "projectId",
+        "runnerId",
+        "bindingId",
+        "workspacePath",
+    ] {
         config
             .set_key(&format!("profiles.{profile}.{key}"), String::new())
             .map_err(format_core_error)?;
@@ -2818,6 +2916,11 @@ fn plugin_setup_status(options: &GlobalOptions) -> Result<Value, String> {
         .ok()
         .zip(active.as_ref())
         .is_some_and(|(package, runtime)| plugin_runtime_matches_bundle(package, runtime));
+    let service_runtime_matches_bundle = bundled
+        .as_ref()
+        .ok()
+        .is_some_and(|package| plugin_service_runtime_matches_bundle(&service, package));
+    let service_registered = service_registered && service_runtime_matches_bundle;
     let service_readiness =
         if supported && bundled.is_ok() && runtime_matches_bundle && service_registered {
             Some(
@@ -2884,10 +2987,28 @@ fn plugin_setup_status(options: &GlobalOptions) -> Result<Value, String> {
         "supported": supported,
         "bundledRuntime": bundled_runtime,
         "durableRuntime": durable_runtime,
+        "serviceRuntimeMatchesBundle": service_runtime_matches_bundle,
         "setupRequired": setup_required,
         "recommendedNextAction": recommended_next_action,
         "recommendationReason": recommendation_reason,
     }))
+}
+
+fn plugin_service_runtime_matches_bundle(service: &Value, package: &PluginPackageRuntime) -> bool {
+    let Some(path) = service.get("path").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return false;
+    }
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+    let stable_path = package.stable_executable.to_string_lossy();
+    content.contains(stable_path.as_ref())
 }
 
 fn plugin_setup_recommendation(
@@ -2908,7 +3029,7 @@ fn plugin_setup_recommendation(
     } else if !service_registered {
         (true, "setup.plan", "service_not_registered")
     } else if identity_mismatch {
-        (false, "binding.create", "runner_identity_mismatch")
+        (false, "auth.status", "runner_identity_mismatch")
     } else if service_active {
         if readiness_ready == Some(false) {
             (false, "auth.status", "service_active_context_incomplete")
@@ -2918,9 +3039,10 @@ fn plugin_setup_recommendation(
     } else if readiness_ready == Some(true) {
         (true, "setup.plan", "service_ready_but_inactive")
     } else {
-        // A registered service may intentionally remain inactive until auth
-        // and workspace binding complete. Do not turn that into a repair loop.
-        (false, "auth.status", "continue_authentication_and_binding")
+        // A registered service may intentionally remain inactive until Runner
+        // authentication completes. Project/workspace binding is not a
+        // service-lifecycle prerequisite.
+        (false, "auth.status", "continue_runner_authentication")
     }
 }
 
@@ -2995,7 +3117,7 @@ fn plugin_setup_plan(params: &Value, options: &GlobalOptions) -> Result<Value, S
     service_options.config_path = config_path.clone();
     let service_path = default_service_install_path(&service_options)?;
     let service_installed = status
-        .pointer("/service/installed")
+        .get("serviceRuntimeMatchesBundle")
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let service_active = status
@@ -4008,7 +4130,8 @@ fn plugin_auth_status(options: &GlobalOptions) -> Result<Value, String> {
 }
 
 fn plugin_auth_start(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
-    let config = load_cli_config()?;
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
     let mut overrides = options.config_overrides();
     if let Some(server_url) = params.get("serverUrl").and_then(Value::as_str) {
         overrides.server_url = Some(server_url.to_string());
@@ -4030,6 +4153,11 @@ fn plugin_auth_start(params: &Value, options: &GlobalOptions) -> Result<Value, S
             "AUTH_LOGOUT_REQUIRED: logout before starting a new device authorization".to_string(),
         );
     }
+    // A new device-auth flow must never inherit an organization/project from a
+    // previous account or from a manually removed credential. The new account
+    // is scoped again after authentication and organization selection.
+    clear_plugin_auth_scope(&mut config, &resolved.profile)?;
+    config.save(&config_path).map_err(format_core_error)?;
     let mut client =
         HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
             .map_err(format_core_error)?;
@@ -4048,6 +4176,102 @@ fn plugin_auth_start(params: &Value, options: &GlobalOptions) -> Result<Value, S
         "userCode": challenge.user_code,
         "expiresInSeconds": challenge.expires_in_seconds,
         "intervalSeconds": challenge.interval_seconds,
+    }))
+}
+
+fn plugin_auth_register(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
+    let email = plugin_required_string(params, "email")?;
+    let password = plugin_required_string(params, "password")?;
+    let confirm_password = plugin_required_string(params, "confirmPassword")?;
+    let first_name = params
+        .get("firstName")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let last_name = params.get("lastName").and_then(Value::as_str).unwrap_or("");
+    let config = load_cli_config()?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let store = SystemCredentialStore::new(credential_dir());
+    if store
+        .load(&resolved.profile)
+        .map_err(format_core_error)?
+        .is_some()
+        || store
+            .load(&user_credential_profile(&resolved.profile))
+            .map_err(format_core_error)?
+            .is_some()
+    {
+        return Err(
+            "AUTH_LOGOUT_REQUIRED: logout before registering a new Loomex account".to_string(),
+        );
+    }
+    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
+        .map_err(format_core_error)?;
+    let challenge = client
+        .register_workspace(email, first_name, last_name, password, confirm_password)
+        .map_err(format_core_error)?;
+    Ok(json!({
+        "pending": true,
+        "challenge": challenge,
+        "nextAction": "auth.register.verify",
+        "profile": resolved.profile,
+        "serverUrl": resolved.server_url,
+    }))
+}
+
+fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
+    let challenge_id = plugin_required_string(params, "challengeId")?;
+    let email = plugin_required_string(params, "email")?;
+    let code = plugin_required_string(params, "code")?;
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
+        .map_err(format_core_error)?;
+    let login = client
+        .verify_workspace_registration(challenge_id, email, code)
+        .map_err(format_core_error)?;
+    let credential_profile = user_credential_profile(&resolved.profile);
+    let credential = ManagementCredential::from_user_token_response(
+        &credential_profile,
+        "",
+        AuthTokenResponse {
+            access_token: login.token,
+            refresh_token: None,
+            token_type: "Bearer".to_string(),
+            expires_at: "9999-12-31T23:59:59Z".to_string(),
+        },
+        CredentialStorageBackend::LocalFileFallback,
+    )
+    .map_err(format_core_error)?;
+    let store = SystemCredentialStore::new(credential_dir());
+    let storage = store.save(&credential).map_err(format_core_error)?;
+    clear_plugin_auth_scope(&mut config, &resolved.profile)?;
+    config
+        .set_key(
+            &format!("profiles.{}.serverUrl", resolved.profile),
+            resolved.server_url.clone(),
+        )
+        .map_err(format_core_error)?;
+    if let Err(error) = config.save(&config_path) {
+        let _ = store.delete(&credential_profile);
+        return Err(format_core_error(error));
+    }
+    Ok(json!({
+        "authenticated": true,
+        "userAuthenticated": true,
+        "runnerAuthenticated": false,
+        "organizationSelectionRequired": true,
+        "organizationId": Value::Null,
+        "projectId": Value::Null,
+        "profile": resolved.profile,
+        "serverUrl": resolved.server_url,
+        "storageBackend": storage_backend_name(storage.backend),
+        "storageWarning": storage.warning,
+        "nextAction": "org.list",
     }))
 }
 
@@ -4093,8 +4317,30 @@ fn plugin_auth_wait(params: &Value, _options: &GlobalOptions) -> Result<Value, S
     };
     let config_path = cli_config_path();
     let store = SystemCredentialStore::new(credential_dir());
-    let result = complete_plugin_auth_flow(&flow, token, &config_path, &store)?;
+    let mut result = complete_plugin_auth_flow(&flow, token, &config_path, &store)?;
     remove_plugin_auth_flow(login_id)?;
+    // User authentication and Runner authentication are separate credentials.
+    // Completing the device flow must also bootstrap the durable Runner when an
+    // organization is already selected; otherwise setup.status reports a
+    // misleading authenticated=true state while runner.control can never start.
+    if result.get("organizationSelectionRequired") != Some(&Value::Bool(true)) {
+        if let Ok(bootstrap) = plugin_bootstrap_runner_auth(_options) {
+            if let Some(object) = result.as_object_mut() {
+                object.insert("runnerBootstrap".to_string(), bootstrap);
+            }
+            let activation = plugin_activate_installed_service_after_bootstrap(_options)
+                .unwrap_or_else(|error| {
+                    json!({
+                        "attempted": true,
+                        "healthy": false,
+                        "error": error,
+                    })
+                });
+            if let Some(object) = result.as_object_mut() {
+                object.insert("serviceActivation".to_string(), activation);
+            }
+        }
+    }
     Ok(result)
 }
 
@@ -4336,6 +4582,10 @@ fn plugin_runner_control(params: &Value) -> Result<Value, String> {
         );
     }
     if action != "stop" {
+        // Starting/restarting the service is the point at which a user-auth
+        // credential is exchanged for the durable Runner credential. It must
+        // not be gated by a project binding or an execution workspace.
+        plugin_bootstrap_runner_auth(&GlobalOptions::default())?;
         let readiness = plugin_service_bootstrap_readiness(&GlobalOptions::default())?;
         if readiness.get("ready").and_then(Value::as_bool) != Some(true) {
             return Err(format!(
@@ -4343,7 +4593,7 @@ fn plugin_runner_control(params: &Value) -> Result<Value, String> {
                 readiness
                     .get("reason")
                     .and_then(Value::as_str)
-                    .unwrap_or("authenticate and create a workspace binding first")
+                    .unwrap_or("authenticate the local Runner first")
             ));
         }
     }
@@ -4636,6 +4886,106 @@ fn plugin_service_bootstrap_readiness(options: &GlobalOptions) -> Result<Value, 
     ))
 }
 
+/// Ensure that the local durable Runner has its own runner-control credential.
+///
+/// This is deliberately not a project binding operation. A user/device login
+/// authenticates the person using Loomex; the Runner credential authenticates
+/// the local execution service. Project/workflow scope and the execution-local
+/// workspace are resolved when an execution starts, not while the service is
+/// installed or launched.
+fn plugin_bootstrap_runner_auth(options: &GlobalOptions) -> Result<Value, String> {
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let store = SystemCredentialStore::new(credential_dir());
+    let user_credential = load_user_credential(&store, &resolved.profile)?;
+    let organization_id = resolved
+        .organization_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            (!user_credential.organization_id.trim().is_empty())
+                .then(|| user_credential.organization_id.clone())
+        })
+        .ok_or_else(|| {
+            "ORG_SELECTION_REQUIRED: select an organization before starting the Runner".to_string()
+        })?;
+
+    if let Some(existing) = store.load(&resolved.profile).map_err(format_core_error)? {
+        validate_runner_credential_compatibility(&existing)?;
+        existing
+            .validate_not_expiring(
+                current_epoch_seconds()?,
+                MANAGEMENT_TOKEN_CLOCK_SKEW_SECONDS,
+            )
+            .map_err(format_core_error)?;
+        if resolved.runner_id.is_some() {
+            return Ok(json!({
+                "bootstrapped": false,
+                "reused": true,
+                "organizationId": organization_id,
+                "runnerId": resolved.runner_id,
+                "bindingCreated": false,
+            }));
+        }
+    }
+
+    let mut client =
+        HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
+            .map_err(format_core_error)?;
+    let exchange = client
+        .bootstrap_runner_with_workspace_token(
+            &user_credential.access_token,
+            &organization_id,
+            None,
+        )
+        .map_err(format_core_error)?;
+    let runner_id = exchange
+        .runner_id
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "RUNNER_BOOTSTRAP_RESPONSE_INVALID: runnerId is required".to_string())?;
+    let runner_credential = ManagementCredential::from_runner_token_response(
+        &resolved.profile,
+        &organization_id,
+        exchange.token,
+        user_credential.storage_backend,
+    )
+    .map_err(format_core_error)?;
+    store.save(&runner_credential).map_err(format_core_error)?;
+    config
+        .set_key(
+            &format!("profiles.{}.organizationId", resolved.profile),
+            organization_id.clone(),
+        )
+        .map_err(format_core_error)?;
+    config
+        .set_key(
+            &format!("profiles.{}.runnerId", resolved.profile),
+            runner_id.clone(),
+        )
+        .map_err(format_core_error)?;
+    // Stale project binding/workspace state must not silently become Runner
+    // startup context. Those values are execution-scoped now.
+    for key in ["bindingId", "workspacePath"] {
+        config
+            .set_key(
+                &format!("profiles.{}.{}", resolved.profile, key),
+                String::new(),
+            )
+            .map_err(format_core_error)?;
+    }
+    config.save(&config_path).map_err(format_core_error)?;
+    Ok(json!({
+        "bootstrapped": true,
+        "reused": false,
+        "organizationId": organization_id,
+        "runnerId": runner_id,
+        "bindingCreated": false,
+    }))
+}
+
 fn plugin_service_bootstrap_readiness_with<C: ManagementApiClient>(
     resolved: &loomex_core::ResolvedCliSettings,
     runner_credential: Option<&ManagementCredential>,
@@ -4646,9 +4996,7 @@ fn plugin_service_bootstrap_readiness_with<C: ManagementApiClient>(
         runner_credential_local_readiness(runner_credential, now);
     let missing_context = [
         ("organizationId", resolved.organization_id.as_deref()),
-        ("projectId", resolved.project_id.as_deref()),
         ("runnerId", resolved.runner_id.as_deref()),
-        ("bindingId", resolved.binding_id.as_deref()),
     ]
     .into_iter()
     .filter_map(|(name, value)| {
@@ -4701,9 +5049,9 @@ fn plugin_service_bootstrap_readiness_with<C: ManagementApiClient>(
     } else if !credential_ready {
         "runner authentication is not established"
     } else if !missing_context.is_empty() {
-        "organization, project, runner, and binding must be selected"
+        "organization and Runner identity must be established"
     } else if identity.get("matched").and_then(Value::as_bool) == Some(false) {
-        "authenticated runner does not match configured runnerId; recreate or reuse the exact binding for this runner"
+        "authenticated Runner does not match configured runnerId; bootstrap the local Runner again"
     } else if !identity_ready {
         "authenticated runner identity could not be verified"
     } else {
@@ -5984,8 +6332,50 @@ fn run_runner_service_run_parsed<C: ManagementApiClient>(
         json!({"profile": resolved.profile, "once": service_options.once}),
     )?;
     let Some(binding_id) = resolved.binding_id.as_deref() else {
-        return Err(
-            "RUNNER_SERVICE_BINDING_REQUIRED: selected profile has no bindingId".to_string(),
+        // The durable service is authenticated independently from execution
+        // scope. Keep the local-control daemon alive while the Plugin creates
+        // an execution scope; do not fail the service merely because no
+        // project/workspace binding exists at startup.
+        let recovery_path = service_options
+            .config_path
+            .with_extension("execution-scope.jobs.json");
+        let mut recovery =
+            RunnerJobRecoveryJournal::open(&recovery_path).map_err(format_core_error)?;
+        if service_options.once {
+            let start = RunnerServiceRuntimeStart {
+                transport: "local_control_only".to_string(),
+                event: "waiting_for_execution_scope".to_string(),
+                fallback: false,
+            };
+            append_runner_service_log(
+                &log_path,
+                &credential,
+                "info",
+                "runner.service.waiting_for_execution_scope",
+                "runner service is ready; no execution scope is active",
+                json!({}),
+            )?;
+            if options.json {
+                return Ok(json!({
+                    "schemaVersion": "loomex.cli.runnerServiceRun/v1",
+                    "running": true,
+                    "once": true,
+                    "transport": start.transport,
+                    "event": start.event,
+                    "fallback": start.fallback,
+                    "profile": resolved.profile,
+                    "scope": null,
+                })
+                .to_string());
+            }
+            return Ok("runner service ready; waiting for execution scope".to_string());
+        }
+        return run_runner_control_service_waiting_for_execution_scope(
+            client,
+            &credential,
+            resolved,
+            &mut recovery,
+            &log_path,
         );
     };
     let guard =
@@ -6122,6 +6512,45 @@ fn run_runner_control_service_loop<C: ManagementApiClient>(
     }
 }
 
+fn run_runner_control_service_waiting_for_execution_scope<C: ManagementApiClient>(
+    client: &mut C,
+    credential: &ManagementCredential,
+    resolved: &loomex_core::ResolvedCliSettings,
+    recovery: &mut RunnerJobRecoveryJournal,
+    log_path: &Path,
+) -> Result<String, String> {
+    loop {
+        let binding = resolved.project_id.as_deref().and_then(|project_id| {
+            client
+                .list_project_runner_bindings(credential, project_id)
+                .ok()
+                .and_then(|bindings| {
+                    bindings.into_iter().find(|binding| {
+                        binding.status == "active"
+                            && resolved
+                                .runner_id
+                                .as_deref()
+                                .is_none_or(|runner_id| runner_id == binding.runner_id)
+                    })
+                })
+        });
+        if let Some(binding) = binding {
+            let mut scoped = resolved.clone();
+            scoped.binding_id = Some(binding.id.clone());
+            run_runner_control_service_loop(
+                client,
+                credential,
+                &scoped,
+                &binding.id,
+                recovery,
+                log_path,
+            )?;
+            return Ok(String::new());
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RunnerControlReconnectBackoff {
     retry_delay: Duration,
@@ -6157,7 +6586,13 @@ fn run_runner_control_session<C: ManagementApiClient>(
     log_path: &Path,
     on_session_healthy: &mut dyn FnMut(),
 ) -> Result<(), String> {
-    let session = create_runner_control_session(client, credential, resolved, binding_id)?;
+    // A discovered execution scope is intentionally ephemeral and is not
+    // written back to the selected profile. The job executor still needs the
+    // scope while processing this session, so carry it through a request-local
+    // settings copy.
+    let mut scoped = resolved.clone();
+    scoped.binding_id = Some(binding_id.to_string());
+    let session = create_runner_control_session(client, credential, &scoped, binding_id)?;
     let session_id = session_id_from_response(&session)?;
     write_runner_session_marker(&session_id);
     let _ = append_runner_service_log(
@@ -6169,12 +6604,12 @@ fn run_runner_control_session<C: ManagementApiClient>(
         json!({"sessionId": session_id}),
     );
     eprintln!("runner control session connected: {session_id}");
-    recover_pending_runner_jobs(client, credential, resolved, &session_id, recovery)?;
+    recover_pending_runner_jobs(client, credential, &scoped, &session_id, recovery)?;
     let mut idle_ticks = 0usize;
     let mut session_health_confirmed = false;
     loop {
         let processed =
-            process_one_runner_control_job(client, credential, resolved, &session_id, recovery)?;
+            process_one_runner_control_job(client, credential, &scoped, &session_id, recovery)?;
         if !session_health_confirmed {
             on_session_healthy();
             session_health_confirmed = true;
@@ -6189,7 +6624,7 @@ fn run_runner_control_session<C: ManagementApiClient>(
                 .heartbeat_runner_session(
                     credential,
                     &session_id,
-                    runner_control_manifest(resolved, binding_id),
+                    runner_control_manifest(&scoped, binding_id),
                 )
                 .map_err(format_core_error)?;
         }
@@ -10340,7 +10775,7 @@ mod tests {
     #[test]
     fn setup_recommendation_distinguishes_deferred_from_stopped_service() {
         assert_eq!(
-            (false, "auth.status", "continue_authentication_and_binding"),
+            (false, "auth.status", "continue_runner_authentication"),
             plugin_setup_recommendation(true, true, true, true, false, Some(false), false)
         );
         assert_eq!(
@@ -10368,7 +10803,7 @@ mod tests {
             plugin_setup_recommendation(false, true, false, false, false, None, false)
         );
         assert_eq!(
-            (false, "binding.create", "runner_identity_mismatch"),
+            (false, "auth.status", "runner_identity_mismatch"),
             plugin_setup_recommendation(true, true, true, true, true, Some(false), true)
         );
     }
@@ -10437,7 +10872,7 @@ mod tests {
         );
         assert_eq!(
             plugin_setup_recommendation(true, true, true, true, true, Some(false), true),
-            (false, "binding.create", "runner_identity_mismatch")
+            (false, "auth.status", "runner_identity_mismatch")
         );
         let _ = fs::remove_dir_all(workspace);
     }
@@ -11232,6 +11667,52 @@ mod tests {
             PathBuf::from(parsed["guardPath"].as_str().unwrap())
         );
         assert!(!guard_path.exists());
+    }
+
+    #[test]
+    fn runner_service_run_once_does_not_require_execution_scope() {
+        let config_path = temp_config_path("service-run-once-without-scope");
+        let log_path = temp_config_path("service-run-once-without-scope-log");
+        let credential_root = temp_credential_dir("service-run-once-without-scope");
+        let store = LocalCredentialStore::new(credential_root.clone());
+        let mut config = CliConfig::default();
+        config
+            .set_key("profiles.default.organizationId", "org_123".to_string())
+            .unwrap();
+        config
+            .set_key("profiles.default.runnerId", "runner_123".to_string())
+            .unwrap();
+        config.save(&config_path).unwrap();
+        let mut service_credential = credential("default", "org_123");
+        service_credential.expires_at = "2099-01-01T00:00:00Z".to_string();
+        store.save(&service_credential).unwrap();
+        let mut client = FakeManagementClient::default();
+        let mut launcher = TestRuntimeLauncher::default();
+
+        let output = run_runner_service_run_with(
+            &[
+                "--config".to_string(),
+                config_path.to_string_lossy().to_string(),
+                "--once".to_string(),
+                "--log-path".to_string(),
+                log_path.to_string_lossy().to_string(),
+            ],
+            &GlobalOptions {
+                json: true,
+                ..Default::default()
+            },
+            &store,
+            &mut client,
+            &mut launcher,
+        )
+        .unwrap();
+        let parsed: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!("local_control_only", parsed["transport"]);
+        assert_eq!("waiting_for_execution_scope", parsed["event"]);
+
+        let _ = fs::remove_file(config_path);
+        let _ = fs::remove_file(log_path);
+        let _ = fs::remove_dir_all(credential_root);
     }
 
     #[test]
@@ -13003,12 +13484,12 @@ mod tests {
             .unwrap();
         let readiness =
             plugin_service_bootstrap_readiness_with(&resolved, Some(&runner), 0, &mut client);
-        assert_eq!(readiness["ready"], false);
-        assert!(readiness["missingContext"]
+        assert_eq!(readiness["ready"], true);
+        assert!(!readiness["missingContext"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|field| field == "bindingId"));
+            .any(|field| field == "bindingId" || field == "projectId"));
         let _ = fs::remove_file(config_path);
         let _ = fs::remove_dir_all(credential_root);
     }
@@ -13700,7 +14181,7 @@ mod tests {
     }
 
     #[test]
-    fn project_and_organization_switch_clear_stale_runner_scope() {
+    fn organization_switch_clears_runner_scope_but_project_switch_keeps_runner_auth() {
         let mut project_switch = CliConfig::default();
         for (key, value) in [
             ("organizationId", "org_123"),
@@ -13714,12 +14195,12 @@ mod tests {
                 .unwrap();
         }
 
-        clear_plugin_runner_scope(&mut project_switch, "default", false).unwrap();
+        clear_plugin_execution_scope(&mut project_switch, "default", false).unwrap();
 
         let profile = &project_switch.profiles["default"];
         assert_eq!(profile.organization_id.as_deref(), Some("org_123"));
         assert_eq!(profile.project_id.as_deref(), Some("prj_old"));
-        assert!(profile.runner_id.is_none());
+        assert_eq!(profile.runner_id.as_deref(), Some("runner_old"));
         assert!(profile.binding_id.is_none());
         assert!(profile.workspace_path.is_none());
 
@@ -15307,6 +15788,35 @@ mod tests {
             _email: &str,
             _password: &str,
         ) -> loomex_core::CoreResult<loomex_core::WorkspaceLoginResult> {
+            Err(loomex_core::CoreError::new("TEST_UNIMPLEMENTED", "unused"))
+        }
+
+        fn register_workspace(
+            &mut self,
+            _email: &str,
+            _first_name: &str,
+            _last_name: &str,
+            _password: &str,
+            _confirm_password: &str,
+        ) -> loomex_core::CoreResult<loomex_core::WorkspaceRegistrationChallenge> {
+            Err(loomex_core::CoreError::new("TEST_UNIMPLEMENTED", "unused"))
+        }
+
+        fn verify_workspace_registration(
+            &mut self,
+            _challenge_id: &str,
+            _email: &str,
+            _code: &str,
+        ) -> loomex_core::CoreResult<loomex_core::WorkspaceLoginResult> {
+            Err(loomex_core::CoreError::new("TEST_UNIMPLEMENTED", "unused"))
+        }
+
+        fn create_organization(
+            &mut self,
+            _credential: &ManagementCredential,
+            _name: &str,
+            _slug: Option<&str>,
+        ) -> loomex_core::CoreResult<Organization> {
             Err(loomex_core::CoreError::new("TEST_UNIMPLEMENTED", "unused"))
         }
 

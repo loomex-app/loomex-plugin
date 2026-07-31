@@ -78,7 +78,7 @@ impl Server {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
             "serverInfo": {"name": "loomex", "title": "Loomex Local Workflow Runner", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "For every Loomex request, first call loomex_setup_status. For setup.plan, immediately call read-only loomex_setup_plan. Ask approval only before loomex_setup_apply. Complete auth/scope/binding; resume the original request. Never require a special setup phrase. Loomex is the only execution surface: on error, stop and report exact state. Never replace failed work with shell, file edits, direct provider CLIs, or ad-hoc implementation. Only loomex_* recovery/diagnostic tools may follow failure."
+            "instructions": "For every Loomex request, first call loomex_setup_status. For setup.plan, immediately call read-only loomex_setup_plan. Ask approval only before loomex_setup_apply. Complete user/Runner auth and org/project scope; binding/workspace per-run; resume the original request. Never require a special setup phrase. Loomex is the execution surface: on error, stop and report exact state. Never replace failures with shell, edits, provider CLIs, or ad-hoc work. Only loomex_* recovery/diagnostic tools may follow failure."
         }))
     }
 
@@ -252,6 +252,23 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             .unwrap_or("Loomex returned an unspecified error");
         return Ok(format!(
             "LOOMEX HARD STOP: {name} failed with {code}: {message}. Do not use shell commands, file edits, direct provider CLIs, or any fallback implementation. Do not claim the Loomex work completed. Only call another loomex_* tool for Loomex recovery or diagnostics; otherwise report this exact error and stop."
+        ));
+    }
+    let builder_task = envelope
+        .pointer("/data/agentTask")
+        .filter(|task| task.is_object())
+        .is_some();
+    if builder_task
+        && matches!(
+            name,
+            "loomex_workflow_create" | "loomex_workflow_create_respond"
+        )
+    {
+        let serialized = serde_json::to_string(envelope).map_err(|error| {
+            RpcError::new(-32603, format!("could not encode tool result: {error}"))
+        })?;
+        return Ok(format!(
+            "WORKFLOW BUILDER DISPATCH CONTRACT: this is internal Loomex work. Execute only the server-selected Codex sub-agent route. Verify `agentTask.promptContract.sha256`; pass `agentTask.prompt` as the sole sub-agent prompt byte-for-byte. Follow `agentTask.sessionDirective`: spawn on the first attempt and resume the exact session on repair. Do not edit files, run shell commands, call provider CLIs, construct a new prompt, or return anything except the server-defined JSON response. Submit the result with loomex_workflow_create_respond using the session id and a fresh idempotency key. If the server returns another agentTask, repeat with the same sub-agent session.\n\n{serialized}"
         ));
     }
     let requests = envelope
@@ -853,7 +870,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             list_response["result"]["tools"].as_array().unwrap().len(),
-            34
+            39
         );
         let null_metadata_response = server()
             .handle(json!({

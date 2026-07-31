@@ -57,6 +57,22 @@ pub struct WorkspaceLoginResult {
     pub project_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRegistrationChallenge {
+    pub challenge_id: String,
+    pub email: String,
+    pub status: String,
+    #[serde(default)]
+    pub purpose: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub resend_available_at: Option<String>,
+    #[serde(default)]
+    pub reused: bool,
+}
+
 impl ApiKeyExchangeResult {
     pub fn from_token(token: AuthTokenResponse) -> Self {
         Self {
@@ -142,6 +158,14 @@ pub struct WorkflowRunStartResponse {
     pub status: String,
     #[serde(default, rename = "uiUrl", alias = "ui_url")]
     pub ui_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowBuilderStartRequest {
+    pub project_id: String,
+    pub prompt: String,
+    pub model: Option<String>,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,6 +395,22 @@ struct WorkspaceLoginData {
     organization: Option<WorkspaceOrganizationData>,
     #[serde(default)]
     projects: Vec<WorkspaceProjectData>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceRegistrationData {
+    challenge_id: String,
+    email: String,
+    status: String,
+    #[serde(default)]
+    purpose: Option<String>,
+    #[serde(default)]
+    expires_at: Option<String>,
+    #[serde(default)]
+    resend_available_at: Option<String>,
+    #[serde(default)]
+    reused: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -924,6 +964,26 @@ pub trait ManagementApiClient {
         organization_id: &str,
     ) -> CoreResult<ApiKeyExchangeResult>;
     fn login_workspace(&mut self, email: &str, password: &str) -> CoreResult<WorkspaceLoginResult>;
+    fn register_workspace(
+        &mut self,
+        email: &str,
+        first_name: &str,
+        last_name: &str,
+        password: &str,
+        confirm_password: &str,
+    ) -> CoreResult<WorkspaceRegistrationChallenge>;
+    fn verify_workspace_registration(
+        &mut self,
+        challenge_id: &str,
+        email: &str,
+        code: &str,
+    ) -> CoreResult<WorkspaceLoginResult>;
+    fn create_organization(
+        &mut self,
+        credential: &ManagementCredential,
+        name: &str,
+        slug: Option<&str>,
+    ) -> CoreResult<Organization>;
     fn bootstrap_runner_with_workspace_token(
         &mut self,
         workspace_token: &str,
@@ -1022,6 +1082,28 @@ pub trait ManagementApiClient {
         credential: &ManagementCredential,
         request: &WorkflowRunStartRequest,
     ) -> CoreResult<WorkflowRunStartResponse>;
+    fn start_workflow_builder(
+        &mut self,
+        _credential: &ManagementCredential,
+        _request: &WorkflowBuilderStartRequest,
+    ) -> CoreResult<Value> {
+        Err(CoreError::new(
+            "WORKFLOW_BUILDER_UNSUPPORTED",
+            "management client does not support the workflow builder",
+        ))
+    }
+    fn respond_workflow_builder(
+        &mut self,
+        _credential: &ManagementCredential,
+        _session_id: &str,
+        _response: &Value,
+        _idempotency_key: &str,
+    ) -> CoreResult<Value> {
+        Err(CoreError::new(
+            "WORKFLOW_BUILDER_UNSUPPORTED",
+            "management client does not support the workflow builder",
+        ))
+    }
     fn list_runner_workflows(
         &mut self,
         credential: &ManagementCredential,
@@ -1623,6 +1705,94 @@ impl ManagementApiClient for HttpManagementApiClient {
         })
     }
 
+    fn register_workspace(
+        &mut self,
+        email: &str,
+        first_name: &str,
+        last_name: &str,
+        password: &str,
+        confirm_password: &str,
+    ) -> CoreResult<WorkspaceRegistrationChallenge> {
+        let response = self
+            .apply_common_headers(self.client.post(self.url("/workspace/auth/register/")))
+            .json(&serde_json::json!({
+                "email": email,
+                "firstName": first_name,
+                "lastName": last_name,
+                "password": password,
+                "confirmPassword": confirm_password,
+            }))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<WorkspaceRegistrationData> = parse_json_response(response)?;
+        Ok(WorkspaceRegistrationChallenge {
+            challenge_id: envelope.data.challenge_id,
+            email: envelope.data.email,
+            status: envelope.data.status,
+            purpose: envelope.data.purpose,
+            expires_at: envelope.data.expires_at,
+            resend_available_at: envelope.data.resend_available_at,
+            reused: envelope.data.reused,
+        })
+    }
+
+    fn verify_workspace_registration(
+        &mut self,
+        challenge_id: &str,
+        email: &str,
+        code: &str,
+    ) -> CoreResult<WorkspaceLoginResult> {
+        let response = self
+            .apply_common_headers(
+                self.client
+                    .post(self.url("/workspace/auth/register/verify/")),
+            )
+            .json(&serde_json::json!({
+                "challengeId": challenge_id,
+                "email": email,
+                "code": code,
+            }))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<WorkspaceLoginData> = parse_json_response(response)?;
+        let organization_id = envelope.data.organization.map(|item| item.id);
+        let project_id = envelope
+            .data
+            .projects
+            .into_iter()
+            .find(|project| {
+                organization_id
+                    .as_deref()
+                    .map(|org| project.organization_id.as_deref() == Some(org))
+                    .unwrap_or(true)
+            })
+            .map(|project| project.id);
+        Ok(WorkspaceLoginResult {
+            token: envelope.data.token,
+            organization_id,
+            project_id,
+        })
+    }
+
+    fn create_organization(
+        &mut self,
+        credential: &ManagementCredential,
+        name: &str,
+        slug: Option<&str>,
+    ) -> CoreResult<Organization> {
+        let mut body = serde_json::json!({"name": name});
+        if let Some(slug) = slug.filter(|value| !value.trim().is_empty()) {
+            body["slug"] = Value::String(slug.to_string());
+        }
+        let response = self
+            .post_with_auth("/organizations/", credential)
+            .json(&body)
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<Organization> = parse_json_response(response)?;
+        Ok(envelope.data)
+    }
+
     fn bootstrap_runner_with_workspace_token(
         &mut self,
         workspace_token: &str,
@@ -1906,6 +2076,51 @@ impl ManagementApiClient for HttpManagementApiClient {
                 .and_then(Value::as_str)
                 .map(str::to_string),
         })
+    }
+
+    fn start_workflow_builder(
+        &mut self,
+        credential: &ManagementCredential,
+        request: &WorkflowBuilderStartRequest,
+    ) -> CoreResult<Value> {
+        let response = self
+            .post_with_auth(
+                "/runner-control/runner/v1/workflow-builder/sessions/",
+                credential,
+            )
+            .header("Idempotency-Key", &request.idempotency_key)
+            .json(&serde_json::json!({
+                "projectId": request.project_id,
+                "prompt": request.prompt,
+                "model": request.model,
+            }))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
+        Ok(envelope.data)
+    }
+
+    fn respond_workflow_builder(
+        &mut self,
+        credential: &ManagementCredential,
+        session_id: &str,
+        response: &Value,
+        idempotency_key: &str,
+    ) -> CoreResult<Value> {
+        let response = self
+            .post_with_auth(
+                &format!(
+                    "/runner-control/runner/v1/workflow-builder/sessions/{}/responses/",
+                    encode_path(session_id)
+                ),
+                credential,
+            )
+            .header("Idempotency-Key", idempotency_key)
+            .json(&serde_json::json!({"response": response}))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
+        Ok(envelope.data)
     }
 
     fn get_runner_job(

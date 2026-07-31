@@ -1,9 +1,9 @@
 # Loomex for Codex
 
 The Loomex plugin makes Codex a conversational client for Loomex. It can browse
-workflows, bind a selected project to the local Runner, start and follow durable
-runs, and surface human requests and approval decisions. A binding identifies a
-project Runner only; each execution supplies its own local workspace path.
+workflows, start and follow durable runs, and surface human requests and
+approval decisions. Runner authentication is independent from project scope;
+each execution supplies its own local workspace path and execution scope.
 
 ## User experience
 
@@ -12,9 +12,16 @@ and the matching, verified Loomex Runner runtime. No special setup prompt is
 needed: any natural Loomex request makes Codex check setup status first. When
 the durable per-user service is missing, Codex automatically prepares and shows
 the read-only setup plan, asks for approval only before applying it, then guides
-authentication, scope selection, and project binding before resuming the
-original request. There is no separate Runner download in the normal
+Runner authentication and scope selection before resuming the original request.
+There is no separate Runner download in the normal
 installation flow.
+
+The default profile targets the Loomex production API:
+
+```toml
+[profiles.default]
+serverUrl = "https://loomex.app"
+```
 
 ## Install from the Loomex marketplace
 
@@ -27,10 +34,11 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.56/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.57/install-codex.sh | sh
 ```
 
-The `0.1.56` release keeps pending Codex sub-agent tasks separate from
+The `0.1.57` release adds guided account registration, logout, organization
+creation and organization switching, while keeping pending Codex sub-agent tasks separate from
 resolved Gemini/Claude Runner tasks and routes `run_wait` by the resolved
 provider. It also makes Loomex automatically recover rejected local
 management credentials and fail closed on workflow/tool/provider errors:
@@ -166,7 +174,7 @@ System-wide installation and administrator access are not required.
 ## Durable execution and the closed-Codex boundary
 
 `loomex-mcp` is an adapter, not the execution engine. Before the service exists,
-it routes setup, authentication, scope, binding, and service-control operations
+it routes setup, authentication, scope, and service-control operations
 through the bundled `loomex` bootstrap command. Workflow execution and live run
 operations use the authenticated local-control socket of the durable service;
 read-only status, diagnostics, and logs can fall back to the bootstrap command

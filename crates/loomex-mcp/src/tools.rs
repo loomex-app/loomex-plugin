@@ -120,12 +120,48 @@ pub fn definitions() -> Vec<ToolDefinition> {
             mutating(false, false, true),
         ),
         tool(
+            "loomex_auth_register",
+            "Register account",
+            "Create a Loomex workspace account and return the email verification challenge. This does not create an organization.",
+            "auth.register",
+            obj(
+                &[
+                    ("email", string()),
+                    ("firstName", string()),
+                    ("lastName", string()),
+                    ("password", string()),
+                    ("confirmPassword", string()),
+                ],
+                &["email", "password", "confirmPassword"],
+            ),
+            mutating(false, false, true),
+        ),
+        tool(
+            "loomex_auth_register_verify",
+            "Verify registration",
+            "Verify a Loomex registration email code and save the new local user session.",
+            "auth.register.verify",
+            obj(
+                &[("challengeId", string()), ("email", string()), ("code", string())],
+                &["challengeId", "email", "code"],
+            ),
+            mutating(true, false, true),
+        ),
+        tool(
             "loomex_auth_logout",
             "Log out",
             "Delete local Loomex credentials for this runner.",
             "auth.logout",
             obj(&[("confirm", const_true())], &["confirm"]),
             mutating(true, true, true),
+        ),
+        tool(
+            "loomex_org_create",
+            "Create organization",
+            "Create and select an organization for the authenticated account, then bootstrap the local Runner without creating a project or binding.",
+            "org.create",
+            obj(&[("name", string()), ("slug", string())], &["name"]),
+            mutating(false, true, true),
         ),
         tool_with_meta(
             "loomex_org_list",
@@ -231,6 +267,37 @@ pub fn definitions() -> Vec<ToolDefinition> {
                     ("idempotencyKey", idempotency_key()),
                 ],
                 &["workflowId", "bindingId", "workspacePath", "idempotencyKey"],
+            ),
+            mutating(false, true, true),
+        ),
+        tool(
+            "loomex_workflow_create",
+            "Create workflow with AI",
+            "Start an AI-assisted workflow design session. The server supplies the exact prompt and validation contract; the Plugin must dispatch the returned Codex sub-agent and must not edit files or execute providers directly.",
+            "workflow.create",
+            obj(
+                &[
+                    ("prompt", string()),
+                    ("projectId", identifier()),
+                    ("model", string()),
+                    ("idempotencyKey", idempotency_key()),
+                ],
+                &["prompt", "idempotencyKey"],
+            ),
+            mutating(false, true, true),
+        ),
+        tool(
+            "loomex_workflow_create_respond",
+            "Continue AI workflow creation",
+            "Submit the exact structured result from the server-selected workflow-builder sub-agent. If validation fails, the server returns a repair task for the same sub-agent session.",
+            "workflow.create.respond",
+            obj(
+                &[
+                    ("sessionId", identifier()),
+                    ("response", any_value()),
+                    ("idempotencyKey", idempotency_key()),
+                ],
+                &["sessionId", "response", "idempotencyKey"],
             ),
             mutating(false, true, true),
         ),
@@ -488,8 +555,11 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_auth_status" => "auth.status",
                 "loomex_auth_start" => "auth.start",
                 "loomex_auth_wait" => "auth.wait",
+                "loomex_auth_register" => "auth.register",
+                "loomex_auth_register_verify" => "auth.register.verify",
                 "loomex_auth_logout" => "auth.logout",
                 "loomex_org_list" => "org.list",
+                "loomex_org_create" => "org.create",
                 "loomex_org_select" => "org.select",
                 "loomex_project_list" => "project.list",
                 "loomex_project_select" => "project.select",
@@ -499,6 +569,8 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_workflow_list" => "workflow.list",
                 "loomex_workflow_show" => "workflow.show",
                 "loomex_workflow_run" => "workflow.run",
+                "loomex_workflow_create" => "workflow.create",
+                "loomex_workflow_create_respond" => "workflow.create.respond",
                 "loomex_run_list" => "run.list",
                 "loomex_run_get" => "run.get",
                 "loomex_run_wait" => "run.wait",
@@ -867,6 +939,36 @@ fn output_data_schema(tool_name: &str) -> Value {
                 &["authenticated", "pending", "profile", "serverUrl"],
             )
         ]}),
+        "loomex_auth_register" => evolvable_object(
+            &[
+                ("pending", json!({"const":true})),
+                ("challenge", evolvable_object(&[], &[])),
+                ("nextAction", json!({"const":"auth.register.verify"})),
+                ("profile", identifier()),
+                ("serverUrl", uri_string()),
+            ],
+            &["pending", "challenge", "nextAction", "profile", "serverUrl"],
+        ),
+        "loomex_auth_register_verify" => evolvable_object(
+            &[
+                ("authenticated", json!({"const":true})),
+                ("userAuthenticated", json!({"const":true})),
+                ("runnerAuthenticated", json!({"const":false})),
+                ("organizationSelectionRequired", json!({"const":true})),
+                ("profile", identifier()),
+                ("serverUrl", uri_string()),
+                ("nextAction", json!({"const":"org.list"})),
+            ],
+            &[
+                "authenticated",
+                "userAuthenticated",
+                "runnerAuthenticated",
+                "organizationSelectionRequired",
+                "profile",
+                "serverUrl",
+                "nextAction",
+            ],
+        ),
         "loomex_auth_logout" => evolvable_object(
             &[
                 ("profile", identifier()),
@@ -884,6 +986,24 @@ fn output_data_schema(tool_name: &str) -> Value {
         "loomex_org_list" => {
             evolvable_object(&[("items", array_of(organization_schema()))], &["items"])
         }
+        "loomex_org_create" => evolvable_object(
+            &[
+                ("profile", identifier()),
+                ("organization", organization_schema()),
+                ("changed", json!({"const":true})),
+                ("runnerBootstrap", evolvable_object(&[], &[])),
+                ("serviceActivation", evolvable_object(&[], &[])),
+                ("nextAction", json!({"const":"project.list"})),
+            ],
+            &[
+                "profile",
+                "organization",
+                "changed",
+                "runnerBootstrap",
+                "serviceActivation",
+                "nextAction",
+            ],
+        ),
         "loomex_org_select" => evolvable_object(
             &[
                 ("profile", identifier()),
@@ -971,6 +1091,16 @@ fn output_data_schema(tool_name: &str) -> Value {
             ],
         ),
         "loomex_workflow_run" | "loomex_run_get" | "loomex_run_wait" => run_detail_schema(),
+        "loomex_workflow_create" | "loomex_workflow_create_respond" => evolvable_object(
+            &[
+                ("builderSession", nullable(evolvable_object(&[], &[]))),
+                ("status", string()),
+                ("agentTask", nullable(evolvable_object(&[], &[]))),
+                ("validationErrors", array_of(string())),
+                ("workflowDraft", nullable(evolvable_object(&[], &[]))),
+            ],
+            &["builderSession", "status"],
+        ),
         "loomex_run_list" => evolvable_object(
             &[
                 ("executions", array_of(execution_schema())),
@@ -1394,10 +1524,30 @@ mod tests {
                 json!({"loginId":"login-1","verificationUri":"https://loomex.app/device","userCode":"ABCD","expiresInSeconds":600,"intervalSeconds":5})
             }
             "loomex_auth_wait" => json!({"authenticated":false,"pending":true,"loginId":"login-1"}),
+            "loomex_auth_register" => json!({
+                "pending":true,
+                "challenge":{"challengeId":"challenge-1","email":"new@example.com","status":"pending"},
+                "nextAction":"auth.register.verify",
+                "profile":"default",
+                "serverUrl":"https://loomex.app"
+            }),
+            "loomex_auth_register_verify" => json!({
+                "authenticated":true,
+                "userAuthenticated":true,
+                "runnerAuthenticated":false,
+                "organizationSelectionRequired":true,
+                "profile":"default",
+                "serverUrl":"https://loomex.app",
+                "nextAction":"org.list"
+            }),
             "loomex_auth_logout" => {
                 json!({"profile":"default","localCredentialRemoved":true,"serverRevokeAttempted":true,"serverRevokeSucceeded":true})
             }
             "loomex_org_list" => json!({"items":[organization]}),
+            "loomex_org_create" => json!({
+                "profile":"default","organization":organization,"changed":true,
+                "runnerBootstrap":{},"serviceActivation":{},"nextAction":"project.list"
+            }),
             "loomex_org_select" => {
                 json!({"profile":"default","organization":organization,"changed":true})
             }
@@ -1423,6 +1573,22 @@ mod tests {
                 json!({"workflow":{"id":"workflow-1","name":"Review"},"inputSchema":{},"activeVersion":null,"selectedVersion":null})
             }
             "loomex_workflow_run" | "loomex_run_get" | "loomex_run_wait" => run(),
+            "loomex_workflow_create" => json!({
+                "builderSession": {"id":"builder-session-1","status":"awaiting_agent","attemptCount":1},
+                "status":"awaiting_agent",
+                "agentTask": {
+                    "resolvedProvider":"codex",
+                    "resolvedModel":"gpt-5.6",
+                    "prompt":"Build a workflow",
+                    "promptContract":{"sha256":"test"},
+                    "sessionDirective":{"action":"spawn"}
+                }
+            }),
+            "loomex_workflow_create_respond" => json!({
+                "builderSession": {"id":"builder-session-1","status":"completed","attemptCount":1},
+                "status":"completed",
+                "workflowDraft": {"name":"Review","workflow":{"nodes":[],"transitions":[]}}
+            }),
             "loomex_run_list" => {
                 json!({"executions":[{"id":"run-1","status":"running"}],"nextCursor":null})
             }
@@ -1494,7 +1660,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_unique_route_and_strict_top_level_schema() {
         let definitions = definitions();
-        assert_eq!(definitions.len(), 34);
+        assert_eq!(definitions.len(), 39);
         let mut names = HashSet::new();
         for tool in definitions {
             assert!(names.insert(tool.name));

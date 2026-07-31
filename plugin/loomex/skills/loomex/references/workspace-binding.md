@@ -6,11 +6,14 @@ be selected; otherwise show concise choices and ask the user. Persist an explici
 selection with `loomex_org_select(organizationId)` or
 `loomex_project_select(projectId)` only after the choice is clear.
 
-Before creating a binding, call `loomex_binding_list` and inspect the selected
-project and runner. It accepts optional `projectId` and `status` (`active`,
-`revoked`, or `all`). Reuse an active binding to the selected project. Binding
-records are pathless; the local path is selected independently for each
-execution.
+Binding records are not Runner installation state. The durable Runner can
+start with only Runner authentication; the local path and execution scope are
+selected independently for each execution.
+
+Before creating an execution scope, call `loomex_binding_list` and inspect the
+selected project and Runner. It accepts optional `projectId` and `status`
+(`active`, `revoked`, or `all`). Reuse only a scope that belongs to the current
+execution; never persist a workspace path on a binding.
 
 For `loomex_binding_create`:
 

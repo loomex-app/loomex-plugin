@@ -31,10 +31,10 @@ admin rights, install system-wide, or copy binaries manually. The tool verifies
 the bundled release, installs atomically, health-checks the candidate, then
 switches the active version.
 
-On a first install before authentication and project binding are complete,
-the per-user service is registered with deferred start. Authentication and
-binding remain available through the bundled bootstrap; completing the binding
-activates and health-checks the installed service. Rollback follows the same
+On a first install before Runner authentication is complete, the per-user
+service is registered with deferred start. Completing Runner authentication
+activates and health-checks the installed service; project scope and execution
+workspace are not service-readiness prerequisites. Rollback follows the same
 readiness rule: an installed but not-yet-ready service remains deferred, and a
 failed activation restores the prior runtime pointer or returns an explicit
 recoverable partial-state error.
@@ -49,21 +49,19 @@ service is healthy, long-running workflow execution no longer depends on Codex.
 
 If `recommendedNextAction` is `auth.status`, do not create another setup plan,
 even when the registered service is inactive or deferred while authentication
-or binding is incomplete. Continue with authentication, organization/project
-scope, and project binding below, then resume the original Loomex request. The
-filesystem workspace is selected per workflow execution, not during binding.
+is incomplete. Continue with authentication and organization/project scope,
+then resume the original Loomex request. Runner authentication is independent
+from project scope; the filesystem workspace and any execution scope are
+selected when that execution starts.
 If `loomex_org_list` or another scope call returns a successful response with
 `reauthRequired: true` and an embedded `auth` challenge, the Plugin has already
 cleared stale local credentials and started a replacement device flow. Show the
 returned verification URI/code, call `loomex_auth_wait` with the exact returned
 `loginId`, and retry the failed scope call after authentication succeeds. Do not
 ask the user to edit config, register a workspace, or manually delete tokens.
-If the action is `binding.create` with reason `runner_identity_mismatch`, treat
-it as an explicit binding repair, not a setup reinstall or automatic identity
-rewrite. Read the current organization, project, and bindings; show the exact
-workspace and authenticated-Runner repair; obtain confirmation; then call
-`loomex_binding_create`. Do not restart the Runner merely to conceal the
-identity mismatch.
+If the authenticated Runner identity is stale or mismatched, re-bootstrap the
+Runner credential through the setup/auth flow. Do not create a project binding
+or persist a workspace merely to make the service start.
 If the action is `unsupported`, report the structured reason and do not attempt
 setup. If it is `package.error`, report `bundledRuntime.error`; do not misreport
 a malformed or unavailable package as an unsupported platform.
