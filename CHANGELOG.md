@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.56
+
+- Make Codex sub-agent dispatch explicitly prompt-opaque: only the exact
+  Backend-provided `agentTask.prompt` may be sent to the sub-agent.
+- Prevent prompt reconstruction from task inputs, clarification answers,
+  workspace metadata, or output-contract text.
+- Keep optional file manifests out of direct local-workspace Codex results so
+  they do not enter the incompatible Runner file-write path.
+
 ## 0.1.55
 
 - Keep pending Codex sub-agent tasks visible when resolved Gemini/Claude Runner

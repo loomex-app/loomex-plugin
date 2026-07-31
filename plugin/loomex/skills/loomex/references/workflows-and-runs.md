@@ -93,6 +93,13 @@ the allowed resolved node input and schema context selected by Backend. Use
 `promptTemplate`, `promptContext`, `input`, and `schemas` for audit only; never
 reconstruct, extend, or replace the final prompt on the Plugin host.
 
+For a Codex sub-agent, pass only that exact prompt string to the sub-agent.
+Never add execution metadata, workspace instructions, a reconstructed task or
+answers, or a hand-written output contract. When the sub-agent writes directly
+to the selected Runner workspace, leave optional file-list fields out of the
+submitted node output unless the node schema requires them; the workspace is
+the source of truth for those edits.
+
 For a non-Codex provider, Backend already owns the terminal hand-off from
 `agentTask.runnerExecution.jobId` to the durable workflow resume queue. Do not
 execute `providerExecution.argv` in Codex or with a shell command, and do not

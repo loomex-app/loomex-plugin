@@ -92,6 +92,14 @@ the provider and has already compiled them into the immutable prompt. Verify the
 server-provided `promptContract.sha256` against the exact UTF-8 prompt bytes
 before execution; if it does not match, return `PLUGIN_AGENT_PROMPT_TAMPERED`.
 
+For Codex specifically, the sub-agent's prompt parameter has exactly one
+source: `agentTask.prompt`. It must not contain a hand-written message such as
+an execution/workspace preamble, `Task: ...`, `Clarification answers: ...`, or
+an `Output contract ...` suffix. Never substitute `promptTemplate`,
+`promptContext`, `input`, `schemas`, or any value derived from them. Do not
+repair an empty-looking or malformed server prompt locally; report the prompt
+tamper/unavailable condition and let Backend fix the task payload.
+
 For AGY 1.1.8, the Runner-installed CLI advertises the following headless options.
 The compiled prompt must be supplied to the `-p`/`--prompt` flag.
 Do not run bare `--print`; do not append the prompt as an undocumented

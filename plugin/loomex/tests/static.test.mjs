@@ -219,7 +219,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.55");
+  assert.equal(manifest.version, "0.1.56");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);
@@ -230,6 +230,8 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   assert.match(readme, /No special setup prompt is\s+needed/);
   assert.match(installer, /matching durable Runner are installed/);
   assert.match(installer, /ask for any Loomex workflow naturally/);
+  assert.match(skill, /prompt argument given to the sub-agent must be\s+exactly `agentTask\.prompt`/);
+  assert.match(skill, /omit optional `files`\/file-list output fields/);
 });
 
 test("plugin has no default SessionStart hook and authenticates on first use", async () => {

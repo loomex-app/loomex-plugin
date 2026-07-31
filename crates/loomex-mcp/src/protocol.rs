@@ -265,6 +265,20 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
         .pointer("/data/humanRequest")
         .map(is_pending_runner_task)
         .unwrap_or(false);
+    let waiting_codex_task = envelope
+        .pointer("/data/humanRequest")
+        .map(is_pending_codex_task)
+        .unwrap_or(false);
+    if (name == "loomex_agent_task_list" && pending_codex_task)
+        || (name == "loomex_run_wait" && waiting_codex_task)
+    {
+        let serialized = serde_json::to_string(envelope).map_err(|error| {
+            RpcError::new(-32603, format!("could not encode tool result: {error}"))
+        })?;
+        return Ok(format!(
+            "CODEX DISPATCH CONTRACT: execute only the server-selected Codex route. Pass `agentTask.prompt` as the sole sub-agent prompt, byte-for-byte. Do not construct a prompt from task, answers, workspace, execution metadata, or schemas; do not add a preamble or output-contract suffix. Verify `promptContract.sha256` first. For direct local workspace edits, omit optional file-list output fields unless the server schema requires them.\n\n{serialized}"
+        ));
+    }
     if (name == "loomex_agent_task_list" && pending_runner_task && !pending_codex_task)
         || (name == "loomex_run_wait" && waiting_runner_task)
     {
@@ -729,7 +743,8 @@ mod tests {
         )
         .unwrap();
 
-        let result: Value = serde_json::from_str(&text).unwrap();
+        assert!(text.contains("CODEX DISPATCH CONTRACT"));
+        let result: Value = serde_json::from_str(text.rsplit_once("\n\n").unwrap().1).unwrap();
         assert_eq!(
             result["data"]["humanRequests"][1]["agentTask"]["resolvedProvider"],
             "codex"
@@ -758,7 +773,8 @@ mod tests {
         )
         .unwrap();
 
-        let result: Value = serde_json::from_str(&text).unwrap();
+        assert!(text.contains("CODEX DISPATCH CONTRACT"));
+        let result: Value = serde_json::from_str(text.rsplit_once("\n\n").unwrap().1).unwrap();
         assert_eq!(
             result["data"]["humanRequest"]["agentTask"]["resolvedProvider"],
             "codex"
