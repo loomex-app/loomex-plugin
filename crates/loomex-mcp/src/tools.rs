@@ -354,7 +354,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_agent_task_list",
             "List plugin agent tasks",
-            "List internal plugin-agent tasks. These are never user-input prompts. For Claude/Gemini tasks with runnerExecution, Backend and the durable Runner execute and resume the workflow automatically: do not ask the user to continue or submit a normal Runner result; keep waiting for the parent run. Only execute/respond for a Codex task or an explicit declared fallback.",
+            "List internal plugin-agent tasks. These are never user-input prompts. Use status=pending when dispatching work so resolved historical tasks cannot be mistaken for active Runner work. For Claude/Gemini pending tasks with runnerExecution, Backend and the durable Runner execute and resume the workflow automatically: do not ask the user to continue or submit a normal Runner result; keep waiting for the parent run. Only execute/respond for a pending Codex task or an explicit declared fallback.",
             "agent.list",
             obj(
                 &[

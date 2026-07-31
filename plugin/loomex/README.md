@@ -27,10 +27,12 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.54/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.55/install-codex.sh | sh
 ```
 
-The `0.1.54` release makes Loomex automatically recover rejected local
+The `0.1.55` release keeps pending Codex sub-agent tasks separate from
+resolved Gemini/Claude Runner tasks and routes `run_wait` by the resolved
+provider. It also makes Loomex automatically recover rejected local
 management credentials and fail closed on workflow/tool/provider errors:
 it never falls back to direct shell/file/provider execution. It also keeps AGY
 using the selected Runner workspace and blocks

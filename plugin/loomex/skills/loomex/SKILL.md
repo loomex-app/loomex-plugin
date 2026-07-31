@@ -89,7 +89,9 @@ Read every reference needed for the user's request before calling its tools.
    a user-facing question. Do not end the current task, ask the user to
    continue, or present its request ID. Read
    [plugin-agent-providers.md](references/plugin-agent-providers.md). Codex
-   executes only the OpenAI sub-agent route. For Claude/Gemini, Backend has
+   executes only the OpenAI sub-agent route. Query
+   `loomex_agent_task_list` with `status: "pending"` so resolved historical
+   tasks cannot be mistaken for the active route. For Claude/Gemini, Backend has
    already queued the server-built provider argv on the local Runner; call
    `loomex_runner_job_get` with the exact `runnerExecution.jobId` only for
    progress. Keep bounded `loomex_run_wait` calls in this same task while the

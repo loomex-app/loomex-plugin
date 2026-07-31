@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.55
+
+- Keep pending Codex sub-agent tasks visible when resolved Gemini/Claude Runner
+  tasks are also present in the agent inbox.
+- Route `run_wait` by the resolved provider instead of treating every
+  `plugin_agent` request as durable Runner work.
+- Tell the Codex host to query pending agent tasks before dispatching a
+  provider-specific sub-agent.
+
 ## 0.1.54
 
 - Automatically recover stale local management and Runner credentials by
