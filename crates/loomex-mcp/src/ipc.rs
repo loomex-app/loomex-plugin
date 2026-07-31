@@ -602,7 +602,7 @@ mod tests {
                 "loomex_binding_create",
                 "binding.create",
                 Bootstrap,
-                json!({"projectId": "project-1", "workspacePath": "/repo"}),
+                json!({"projectId": "project-1"}),
             ),
             (
                 "loomex_binding_revoke",
@@ -624,6 +624,7 @@ mod tests {
                 json!({
                     "workflowId": "workflow-1",
                     "bindingId": "binding-1",
+                    "workspacePath": "/repo",
                     "idempotencyKey": "idem-run-123",
                 }),
             ),

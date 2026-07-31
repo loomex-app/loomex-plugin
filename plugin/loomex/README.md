@@ -1,9 +1,9 @@
 # Loomex for Codex
 
 The Loomex plugin makes Codex a conversational client for Loomex. It can browse
-workflows, bind an explicitly selected local workspace, start and follow durable
-runs, and surface human requests and approval decisions. The Tauri application
-remains supported; both clients use the same backend and per-user Runner service.
+workflows, bind a selected project to the local Runner, start and follow durable
+runs, and surface human requests and approval decisions. A binding identifies a
+project Runner only; each execution supplies its own local workspace path.
 
 ## User experience
 
@@ -12,7 +12,7 @@ and the matching, verified Loomex Runner runtime. No special setup prompt is
 needed: any natural Loomex request makes Codex check setup status first. When
 the durable per-user service is missing, Codex automatically prepares and shows
 the read-only setup plan, asks for approval only before applying it, then guides
-authentication, scope selection, and workspace binding before resuming the
+authentication, scope selection, and project binding before resuming the
 original request. There is no separate Runner download in the normal
 installation flow.
 
@@ -27,10 +27,12 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.52/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.53/install-codex.sh | sh
 ```
 
-The `0.1.52` release makes AGY use the selected Runner workspace and blocks
+The `0.1.53` release makes Loomex fail closed on workflow/tool/provider errors:
+it never falls back to direct shell/file/provider execution. It also keeps AGY
+using the selected Runner workspace and blocks
 its scratch workspace from escaping that boundary.
 
 The old `loomex-app/runner` URL is retained only for historical releases. New
@@ -179,11 +181,13 @@ finish before Codex is closed so that the Runner service has been installed.
 
 ## Local workspace safety
 
-Loomex operates only inside an explicit workspace binding. Binding creation
-shows the canonical root and project before it is persisted. The Runner owns
-path containment, symlink escape prevention, execution policy, cancellation,
-and audit logging. Codex approval prompts complement, but do not replace, those
-Runner controls.
+Loomex operates only inside an explicit execution workspace. Binding creation
+associates a project with a Runner and never stores a filesystem path. The
+canonical `workspacePath` is supplied by `loomex_workflow_run` for every
+execution and is carried through the server job payload to the Runner. The
+Runner owns path containment, symlink escape prevention, execution policy,
+cancellation, and audit logging. Codex approval prompts complement, but do not
+replace, those Runner controls.
 
 ## Source and release packages
 

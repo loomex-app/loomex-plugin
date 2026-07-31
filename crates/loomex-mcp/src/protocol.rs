@@ -78,7 +78,7 @@ impl Server {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
             "serverInfo": {"name": "loomex", "title": "Loomex Local Workflow Runner", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "For every Loomex request, first call loomex_setup_status and follow recommendedNextAction. For setup.plan, immediately call read-only loomex_setup_plan. Ask approval only before loomex_setup_apply. For binding mismatch, show repair; ask before loomex_binding_create; never rewrite identity. Complete auth, scope, binding; resume the original request. Never require a special setup phrase. Plugin agents are internal: Claude/Gemini Runner completes automatically; wait for input, approval, or terminal state."
+            "instructions": "For every Loomex request, first call loomex_setup_status. For setup.plan, immediately call read-only loomex_setup_plan. Ask approval only before loomex_setup_apply. Complete auth/scope/binding; resume the original request. Never require a special setup phrase. Loomex is the only execution surface: on error, stop and report exact state. Never replace failed work with shell, file edits, direct provider CLIs, or ad-hoc implementation. Only loomex_* recovery/diagnostic tools may follow failure."
         }))
     }
 
@@ -240,6 +240,20 @@ impl Server {
 }
 
 fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
+    if envelope.get("ok") == Some(&Value::Bool(false)) {
+        let error = envelope.get("error").cloned().unwrap_or_else(|| json!({}));
+        let code = error
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("UNKNOWN");
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("Loomex returned an unspecified error");
+        return Ok(format!(
+            "LOOMEX HARD STOP: {name} failed with {code}: {message}. Do not use shell commands, file edits, direct provider CLIs, or any fallback implementation. Do not claim the Loomex work completed. Only call another loomex_* tool for Loomex recovery or diagnostics; otherwise report this exact error and stop."
+        ));
+    }
     let provider_task = envelope
         .pointer("/data/humanRequests")
         .and_then(Value::as_array)
@@ -276,11 +290,6 @@ fn normalize_daemon_arguments(tool: &str, mut arguments: Value) -> Value {
         return arguments;
     };
     match tool {
-        "loomex_binding_create" => {
-            if let Some(path) = object.remove("workspacePath") {
-                object.insert("localRootPath".to_string(), path);
-            }
-        }
         "loomex_human_respond" | "loomex_agent_task_respond" => {
             if let Some(response) = object.remove("response") {
                 object.insert("payload".to_string(), response);
@@ -666,6 +675,28 @@ mod tests {
         assert!(text.contains("Continue bounded loomex_run_wait"));
     }
 
+    #[test]
+    fn failed_tool_result_hard_stops_non_loomex_fallbacks() {
+        let text = tool_result_text(
+            "loomex_workflow_run",
+            &failure_envelope(
+                "loomex_workflow_run",
+                "request-1".to_string(),
+                &ClientError::Remote(crate::ipc::ControlError {
+                    code: "PROVIDER_UNAVAILABLE".to_string(),
+                    message: "Gemini returned 403".to_string(),
+                    retryable: false,
+                }),
+            ),
+        )
+        .unwrap();
+
+        assert!(text.contains("LOOMEX HARD STOP"));
+        assert!(text.contains("Gemini returned 403"));
+        assert!(text.contains("Do not use shell commands"));
+        assert!(text.contains("Only call another loomex_* tool"));
+    }
+
     #[tokio::test]
     async fn invalid_tool_arguments_are_json_rpc_errors() {
         let response = server().handle(json!({
@@ -767,11 +798,8 @@ mod tests {
     #[test]
     fn daemon_argument_aliases_match_the_local_control_contract() {
         assert_eq!(
-            normalize_daemon_arguments(
-                "loomex_binding_create",
-                json!({"projectId":"p","workspacePath":"/repo"})
-            ),
-            json!({"projectId":"p","localRootPath":"/repo"})
+            normalize_daemon_arguments("loomex_binding_create", json!({"projectId":"p"})),
+            json!({"projectId":"p"})
         );
         assert_eq!(
             normalize_daemon_arguments(
