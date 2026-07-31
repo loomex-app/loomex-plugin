@@ -254,35 +254,60 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             "LOOMEX HARD STOP: {name} failed with {code}: {message}. Do not use shell commands, file edits, direct provider CLIs, or any fallback implementation. Do not claim the Loomex work completed. Only call another loomex_* tool for Loomex recovery or diagnostics; otherwise report this exact error and stop."
         ));
     }
-    let provider_task = envelope
+    let requests = envelope
         .pointer("/data/humanRequests")
         .and_then(Value::as_array)
-        .and_then(|requests| {
-            requests.iter().find(|request| {
-                request
-                    .pointer("/agentTask/runnerExecution/jobId")
-                    .and_then(Value::as_str)
-                    .is_some()
-                    && matches!(
-                        request
-                            .pointer("/agentTask/resolvedProvider")
-                            .and_then(Value::as_str),
-                        Some("gemini" | "claude")
-                    )
-            })
-        })
-        .is_some();
-    let waiting_provider_task = envelope
-        .pointer("/data/humanRequest/type")
-        .and_then(Value::as_str)
-        == Some("plugin_agent");
-    if (name == "loomex_agent_task_list" && provider_task)
-        || (name == "loomex_run_wait" && waiting_provider_task)
+        .cloned()
+        .unwrap_or_default();
+    let pending_runner_task = requests.iter().any(is_pending_runner_task);
+    let pending_codex_task = requests.iter().any(is_pending_codex_task);
+    let waiting_runner_task = envelope
+        .pointer("/data/humanRequest")
+        .map(is_pending_runner_task)
+        .unwrap_or(false);
+    if (name == "loomex_agent_task_list" && pending_runner_task && !pending_codex_task)
+        || (name == "loomex_run_wait" && waiting_runner_task)
     {
         return Ok("Internal provider work is queued or running on the durable Runner. This is not a question for the user. Do not end this task, ask the user to continue, expose the internal task ID, execute the command in Codex, or submit the normal result. Continue bounded loomex_run_wait calls for the same execution until Loomex returns a real human-input/approval request or a terminal state.".to_string());
     }
     serde_json::to_string(envelope)
         .map_err(|error| RpcError::new(-32603, format!("could not encode tool result: {error}")))
+}
+
+fn is_pending_request(request: &Value) -> bool {
+    request
+        .get("status")
+        .and_then(Value::as_str)
+        .map(|status| status == "pending")
+        .unwrap_or(true)
+}
+
+fn is_pending_runner_task(request: &Value) -> bool {
+    if !is_pending_request(request) {
+        return false;
+    }
+    let task = request.get("agentTask").unwrap_or(request);
+    task.pointer("/runnerExecution/jobId")
+        .and_then(Value::as_str)
+        .is_some()
+        && matches!(
+            task.get("resolvedProvider").and_then(Value::as_str),
+            Some("gemini" | "claude")
+        )
+}
+
+fn is_pending_codex_task(request: &Value) -> bool {
+    if !is_pending_request(request) {
+        return false;
+    }
+    let task = request.get("agentTask").unwrap_or(request);
+    matches!(
+        task.get("resolvedProvider").and_then(Value::as_str),
+        Some("codex" | "openai")
+    ) && task
+        .pointer("/providerExecution/mode")
+        .and_then(Value::as_str)
+        == Some("codex_sub_agent")
 }
 
 fn normalize_daemon_arguments(tool: &str, mut arguments: Value) -> Value {
@@ -672,6 +697,97 @@ mod tests {
 
         assert!(text.contains("not a question for the user"));
         assert!(text.contains("Do not end this task"));
+        assert!(text.contains("Continue bounded loomex_run_wait"));
+    }
+
+    #[test]
+    fn pending_codex_task_is_not_hidden_by_a_resolved_runner_task() {
+        let text = tool_result_text(
+            "loomex_agent_task_list",
+            &success_envelope(
+                "loomex_agent_task_list",
+                "request-1".to_string(),
+                json!({
+                    "humanRequests": [
+                        {
+                            "status": "resolved",
+                            "agentTask": {
+                                "resolvedProvider": "gemini",
+                                "runnerExecution": {"jobId": "job-1"}
+                            }
+                        },
+                        {
+                            "status": "pending",
+                            "agentTask": {
+                                "resolvedProvider": "codex",
+                                "providerExecution": {"mode": "codex_sub_agent"}
+                            }
+                        }
+                    ]
+                }),
+            ),
+        )
+        .unwrap();
+
+        let result: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            result["data"]["humanRequests"][1]["agentTask"]["resolvedProvider"],
+            "codex"
+        );
+        assert!(!text.contains("durable Runner"));
+    }
+
+    #[test]
+    fn run_wait_exposes_pending_codex_task_instead_of_runner_guidance() {
+        let text = tool_result_text(
+            "loomex_run_wait",
+            &success_envelope(
+                "loomex_run_wait",
+                "request-1".to_string(),
+                json!({
+                    "humanRequest": {
+                        "status": "pending",
+                        "type": "plugin_agent",
+                        "agentTask": {
+                            "resolvedProvider": "codex",
+                            "providerExecution": {"mode": "codex_sub_agent"}
+                        }
+                    }
+                }),
+            ),
+        )
+        .unwrap();
+
+        let result: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            result["data"]["humanRequest"]["agentTask"]["resolvedProvider"],
+            "codex"
+        );
+        assert!(!text.contains("durable Runner"));
+    }
+
+    #[test]
+    fn run_wait_keeps_runner_guidance_for_pending_gemini_task() {
+        let text = tool_result_text(
+            "loomex_run_wait",
+            &success_envelope(
+                "loomex_run_wait",
+                "request-1".to_string(),
+                json!({
+                    "humanRequest": {
+                        "status": "pending",
+                        "type": "plugin_agent",
+                        "agentTask": {
+                            "resolvedProvider": "gemini",
+                            "runnerExecution": {"jobId": "job-1"}
+                        }
+                    }
+                }),
+            ),
+        )
+        .unwrap();
+
+        assert!(text.contains("durable Runner"));
         assert!(text.contains("Continue bounded loomex_run_wait"));
     }
 

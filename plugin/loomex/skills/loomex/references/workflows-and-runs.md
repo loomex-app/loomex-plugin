@@ -78,7 +78,9 @@ Plugin workflows pause AI/person nodes on the server and emit a plugin agent
 task. Use `loomex_agent_task_list` scoped by `executionId` after a wait reports
 pending plugin agent work, or after reconnect when a plugin run is waiting.
 
-Each task includes an `agentTask` object. Read its `prompt`, `input`, `schemas`,
+Each task includes an `agentTask` object. Request `status: "pending"` when
+dispatching work; `status: "all"` may include resolved historical tasks and
+must not be used to infer the active provider route. Read its `prompt`, `input`, `schemas`,
 `sessionDirective`, `providerExecution`, `runnerExecution`, and `instructions` before doing
 anything. `resolvedProvider` and `resolvedModel` are the execution contract;
 `requestedProvider` and `requestedModel` preserve the workflow selection. The
