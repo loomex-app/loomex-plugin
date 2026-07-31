@@ -891,7 +891,6 @@ fn bootstrap_cli_runner_for_project<C: ManagementApiClient, S: CredentialStore +
             &user_credential.access_token,
             organization_id,
             Some(project_id),
-            None,
         )
         .map_err(format_core_error)?;
     let runner_id = exchange
@@ -1282,6 +1281,7 @@ struct WorkflowRunRequest {
     project_id: String,
     binding_id: Option<String>,
     workspace_path: Option<String>,
+    idempotency_key: String,
     input: Option<Value>,
     human_input: Option<Value>,
     human_input_cancelled: bool,
@@ -1360,6 +1360,17 @@ impl WorkflowRunRequest {
             project_id,
             binding_id,
             workspace_path,
+            idempotency_key: idempotency_key(
+                "workflow-run",
+                &format!(
+                    "{workflow_id}:{}:{}",
+                    process::id(),
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ),
+            ),
             input,
             human_input,
             human_input_cancelled,
@@ -1511,46 +1522,16 @@ fn schema_requires_human_input(schema: &Value) -> bool {
 }
 
 fn resolve_workflow_binding_id<C: ManagementApiClient>(
-    client: &mut C,
-    credential: &ManagementCredential,
-    project_id: &str,
+    _client: &mut C,
+    _credential: &ManagementCredential,
+    _project_id: &str,
     selected_binding_id: Option<&str>,
     workspace_path: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let Some(workspace_path) = workspace_path else {
-        return Ok(selected_binding_id.map(str::to_string));
-    };
-    let workspace = validate_workspace_path(workspace_path)?;
-    let bindings = client
-        .list_project_runner_bindings(credential, project_id)
-        .map_err(format_core_error)?;
-    let matching = bindings
-        .iter()
-        .find(|binding| {
-            binding.status == "active"
-                && binding.local_root_path == workspace.display_path
-                && binding.local_root_fingerprint.as_deref() == Some(workspace.fingerprint.as_str())
-        })
-        .or_else(|| {
-            bindings.iter().find(|binding| {
-                binding.status == "active" && binding.local_root_path == workspace.display_path
-            })
-        })
-        .ok_or_else(|| {
-            format!(
-                "PROJECT_RUNNER_BINDING_NOT_FOUND: no active binding for workspace {}",
-                workspace.display_path
-            )
-        })?;
-    if let Some(selected_binding_id) = selected_binding_id {
-        if selected_binding_id != matching.id {
-            return Err(format!(
-                "PROJECT_RUNNER_BINDING_MISMATCH: selected binding {selected_binding_id} does not match workspace {}",
-                workspace.display_path
-            ));
-        }
+    if let Some(workspace_path) = workspace_path {
+        validate_workspace_path(workspace_path)?;
     }
-    Ok(Some(matching.id.clone()))
+    Ok(selected_binding_id.map(str::to_string))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1713,12 +1694,7 @@ fn format_bindings(
     }
     Ok(bindings
         .iter()
-        .map(|binding| {
-            format!(
-                "{}\t{}\t{}\t{}",
-                binding.id, binding.project_id, binding.status, binding.local_root_path
-            )
-        })
+        .map(|binding| format!("{}\t{}\t{}", binding.id, binding.project_id, binding.status))
         .collect::<Vec<_>>()
         .join("\n"))
 }
@@ -2272,19 +2248,19 @@ fn clear_plugin_runner_scope(
 
 fn plugin_binding_create(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
     let project_id = plugin_required_string(params, "projectId")?;
-    let workspace_path = params
-        .get("workspacePath")
-        .or_else(|| params.get("localRootPath"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            "PLUGIN_CONTROL_PARAMETER_REQUIRED: workspacePath is required".to_string()
-        })?;
     let config_path = cli_config_path();
     let mut config = load_cli_config_from(&config_path)?;
     let resolved = config
         .resolve(options.config_overrides(), |key| env::var(key).ok())
         .map_err(format_core_error)?;
+    let workspace_path = params
+        .get("workspacePath")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .or(resolved.workspace_path.as_deref())
+        .ok_or_else(|| {
+            "PLUGIN_CONTROL_WORKSPACE_REQUIRED: configure a local workspace before creating a binding".to_string()
+        })?;
     let store = SystemCredentialStore::new(credential_dir());
     let user_credential = load_user_credential(&store, &resolved.profile)?;
     let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
@@ -2355,7 +2331,6 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
                     && binding.organization_id == project.organization_id
                     && binding.project_id == project_id
                     && binding.runner_id == runner.id
-                    && binding.local_root_path == workspace.display_path
             }) {
                 persist_plugin_binding_context(
                     config,
@@ -2399,7 +2374,6 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
                 &user_credential.access_token,
                 &project.organization_id,
                 Some(project_id),
-                Some(&workspace.display_path),
             )
             .map_err(format_core_error)?;
         let runner_id = exchange
@@ -2419,15 +2393,8 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
     let binding_request = ProjectRunnerBindingCreateRequest {
         organization_id: project.organization_id.clone(),
         runner_id: runner_id.clone(),
-        local_root_path: workspace.display_path.clone(),
-        local_root_fingerprint: Some(workspace.fingerprint.clone()),
     };
-    // A binding lifecycle gets a fresh key. Reusing a path-only key after revoke would let the
-    // backend replay the previous active response instead of creating the replacement binding.
-    // Keep this key stable for this single POST/reconciliation attempt, and never retry the POST
-    // after an uncertain outcome.
-    let binding_create_key =
-        binding_create_idempotency_key(project_id, &runner_id, &workspace.display_path);
+    let binding_create_key = binding_create_idempotency_key(project_id, &runner_id, "");
     let (binding, reconciled) = match client.create_project_runner_binding(
         &runner_credential,
         project_id,
@@ -2456,7 +2423,6 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
                         && binding.organization_id == binding_request.organization_id
                         && binding.project_id == project_id
                         && binding.runner_id == binding_request.runner_id
-                        && binding.local_root_path == binding_request.local_root_path
                 })
                 .collect::<Vec<_>>();
             match matches.as_slice() {
@@ -2464,7 +2430,7 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
                 [] => return Err(original_error),
                 _ => {
                     return Err(format!(
-                        "BINDING_RECONCILIATION_AMBIGUOUS: multiple active bindings match the authenticated runner, project, and workspace after an uncertain create outcome; originalError={original_error}"
+                        "BINDING_RECONCILIATION_AMBIGUOUS: multiple active bindings match the authenticated runner and project after an uncertain create outcome; originalError={original_error}"
                     ))
                 }
             }
@@ -2475,10 +2441,9 @@ fn create_plugin_binding_with<C: ManagementApiClient, S: CredentialStore + ?Size
         || binding.organization_id != binding_request.organization_id
         || binding.project_id != project_id
         || binding.runner_id != binding_request.runner_id
-        || binding.local_root_path != binding_request.local_root_path
     {
         return Err(
-            "BINDING_RESPONSE_MISMATCH: created binding does not match the authenticated runner, project, and workspace"
+            "BINDING_RESPONSE_MISMATCH: created binding does not match the authenticated runner and project"
                 .to_string(),
         );
     }
@@ -6233,25 +6198,23 @@ fn create_runner_control_session<C: ManagementApiClient>(
     resolved: &loomex_core::ResolvedCliSettings,
     binding_id: &str,
 ) -> Result<loomex_core::RunnerSessionResponse, String> {
-    let workspace_root = resolved.workspace_path.as_deref().ok_or_else(|| {
-        "RUNNER_SERVICE_WORKSPACE_REQUIRED: selected profile has no workspacePath".to_string()
-    })?;
     client
         .create_runner_session(
             credential,
-            workspace_root,
             runner_control_manifest(resolved, binding_id),
             "long_poll",
         )
         .map_err(format_core_error)
 }
 
-fn runner_control_manifest(resolved: &loomex_core::ResolvedCliSettings, binding_id: &str) -> Value {
+fn runner_control_manifest(
+    _resolved: &loomex_core::ResolvedCliSettings,
+    binding_id: &str,
+) -> Value {
     json!({
         "surface": "plugin",
         "runnerVersion": env!("CARGO_PKG_VERSION"),
         "bindingId": binding_id,
-        "workspaceRoot": resolved.workspace_path.clone().unwrap_or_default(),
         "capabilities": {
             "file.list": true,
             "file.read_many": true,
@@ -6909,6 +6872,7 @@ fn execute_local_capability_job(
     supplied_cancellation: Option<&ShellCancellationToken>,
 ) -> Result<Value, String> {
     let payload = job.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let workspace_root = runner_job_workspace_root(job)?;
     let working_directory = if capability == "shell.exec" {
         runner_job_working_directory(&payload)?
     } else {
@@ -6918,15 +6882,24 @@ fn execute_local_capability_job(
             .unwrap_or(".")
             .to_string()
     };
-    authorize_runner_path(resolved, session_id, capability, &working_directory)?;
-    let executor = LocalCapabilityExecutor::new(runner_workspace_root(resolved)?)
-        .map_err(format_core_error)?;
+    authorize_runner_path(
+        resolved,
+        session_id,
+        capability,
+        &working_directory,
+        &workspace_root,
+    )?;
+    let executor = LocalCapabilityExecutor::new(&workspace_root).map_err(format_core_error)?;
     if capability == "shell.exec" {
         let mut shell_payload = payload;
         shell_payload
             .as_object_mut()
             .ok_or_else(|| "RUNNER_JOB_PAYLOAD_INVALID: payload must be an object".to_string())?
             .remove("cwd");
+        shell_payload
+            .as_object_mut()
+            .ok_or_else(|| "RUNNER_JOB_PAYLOAD_INVALID: payload must be an object".to_string())?
+            .remove("workspacePath");
         let input: ShellExecInput = serde_json::from_value(shell_payload)
             .map_err(|err| format!("RUNNER_JOB_PAYLOAD_INVALID: {err}"))?;
         let cancellation = supplied_cancellation.cloned().unwrap_or_default();
@@ -6977,12 +6950,30 @@ fn runner_job_working_directory(payload: &Value) -> Result<String, String> {
     Ok(cwd.to_string())
 }
 
-fn runner_workspace_root(resolved: &loomex_core::ResolvedCliSettings) -> Result<PathBuf, String> {
-    PathBuf::from(resolved.workspace_path.as_deref().ok_or_else(|| {
-        "RUNNER_SERVICE_WORKSPACE_REQUIRED: selected profile has no workspacePath".to_string()
-    })?)
-    .canonicalize()
-    .map_err(|err| format!("workspace path is not accessible: {err}"))
+fn runner_job_workspace_root(job: &Value) -> Result<PathBuf, String> {
+    let workspace_path = job
+        .get("payload")
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("workspacePath"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            "RUNNER_JOB_WORKSPACE_REQUIRED: job payload must include workspacePath".to_string()
+        })?;
+    let path = PathBuf::from(workspace_path);
+    if !path.is_absolute() {
+        return Err("RUNNER_JOB_WORKSPACE_INVALID: workspacePath must be absolute".to_string());
+    }
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|err| format!("RUNNER_JOB_WORKSPACE_INVALID: {err}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(
+            "RUNNER_JOB_WORKSPACE_INVALID: workspacePath must be a non-symlink directory"
+                .to_string(),
+        );
+    }
+    path.canonicalize()
+        .map_err(|err| format!("RUNNER_JOB_WORKSPACE_INVALID: {err}"))
 }
 
 fn authorize_runner_path(
@@ -6990,8 +6981,8 @@ fn authorize_runner_path(
     session_id: &str,
     capability: &str,
     relative_path: &str,
+    root: &Path,
 ) -> Result<(), String> {
-    let root = runner_workspace_root(resolved)?;
     let relative = validate_runner_relative_path(relative_path)?;
     let requested = root.join(relative);
     let requested_string = requested.to_string_lossy().to_string();
@@ -7088,7 +7079,7 @@ fn execute_file_list_job(
     session_id: &str,
     job: &Value,
 ) -> Result<Value, String> {
-    let workspace_root = runner_workspace_root(resolved)?;
+    let workspace_root = runner_job_workspace_root(job)?;
     let payload = job.get("payload").and_then(Value::as_object);
     let raw_path = payload
         .and_then(|payload| payload.get("path"))
@@ -7102,7 +7093,7 @@ fn execute_file_list_job(
         .and_then(|payload| payload.get("includeHidden"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    authorize_runner_path(resolved, session_id, "fs.list", raw_path)?;
+    authorize_runner_path(resolved, session_id, "fs.list", raw_path, &workspace_root)?;
     let executor = LocalCapabilityExecutor::new(workspace_root).map_err(format_core_error)?;
     let output = executor
         .fs_list(FsListInput {
@@ -7133,7 +7124,7 @@ fn execute_file_read_many_job(
     session_id: &str,
     job: &Value,
 ) -> Result<Value, String> {
-    let workspace_root = runner_workspace_root(resolved)?;
+    let workspace_root = runner_job_workspace_root(job)?;
     let payload = job.get("payload").and_then(Value::as_object);
     let files = payload
         .and_then(|payload| payload.get("files"))
@@ -7148,7 +7139,7 @@ fn execute_file_read_many_job(
         let raw_path = item
             .as_str()
             .ok_or_else(|| "file.read_many files must contain paths".to_string())?;
-        authorize_runner_path(resolved, session_id, "fs.read", raw_path)?;
+        authorize_runner_path(resolved, session_id, "fs.read", raw_path, &workspace_root)?;
         let output = LocalCapabilityExecutor::new(&workspace_root)
             .map_err(format_core_error)?
             .fs_read(FsReadInput {
@@ -7175,7 +7166,7 @@ fn execute_file_write_many_job(
     session_id: &str,
     job: &Value,
 ) -> Result<Value, String> {
-    let workspace_root = runner_workspace_root(resolved)?;
+    let workspace_root = runner_job_workspace_root(job)?;
     let files = job
         .get("payload")
         .and_then(|payload| payload.get("files"))
@@ -7187,7 +7178,7 @@ fn execute_file_write_many_job(
             .get("path")
             .and_then(Value::as_str)
             .ok_or_else(|| "file entry missing path".to_string())?;
-        authorize_runner_path(resolved, session_id, "fs.write", path)?;
+        authorize_runner_path(resolved, session_id, "fs.write", path, &workspace_root)?;
         let content = item
             .get("content")
             .and_then(Value::as_str)
@@ -7924,10 +7915,8 @@ fn bind_workspace<C: ManagementApiClient>(
             &ProjectRunnerBindingCreateRequest {
                 organization_id: organization_id.clone(),
                 runner_id: runner.id.clone(),
-                local_root_path: workspace.display_path.clone(),
-                local_root_fingerprint: Some(workspace.fingerprint.clone()),
             },
-            &idempotency_key("binding-create", &workspace.display_path),
+            &idempotency_key("binding-create", &request.project_id),
         )
         .map_err(format_core_error)?;
 
@@ -8053,7 +8042,9 @@ fn run_workflow_with<C: ManagementApiClient>(
                         project_id: request.project_id.clone(),
                         workflow_id: request.workflow_id.clone(),
                         inputs: input,
+                        workspace_path: request.workspace_path.clone(),
                         project_runner_binding_id: binding_id.clone(),
+                        idempotency_key: Some(request.idempotency_key.clone()),
                     },
                 )
                 .map_err(format_core_error)?;
@@ -11002,9 +10993,7 @@ mod tests {
                 organization_id: "org_123".to_string(),
                 project_id: "prj_123".to_string(),
                 runner_id: "runner_123".to_string(),
-                local_root_path: "/workspace/app".to_string(),
                 status: "active".to_string(),
-                local_root_fingerprint: None,
             }],
             ..Default::default()
         };
@@ -11275,6 +11264,7 @@ mod tests {
                 "idempotencyKey": "runner-job:job_123",
                 "kind": "file.write_many",
                 "payload": {
+                    "workspacePath": workspace.to_string_lossy(),
                     "files": [{
                         "path": "nested/output.txt",
                         "content": "written by runner\n",
@@ -11806,6 +11796,7 @@ mod tests {
                 "kind": "shell.exec",
                 "payload": {
                     "command": ["sh", "-c", "sleep 6; printf done"],
+                    "workspacePath": workspace.to_string_lossy(),
                     "timeout_seconds": 20,
                     "max_output_bytes": 1024
                 }
@@ -13400,13 +13391,7 @@ mod tests {
             Some(canonical_workspace.clone()),
             saved.profiles["default"].workspace_path
         );
-        assert_eq!(
-            Some(canonical_workspace),
-            client
-                .last_binding_request
-                .as_ref()
-                .map(|request| request.local_root_path.clone())
-        );
+        assert!(client.last_binding_request.is_some());
     }
 
     #[test]
@@ -13556,7 +13541,6 @@ mod tests {
         let credential_root = temp_credential_dir("plugin-binding-authenticated-runner");
         let workspace = temp_workspace_path("plugin-binding-authenticated-runner");
         fs::create_dir_all(&workspace).unwrap();
-        let canonical_workspace = workspace.canonicalize().unwrap().display().to_string();
         let store = LocalCredentialStore::new(credential_root.clone());
         let user_credential = ManagementCredential::from_user_token_response(
             "default.user",
@@ -13603,9 +13587,7 @@ mod tests {
                 organization_id: "org_123".to_string(),
                 project_id: "prj_123".to_string(),
                 runner_id: "runner-stale".to_string(),
-                local_root_path: canonical_workspace,
                 status: "active".to_string(),
-                local_root_fingerprint: None,
             }],
             ..Default::default()
         };
@@ -13865,9 +13847,7 @@ mod tests {
                 organization_id: "org_123".to_string(),
                 project_id: "prj_123".to_string(),
                 runner_id: "runner_123".to_string(),
-                local_root_path: "/srv/app".to_string(),
                 status: "active".to_string(),
-                local_root_fingerprint: None,
             }],
             ..Default::default()
         };
@@ -13931,16 +13911,13 @@ mod tests {
             .unwrap();
         let credential = credential("default", "org_123");
         let mut prompt = TestPrompt::default();
-        let validated_workspace = validate_workspace_path(&workspace.to_string_lossy()).unwrap();
         let mut client = FakeManagementClient {
             bindings: vec![ManagementProjectRunnerBinding {
                 id: "binding_123".to_string(),
                 organization_id: "org_123".to_string(),
                 project_id: "prj_123".to_string(),
                 runner_id: "runner_123".to_string(),
-                local_root_path: validated_workspace.display_path.clone(),
                 status: "active".to_string(),
-                local_root_fingerprint: Some(validated_workspace.fingerprint.clone()),
             }],
             ..Default::default()
         };
@@ -14018,10 +13995,9 @@ mod tests {
     }
 
     #[test]
-    fn workflow_run_workspace_must_match_selected_binding() {
+    fn workflow_run_workspace_is_execution_scoped_and_not_binding_scoped() {
         let workspace = temp_workspace_path("workflow-binding-mismatch");
         fs::create_dir_all(&workspace).unwrap();
-        let validated_workspace = validate_workspace_path(&workspace.to_string_lossy()).unwrap();
         let mut config = CliConfig::default();
         config
             .set_key("profiles.default.organizationId", "org_123".to_string())
@@ -14043,14 +14019,12 @@ mod tests {
                 organization_id: "org_123".to_string(),
                 project_id: "prj_123".to_string(),
                 runner_id: "runner_123".to_string(),
-                local_root_path: validated_workspace.display_path,
                 status: "active".to_string(),
-                local_root_fingerprint: Some(validated_workspace.fingerprint),
             }],
             ..Default::default()
         };
 
-        let err = run_workflow_with(
+        let output = run_workflow_with(
             &[
                 "run".to_string(),
                 "wf_123".to_string(),
@@ -14066,11 +14040,19 @@ mod tests {
             &resolved,
             &mut prompt,
         )
-        .unwrap_err();
+        .unwrap();
+        let request = client.last_workflow_request.unwrap();
         let _ = fs::remove_dir_all(&workspace);
 
-        assert!(err.contains("PROJECT_RUNNER_BINDING_MISMATCH"));
-        assert!(client.last_workflow_request.is_none());
+        assert!(output.contains("run id: run_123"));
+        assert_eq!(
+            request.workspace_path,
+            Some(workspace.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            request.project_runner_binding_id,
+            Some("binding_other".to_string())
+        );
     }
 
     #[test]
@@ -15315,7 +15297,6 @@ mod tests {
             workspace_token: &str,
             organization_id: &str,
             project_id: Option<&str>,
-            _workspace_root: Option<&str>,
         ) -> loomex_core::CoreResult<loomex_core::ApiKeyExchangeResult> {
             self.bootstrap_call_count += 1;
             self.last_bootstrap_access_token = Some(workspace_token.to_string());
@@ -15447,9 +15428,7 @@ mod tests {
                     organization_id: request.organization_id.clone(),
                     project_id: project_id.to_string(),
                     runner_id: request.runner_id.clone(),
-                    local_root_path: request.local_root_path.clone(),
                     status: "active".to_string(),
-                    local_root_fingerprint: request.local_root_fingerprint.clone(),
                 });
             self.binding_create_replays
                 .insert(idempotency_key.to_string(), binding.clone());
@@ -15606,7 +15585,6 @@ mod tests {
         fn create_runner_session(
             &mut self,
             _credential: &ManagementCredential,
-            workspace_root: &str,
             manifest: Value,
             transport: &str,
         ) -> loomex_core::CoreResult<loomex_core::RunnerSessionResponse> {
@@ -15616,8 +15594,7 @@ mod tests {
                     session: json!({
                         "id": "session_123",
                         "transport": transport,
-                        "manifest": manifest,
-                        "workspaceRoot": workspace_root
+                        "manifest": manifest
                     }),
                 }
             }))
@@ -15738,7 +15715,7 @@ mod tests {
             &resolved,
             &json!({
                 "kind": "file.list",
-                "payload": {"path": ".", "limit": 20}
+                "payload": {"path": ".", "limit": 20, "workspacePath": workspace.to_string_lossy()}
             }),
         )
         .unwrap();
@@ -15752,7 +15729,7 @@ mod tests {
             &resolved,
             &json!({
                 "kind": "file.read_many",
-                "payload": {"files": ["old/README.md"], "maxBytesPerFile": 4}
+                "payload": {"files": ["old/README.md"], "maxBytesPerFile": 4, "workspacePath": workspace.to_string_lossy()}
             }),
         )
         .unwrap();
@@ -15778,6 +15755,7 @@ mod tests {
                 "kind": "shell.exec",
                 "payload": {
                     "command": ["sh", "-c", "sleep 2"],
+                    "workspacePath": workspace.to_string_lossy(),
                     "timeout_seconds": 1,
                     "max_output_bytes": 1024
                 }
@@ -15794,6 +15772,7 @@ mod tests {
                 "cancelRequested": true,
                 "payload": {
                     "command": ["sh", "-c", "sleep 2"],
+                    "workspacePath": workspace.to_string_lossy(),
                     "timeout_seconds": 10,
                     "max_output_bytes": 1024
                 }
@@ -15820,6 +15799,7 @@ mod tests {
                 "kind": "shell.exec",
                 "payload": {
                     "command": ["sh", "-c", "basename \"$PWD\""],
+                    "workspacePath": workspace.to_string_lossy(),
                     "cwd": "project",
                     "timeout_seconds": 10,
                     "max_output_bytes": 1024
@@ -15855,7 +15835,7 @@ mod tests {
             "session-symlink",
             &json!({
                 "kind": "fs.read",
-                "payload": {"path": "escape/secret.txt", "max_bytes": 100}
+                "payload": {"path": "escape/secret.txt", "max_bytes": 100, "workspacePath": workspace.to_string_lossy()}
             }),
         )
         .unwrap_err();

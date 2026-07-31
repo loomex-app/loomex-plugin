@@ -31,7 +31,7 @@ admin rights, install system-wide, or copy binaries manually. The tool verifies
 the bundled release, installs atomically, health-checks the candidate, then
 switches the active version.
 
-On a first install before authentication and workspace binding are complete,
+On a first install before authentication and project binding are complete,
 the per-user service is registered with deferred start. Authentication and
 binding remain available through the bundled bootstrap; completing the binding
 activates and health-checks the installed service. Rollback follows the same
@@ -50,7 +50,8 @@ service is healthy, long-running workflow execution no longer depends on Codex.
 If `recommendedNextAction` is `auth.status`, do not create another setup plan,
 even when the registered service is inactive or deferred while authentication
 or binding is incomplete. Continue with authentication, organization/project
-scope, and workspace binding below, then resume the original Loomex request.
+scope, and project binding below, then resume the original Loomex request. The
+filesystem workspace is selected per workflow execution, not during binding.
 If the action is `binding.create` with reason `runner_identity_mismatch`, treat
 it as an explicit binding repair, not a setup reinstall or automatic identity
 rewrite. Read the current organization, project, and bindings; show the exact
