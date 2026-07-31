@@ -18,12 +18,12 @@ tool is allowed.
 
 ## Workflow
 
-- Call `loomex_setup_status` first, then ensure auth, organization/project scope, and an active project binding are ready. The binding has no filesystem path.
+- Call `loomex_setup_status` first, then ensure Runner authentication and organization/project scope are ready. Starting the Runner must not require a project binding; the workspace path and execution scope belong to the individual run.
 - Use `loomex_workflow_list` to discover workflows. Do not show or run app-only or server-only workflows through the Codex plugin.
 - `loomex_workflow_list` renders a searchable ChatGPT UI table when supported. Use the table for browsing, then call `loomex_workflow_show` when the user needs details or when a workflow choice is ambiguous.
 - Use `loomex_workflow_show` when a workflow name collides, inputs are unclear, a version is selected, or local capabilities/approval points need explanation.
 - Before `loomex_workflow_run`, confirm workflow ID/version, selected project,
-  binding, the exact local workspace path for this execution, inputs,
+  the execution scope, the exact local workspace path for this execution, inputs,
   capabilities, and known approval points. Use a fresh `idempotencyKey` for a
   new run.
 - `loomex_workflow_run` requires the canonical local `workspacePath` for that

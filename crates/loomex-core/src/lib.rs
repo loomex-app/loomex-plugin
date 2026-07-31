@@ -90,7 +90,8 @@ pub use management::{
     RunnerWorkflowExecutionListResponse, RunnerWorkflowExecutionResponse,
     RunnerWorkflowExecutionStartOptions, RunnerWorkflowInputSchemaResponse, RunnerWorkflowSummary,
     StreamCredentialRequest, StreamCredentialResponse, SystemCredentialStore,
-    WorkflowRunStartRequest, WorkflowRunStartResponse, WorkspaceLoginResult,
+    WorkflowBuilderStartRequest, WorkflowRunStartRequest, WorkflowRunStartResponse,
+    WorkspaceLoginResult, WorkspaceRegistrationChallenge,
 };
 pub use operational_readiness::{
     capacity_plan_for_runner_connections, evaluate_operational_alerts, evaluate_release_gate,
