@@ -4,6 +4,12 @@ This reference applies only to a pending `plugin_agent` task returned by
 `loomex_agent_task_list`. It does not authorize running workflow nodes locally
 or replacing the Loomex Runner.
 
+Provider failure is fail-closed. A 401/403, missing CLI, non-zero exit, invalid
+output, timeout, unavailable Runner, or schema mismatch must become the exact
+declared `failed`/`unavailable` result for the Loomex agent task. Never edit the
+workspace, run a provider CLI outside the declared route, invent output, or
+continue the workflow manually after that failure.
+
 ## Read the server contract
 
 Read these fields before executing anything:

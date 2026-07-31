@@ -161,8 +161,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         tool(
             "loomex_binding_list",
-            "List workspace bindings",
-            "List local-workspace bindings visible to this runner.",
+            "List project bindings",
+            "List project bindings visible to this runner. Binding records do not own a local path.",
             "binding.list",
             obj(
                 &[
@@ -175,16 +175,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         tool(
             "loomex_binding_create",
-            "Bind workspace",
-            "Bind an explicit local workspace path to a Loomex project.",
+            "Bind project",
+            "Create a pathless project binding. Supply the execution workspace separately when starting a workflow.",
             "binding.create",
-            obj(
-                &[
-                    ("projectId", identifier()),
-                    ("workspacePath", path_string()),
-                ],
-                &["projectId", "workspacePath"],
-            ),
+            obj(&[("projectId", identifier())], &["projectId"]),
             mutating(false, false, true),
         ),
         tool(
@@ -224,18 +218,19 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_workflow_run",
             "Run workflow",
-            "Start a durable workflow against an explicitly bound local workspace.",
+            "Start a durable Loomex workflow. Loomex is the only execution surface: if this tool fails, stop and report the exact error; never use shell commands, file edits, direct provider CLIs, or a fallback implementation.",
             "workflow.run",
             obj(
                 &[
                     ("workflowId", identifier()),
                     ("bindingId", identifier()),
+                    ("workspacePath", path_string()),
                     ("inputs", json_object()),
                     ("version", string()),
                     ("sessionId", identifier()),
                     ("idempotencyKey", idempotency_key()),
                 ],
-                &["workflowId", "bindingId", "idempotencyKey"],
+                &["workflowId", "bindingId", "workspacePath", "idempotencyKey"],
             ),
             mutating(false, true, true),
         ),
@@ -376,7 +371,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_agent_task_respond",
             "Submit plugin agent result",
-            "Submit the structured result or unavailable error for a plugin-executed AI/person node task.",
+            "Submit the structured result or unavailable/failed error for a plugin-executed AI/person node task. Never fabricate a result or continue the task with direct file edits when the Loomex/Runner route fails.",
             "agent.respond",
             obj(
                 &[
@@ -1123,17 +1118,9 @@ fn binding_schema() -> Value {
             ("organizationId", identifier()),
             ("projectId", identifier()),
             ("runnerId", identifier()),
-            ("localRootPath", path_string()),
             ("status", string()),
         ],
-        &[
-            "id",
-            "organizationId",
-            "projectId",
-            "runnerId",
-            "localRootPath",
-            "status",
-        ],
+        &["id", "organizationId", "projectId", "runnerId", "status"],
     )
 }
 
@@ -1381,7 +1368,7 @@ mod tests {
             json!({"id":"project-1","organizationId":"org-1","name":"Demo","status":"active"});
         let binding = json!({
             "id":"binding-1", "organizationId":"org-1", "projectId":"project-1",
-            "runnerId":"runner-1", "localRootPath":"/workspace", "status":"active"
+            "runnerId":"runner-1", "status":"active"
         });
         let run = || {
             json!({
@@ -1771,6 +1758,7 @@ mod tests {
             &json!({
                 "workflowId":"workflow-1",
                 "bindingId":"binding-1",
+                "workspacePath":"/repo",
                 "idempotencyKey":"run-attempt-1"
             })
         )
@@ -1802,6 +1790,7 @@ mod tests {
             json!({
                 "workflowId":"workflow-1",
                 "bindingId":"binding-1",
+                "workspacePath":"/repo",
                 "idempotencyKey":key
             })
         };

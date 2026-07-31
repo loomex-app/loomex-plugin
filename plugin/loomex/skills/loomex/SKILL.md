@@ -1,6 +1,6 @@
 ---
 name: loomex
-description: Use Loomex from Codex to set up its durable local Runner, authenticate, select organizations and projects, bind local workspaces, browse and run plugin workflows, follow long-running runs, execute plugin AI/person tasks, respond to human-in-the-loop requests, decide approvals, inspect status and logs, or repair and roll back Runner setup.
+description: Use Loomex from Codex to set up its durable local Runner, authenticate, select organizations and projects, bind projects to a Runner, browse and run plugin workflows, follow long-running runs, execute plugin AI/person tasks, respond to human-in-the-loop requests, decide approvals, inspect status and logs, or repair and roll back Runner setup.
 ---
 
 # Loomex
@@ -8,6 +8,22 @@ description: Use Loomex from Codex to set up its durable local Runner, authentic
 Use the Loomex MCP tools as the control surface. Keep the backend and durable
 Runner as the source of truth; do not attempt to reproduce workflow execution
 inside the Codex task.
+
+## Hard execution boundary
+
+Loomex is the only execution surface for Loomex work. This is fail-closed:
+
+- If any Loomex tool returns an error, rejected result, unavailable provider,
+  failed Runner job, or terminal failed execution, stop the requested work and
+  report the exact Loomex error/state.
+- Never recover by editing files, running shell commands, invoking `agy`,
+  `claude`, `gemini`, or another provider directly, or implementing the
+  requested result yourself.
+- After a failure, only call another `loomex_*` tool for Loomex-owned
+  diagnostics or recovery. Do not claim success, partial implementation, or
+  changed files unless Loomex returned that result.
+- A user request to build or modify something through Loomex does not grant
+  permission to perform that work outside Loomex.
 
 ## Route the request
 
@@ -19,7 +35,7 @@ inside the Codex task.
   execution is allowed only while handling a server-issued plugin agent task.
 - Setup, upgrade, repair, or uninstall/rollback: read
   [setup-and-auth.md](references/setup-and-auth.md).
-- Organization, project, or local workspace binding: read
+- Organization, project, or project binding: read
   [workspace-binding.md](references/workspace-binding.md).
 - Browse workflows, start a run, wait, cancel, or resume after reconnect: read
   [workflows-and-runs.md](references/workflows-and-runs.md).
@@ -45,15 +61,15 @@ Read every reference needed for the user's request before calling its tools.
    only before `loomex_setup_apply`.
 3. When the next action is `binding.create` because the configured Runner does
    not match the authenticated Runner, do not mutate local state silently. Read
-   the selected scope and bindings, show the exact project and workspace repair,
+   the selected scope and bindings, show the exact project and Runner repair,
    obtain confirmation, then call `loomex_binding_create`; its exact-binding
    reconciliation is safe after an uncertain prior create response.
 4. When setup is complete, continue through authentication, required
-   organization/project scope, and workspace binding, then resume the user's
+   organization/project scope, and project binding, then resume the user's
    original request in the same conversation. A registered service that is
    deferred or inactive pending auth/binding is not a reason to repair setup.
 5. Reuse the selected organization, project, and existing binding when they
-   unambiguously match the current workspace. Never silently widen a binding.
+   unambiguously match the current project and Runner. Never silently widen a binding.
 6. `loomex_workflow_list` only returns workflows whose execution model is
    `plugin`. App-only and server-only workflows are intentionally hidden from
    the Codex plugin workflow picker.

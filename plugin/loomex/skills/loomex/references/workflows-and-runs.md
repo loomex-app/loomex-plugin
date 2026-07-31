@@ -12,6 +12,11 @@ The plugin workflow list is intentionally scoped to `plugin` execution-model
 workflows. Workflows configured for `app` or `server` execution belong to the
 Tauri app or backend surfaces and should not be shown as plugin options.
 
+Any Loomex tool error is a hard stop for the requested work. Report its exact
+code/message and do not use shell, file edits, direct provider commands, or an
+ad-hoc implementation as a fallback. Only Loomex recovery or diagnostic tools
+may be called after the error.
+
 ## Start
 
 Before `loomex_workflow_run`, confirm:

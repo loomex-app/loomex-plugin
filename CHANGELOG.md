@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.53
+
+- Fail closed when Loomex setup, workflow, Runner, provider, or agent-task
+  operations fail; direct shell, file edits, provider CLIs, and ad-hoc fallback
+  implementations are explicitly prohibited.
+- Add a hard-stop MCP error message and preserve the exact Loomex error state.
+
 ## 0.1.52
 
 - Make AGY use the selected Runner workspace with its supported `--add-dir` argument.

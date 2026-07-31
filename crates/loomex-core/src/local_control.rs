@@ -261,6 +261,9 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                 let workflow_id = required_string(params, "workflowId")?;
                 let inputs = params.get("inputs").cloned().unwrap_or_else(|| json!({}));
                 let binding_id = required_string(params, "bindingId")?;
+                let workspace_path = required_string(params, "workspacePath")?;
+                let workspace_path = validate_local_control_workspace(workspace_path)?;
+                let workspace_path = workspace_path.to_string_lossy().to_string();
                 let session_id = optional_string(params, "sessionId");
                 let version = optional_string(params, "version");
                 let idempotency_key = required_string(params, "idempotencyKey")?;
@@ -271,7 +274,7 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                             workflow_id,
                             binding_id,
                             inputs,
-                            workspace_path: self.workspace_path.as_deref(),
+                            workspace_path: Some(&workspace_path),
                             session_id,
                             version,
                             execution_mode: Some("plugin"),
@@ -402,15 +405,12 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                 let runner_id = optional_string(params, "runnerId")
                     .or(self.runner_id.as_deref())
                     .ok_or_else(|| CoreError::new("RUNNER_ID_REQUIRED", "runnerId is required"))?;
-                let local_root_path = required_string(params, "localRootPath")?;
                 let request = ProjectRunnerBindingCreateRequest {
                     organization_id: optional_string(params, "organizationId")
                         .unwrap_or(&self.credential.organization_id).to_string(),
                     runner_id: runner_id.to_string(),
-                    local_root_path: local_root_path.to_string(),
-                    local_root_fingerprint: optional_string(params, "localRootFingerprint").map(str::to_string),
                 };
-                let key = format!("local-control-binding-{}", request.local_root_fingerprint.as_deref().unwrap_or("root"));
+                let key = format!("local-control-binding-{}-{}", project_id, runner_id);
                 self.with_client(|client| {
                     serde_json::to_value(client.create_project_runner_binding(&self.credential, project_id, &request, &key)?)
                         .map_err(json_error)

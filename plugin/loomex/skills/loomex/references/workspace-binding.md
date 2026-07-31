@@ -1,4 +1,4 @@
-# Organization, project, and workspace binding
+# Organization, project, and execution workspace
 
 Use `loomex_org_list` and `loomex_project_list` to resolve scope. Project listing
 accepts optional `organizationId`. If there is exactly one valid choice it may
@@ -6,22 +6,22 @@ be selected; otherwise show concise choices and ask the user. Persist an explici
 selection with `loomex_org_select(organizationId)` or
 `loomex_project_select(projectId)` only after the choice is clear.
 
-Before creating a binding, call `loomex_binding_list` and compare canonical
-paths. It accepts optional `projectId` and `status` (`active`, `revoked`, or
-`all`). Reuse an exact binding to the selected project. Do not create duplicates
-or infer that a parent directory should be bound.
+Before creating a binding, call `loomex_binding_list` and inspect the selected
+project and runner. It accepts optional `projectId` and `status` (`active`,
+`revoked`, or `all`). Reuse an active binding to the selected project. Binding
+records are pathless; the local path is selected independently for each
+execution.
 
 For `loomex_binding_create`:
 
-1. Resolve the requested workspace root to a canonical absolute path.
-2. Show the local root, organization, project, and allowed capability summary.
-3. Obtain confirmation because the binding grants workflow access to that root.
-4. Submit the canonical root as `workspacePath`, the selected Loomex project as
-   `projectId`.
+1. Show the organization, project, runner, and allowed capability summary.
+2. Obtain confirmation because the binding grants the runner access to the
+   selected project.
+3. Submit the selected Loomex project as `projectId`.
 
-`workspacePath` is the public MCP field. Do not send the Runner's internal
-`localRootPath` field or infer a path from the Codex process working directory
-when the user identified another workspace.
+`workspacePath` belongs only to `loomex_workflow_run` and is required for every
+execution. Do not send `localRootPath` or `workspaceRoot` in binding requests
+or infer the execution path from a binding response.
 
 Never bind the home directory, filesystem root, a broad workspace collection,
 or a symlink-resolved parent merely for convenience. The Runner performs the

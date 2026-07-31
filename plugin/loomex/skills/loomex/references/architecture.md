@@ -3,7 +3,7 @@
 Codex talks over stdio to the bundled `loomex-mcp` adapter. The adapter talks to
 the per-user Loomex Runner over an owner-restricted Unix domain socket on macOS
 and Linux. The Runner communicates outbound with the Loomex backend and executes
-approved local capabilities inside explicit workspace bindings. This release's
+approved local capabilities inside the workspace supplied for each execution. This release's
 local-control and packaging contract supports macOS and Linux.
 
 The MCP adapter belongs to the Codex process lifetime. The Runner and backend do
@@ -12,7 +12,7 @@ session, use `loomex_run_get` or `loomex_run_wait` and query the human and
 approval inboxes to recover its latest durable state.
 
 The adapter uses two local routes. Setup, authentication, organization/project
-selection, workspace binding, and Runner control call the bundled `loomex`
+selection, project binding, and Runner control call the bundled `loomex`
 bootstrap executable, so first use works before a service socket or credential
 exists. Workflow/run/HITL/approval calls use the authenticated durable-service
 socket. Status, diagnostics, and logs prefer that socket and may fall back to

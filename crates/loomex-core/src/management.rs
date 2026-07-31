@@ -110,9 +110,6 @@ pub struct RunnerUpsertRequest {
 pub struct ProjectRunnerBindingCreateRequest {
     pub organization_id: String,
     pub runner_id: String,
-    pub local_root_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_root_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,11 +119,7 @@ pub struct ManagementProjectRunnerBinding {
     pub organization_id: String,
     pub project_id: String,
     pub runner_id: String,
-    #[serde(alias = "workspaceRoot", alias = "workspacePath")]
-    pub local_root_path: String,
     pub status: String,
-    #[serde(default)]
-    pub local_root_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -135,8 +128,12 @@ pub struct WorkflowRunStartRequest {
     pub project_id: String,
     pub workflow_id: String,
     pub inputs: Value,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "workspacePath")]
+    pub workspace_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_runner_binding_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "idempotencyKey")]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,16 +301,6 @@ pub struct HumanRequestResolveResponse {
     pub execution_id: Option<String>,
     #[serde(default, rename = "executionStatus")]
     pub execution_status: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ClientWorkflowRunStartRequest {
-    input: Value,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        rename = "projectRunnerBindingId"
-    )]
-    project_runner_binding_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -942,7 +929,6 @@ pub trait ManagementApiClient {
         workspace_token: &str,
         organization_id: &str,
         project_id: Option<&str>,
-        workspace_root: Option<&str>,
     ) -> CoreResult<ApiKeyExchangeResult>;
     fn list_organizations(
         &mut self,
@@ -1354,7 +1340,6 @@ pub trait ManagementApiClient {
     fn create_runner_session(
         &mut self,
         credential: &ManagementCredential,
-        workspace_root: &str,
         manifest: Value,
         transport: &str,
     ) -> CoreResult<RunnerSessionResponse>;
@@ -1643,7 +1628,6 @@ impl ManagementApiClient for HttpManagementApiClient {
         workspace_token: &str,
         organization_id: &str,
         project_id: Option<&str>,
-        workspace_root: Option<&str>,
     ) -> CoreResult<ApiKeyExchangeResult> {
         let response = self
             .apply_common_headers(
@@ -1654,7 +1638,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             .json(&serde_json::json!({
                 "organizationId": organization_id,
                 "projectId": project_id,
-                "workspaceRoot": workspace_root.unwrap_or(""),
                 "runnerName": "Local runner",
             }))
             .send()
@@ -1792,8 +1775,6 @@ impl ManagementApiClient for HttpManagementApiClient {
                 "projectId": project_id,
                 "organizationId": request.organization_id,
                 "runnerId": request.runner_id,
-                "localRootPath": request.local_root_path,
-                "localRootFingerprint": request.local_root_fingerprint,
             }))
             .send()
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
@@ -1856,22 +1837,75 @@ impl ManagementApiClient for HttpManagementApiClient {
         credential: &ManagementCredential,
         request: &WorkflowRunStartRequest,
     ) -> CoreResult<WorkflowRunStartResponse> {
+        if request
+            .workspace_path
+            .as_deref()
+            .is_none_or(|path| path.trim().is_empty())
+        {
+            return Err(CoreError::new(
+                "RUNNER_EXECUTION_WORKSPACE_REQUIRED",
+                "workflow execution requires workspacePath",
+            ));
+        }
+        if request.project_runner_binding_id.is_none() {
+            return Err(CoreError::new(
+                "PROJECT_RUNNER_BINDING_REQUIRED",
+                "workflow execution requires bindingId",
+            ));
+        }
+        let idempotency_key = request.idempotency_key.clone().unwrap_or_else(|| {
+            default_runner_operation_idempotency_key(
+                "workflow.run",
+                &serde_json::json!({"workflowId": request.workflow_id, "request": request}),
+            )
+            .unwrap_or_else(|_| "workflow-run".to_string())
+        });
         let response = self
             .post_with_auth(
                 &format!(
-                    "/client/workflows/{}/runs/",
+                    "/runner-control/runner/v1/workflows/{}/executions/",
                     encode_path(&request.workflow_id)
                 ),
                 credential,
             )
-            .json(&ClientWorkflowRunStartRequest {
-                input: request.inputs.clone(),
-                project_runner_binding_id: request.project_runner_binding_id.clone(),
+            .header("Idempotency-Key", idempotency_key)
+            .json(&RunnerWorkflowExecutionStartRequest {
+                inputs: request.inputs.clone(),
+                workspace_path: request.workspace_path.clone(),
+                session_id: None,
+                version: None,
+                binding_id: request.project_runner_binding_id.clone(),
+                execution_mode: Some("plugin".to_string()),
             })
             .send()
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let envelope: ClientEnvelope<WorkflowRunStartResponse> = parse_json_response(response)?;
-        Ok(envelope.data)
+        let envelope: ClientEnvelope<RunnerWorkflowExecutionResponse> =
+            parse_json_response(response)?;
+        let execution =
+            envelope.data.execution.as_object().ok_or_else(|| {
+                CoreError::new("MANAGEMENT_RESPONSE_INVALID", "execution is missing")
+            })?;
+        let id = execution
+            .get("id")
+            .or_else(|| execution.get("executionId"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                CoreError::new("MANAGEMENT_RESPONSE_INVALID", "execution id is missing")
+            })?;
+        Ok(WorkflowRunStartResponse {
+            id: id.to_string(),
+            status: execution
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("queued")
+                .to_string(),
+            ui_url: execution
+                .get("uiUrl")
+                .or_else(|| execution.get("ui_url"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
     }
 
     fn get_runner_job(
@@ -2612,14 +2646,12 @@ impl ManagementApiClient for HttpManagementApiClient {
     fn create_runner_session(
         &mut self,
         credential: &ManagementCredential,
-        workspace_root: &str,
         manifest: Value,
         transport: &str,
     ) -> CoreResult<RunnerSessionResponse> {
         let response = self
             .post_with_auth("/runner-control/runner/v1/sessions/", credential)
             .json(&serde_json::json!({
-                "workspaceRoot": workspace_root,
                 "manifest": manifest,
                 "transport": transport,
             }))
@@ -3219,12 +3251,7 @@ mod tests {
         );
         let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
         let exchange = client
-            .bootstrap_runner_with_workspace_token(
-                "user.jwt",
-                "org-1",
-                Some("project-1"),
-                Some("/repo"),
-            )
+            .bootstrap_runner_with_workspace_token("user.jwt", "org-1", Some("project-1"))
             .unwrap();
         let raw = captured_request(request, server);
         assert_eq!(exchange.runner_id.as_deref(), Some("runner-1"));
@@ -3234,11 +3261,7 @@ mod tests {
         assert!(raw
             .to_ascii_lowercase()
             .contains("authorization: bearer user.jwt\r\n"));
-        for body in [
-            r#""organizationId":"org-1""#,
-            r#""projectId":"project-1""#,
-            r#""workspaceRoot":"/repo""#,
-        ] {
+        for body in [r#""organizationId":"org-1""#, r#""projectId":"project-1""#] {
             assert!(raw.contains(body), "missing {body}: {raw}");
         }
     }
@@ -3246,7 +3269,7 @@ mod tests {
     #[test]
     fn binding_list_and_revoke_http_contracts_are_exact() {
         let (server_url, request, server) = serve_one_http_response(
-            r#"{"data":{"bindings":[{"id":"binding-1","organizationId":"org-1","projectId":"project-1","runnerId":"runner-1","localRootPath":"/repo","status":"active"}]}}"#,
+            r#"{"data":{"bindings":[{"id":"binding-1","organizationId":"org-1","projectId":"project-1","runnerId":"runner-1","status":"active"}]}}"#,
         );
         let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
         let bindings = client
@@ -3606,14 +3629,12 @@ mod tests {
     #[test]
     fn binding_create_uses_runner_token_contract_and_unwraps_envelope() {
         let (server_url, request_receiver, server) = serve_one_http_response(
-            r#"{"data":{"id":"11111111-1111-1111-1111-111111111111","organizationId":"22222222-2222-2222-2222-222222222222","projectId":"33333333-3333-3333-3333-333333333333","runnerId":"11111111-1111-1111-1111-111111111111","localRootPath":"/tmp/workspace","status":"active","localRootFingerprint":"fp"},"meta":{"version":"v1"}}"#,
+            r#"{"data":{"id":"11111111-1111-1111-1111-111111111111","organizationId":"22222222-2222-2222-2222-222222222222","projectId":"33333333-3333-3333-3333-333333333333","runnerId":"11111111-1111-1111-1111-111111111111","status":"active"},"meta":{"version":"v1"}}"#,
         );
         let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
         let request = ProjectRunnerBindingCreateRequest {
             organization_id: "22222222-2222-2222-2222-222222222222".to_string(),
             runner_id: "11111111-1111-1111-1111-111111111111".to_string(),
-            local_root_path: "/tmp/workspace".to_string(),
-            local_root_fingerprint: Some("fp".to_string()),
         };
 
         let binding = client
