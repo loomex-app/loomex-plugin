@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.67
+
+- Verify server-owned agent prompts in the native Plugin runtime with SHA-256
+  before exposing Codex tasks, preventing manual hash implementation in Codex.
+- Return a deterministic `PLUGIN_AGENT_PROMPT_TAMPERED` error when prompt bytes
+  do not match the server-provided contract.
+
 ## 0.1.66
 
 - Restore the canonical workflow-builder entry Human Input node.

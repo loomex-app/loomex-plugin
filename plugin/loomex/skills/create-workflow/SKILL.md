@@ -28,8 +28,9 @@ Loomex Workflow; it is not a separate server-side AI execution path.
 - Continue with bounded `loomex_run_wait` calls for that exact execution until
   Loomex returns a real `plugin_agent` task or a terminal state. Internal agent
   and reviewer requests are not human questions. Follow the normal Codex
-  dispatch contract: verify `agentTask.promptContract.sha256`, pass
-  `agentTask.prompt` byte-for-byte as the only sub-agent prompt, and obey its
+  dispatch contract: rely on the Plugin runtime's native verification of
+  `agentTask.promptContract.sha256`, pass `agentTask.prompt` byte-for-byte as
+  the only sub-agent prompt, and obey its
   `sessionDirective` exactly. Submit the actual response through the normal
   `loomex_agent_task_respond` path with the exact execution/request id.
 - If the builder returns a Human Input request, route it by its exact
