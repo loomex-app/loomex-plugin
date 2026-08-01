@@ -18,16 +18,16 @@ tool is allowed.
 
 ## Workflow
 
-- Call `loomex_setup_status` first, then ensure Runner authentication and organization/project scope are ready. Starting the Runner is organization-scoped; the execution root and workspace path belong to the individual run.
+- Call `loomex_setup_status` first, then ensure Runner authentication and organization scope are ready. Starting the Runner is organization-scoped; the execution root and workspace path belong to the individual run.
 - Use `loomex_workflow_list` to discover workflows. Do not show or run app-only or server-only workflows through the Codex plugin.
 - `loomex_workflow_list` renders a searchable ChatGPT UI table when supported. Use the table for browsing, then call `loomex_workflow_show` when the user needs details or when a workflow choice is ambiguous.
 - Use `loomex_workflow_show` when a workflow name collides, inputs are unclear, a version is selected, or local capabilities/approval points need explanation.
-- Before `loomex_workflow_run`, confirm workflow ID/version, selected project,
+- Before `loomex_workflow_run`, confirm workflow ID/version, selected organization,
   the execution scope, the exact local workspace path for this execution, inputs,
   capabilities, and known approval points. Use a fresh `idempotencyKey` for a
   new run.
 - `loomex_workflow_run` requires the canonical local `workspacePath` for that
-  execution. No project or runner configuration provides or owns this path.
+  execution. No organization or runner configuration provides or owns this path.
 - Treat the returned execution ID and status as authoritative. A queued or submitted response is not completion; continue with bounded `loomex_run_wait` calls and recover uncertain state with `loomex_run_get`.
 - Keep the current task open while the execution is non-terminal. Do not return
   a final "the workflow is running" message after one wait: continue the

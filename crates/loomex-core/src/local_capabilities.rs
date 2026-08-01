@@ -2434,7 +2434,7 @@ fn provider_state_write_policy(command: &str) -> CoreResult<String> {
         .and_then(|value| value.to_str())
         .unwrap_or_default();
     let (relative_state_path, denied_child) = match provider {
-        // AGY's scratch tree is a provider-created project workspace. It must
+        // AGY's scratch tree is a provider-created scratch workspace. It must
         // never inherit the runtime-state exception, otherwise AGY can report
         // changes outside the execution root while still running sandboxed.
         "agy" => (Some(".gemini/antigravity-cli"), Some("scratch")),

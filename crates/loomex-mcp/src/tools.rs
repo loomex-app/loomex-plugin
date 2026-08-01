@@ -158,7 +158,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_org_create",
             "Create organization",
-            "Create and select an organization for the authenticated account, then bootstrap the organization-scoped local Runner without creating a project.",
+            "Create and select an organization for the authenticated account, then bootstrap the organization-scoped local Runner.",
             "org.create",
             obj(&[("name", string()), ("slug", string())], &["name"]),
             mutating(false, true, true),
@@ -180,26 +180,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
             mutating(false, true, true),
         ),
         tool_with_meta(
-            "loomex_project_list",
-            "List projects",
-            "List Loomex projects, optionally within an organization.",
-            obj(&[("organizationId", identifier())], &[]),
-            open_ro(),
-            list_table_meta(),
-        ),
-        tool(
-            "loomex_project_select",
-            "Select project",
-            "Set the runner's active project.",
-            "project.select",
-            obj(&[("projectId", identifier())], &["projectId"]),
-            mutating(false, true, true),
-        ),
-        tool_with_meta(
             "loomex_workflow_list",
             "List workflows",
-            "List workflows in the selected or supplied project.",
-            list_schema(&[("projectId", identifier()), ("query", short_string())]),
+            "List workflows in the selected organization.",
+            list_schema(&[("query", short_string())]),
             open_ro(),
             list_table_meta(),
         ),
@@ -240,7 +224,6 @@ pub fn definitions() -> Vec<ToolDefinition> {
             obj(
                 &[
                     ("prompt", string()),
-                    ("projectId", identifier()),
                     ("model", string()),
                     ("idempotencyKey", idempotency_key()),
                 ],
@@ -523,8 +506,6 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_org_list" => "org.list",
                 "loomex_org_create" => "org.create",
                 "loomex_org_select" => "org.select",
-                "loomex_project_list" => "project.list",
-                "loomex_project_select" => "project.select",
                 "loomex_workflow_list" => "workflow.list",
                 "loomex_workflow_show" => "workflow.show",
                 "loomex_workflow_run" => "workflow.run",
@@ -808,7 +789,7 @@ fn output_data_schema(tool_name: &str) -> Value {
                     enum_string(&[
                         "setup.plan",
                         "auth.status",
-                        "project.select",
+                        "workflow.list",
                         "package.error",
                         "unsupported",
                     ]),
@@ -952,7 +933,7 @@ fn output_data_schema(tool_name: &str) -> Value {
                 ("changed", json!({"const":true})),
                 ("runnerBootstrap", evolvable_object(&[], &[])),
                 ("serviceActivation", evolvable_object(&[], &[])),
-                ("nextAction", json!({"const":"project.list"})),
+                ("nextAction", json!({"const":"workflow.list"})),
             ],
             &[
                 "profile",
@@ -970,21 +951,6 @@ fn output_data_schema(tool_name: &str) -> Value {
                 ("changed", boolean()),
             ],
             &["profile", "organization", "changed"],
-        ),
-        "loomex_project_list" => evolvable_object(
-            &[
-                ("items", array_of(project_schema())),
-                ("organizationId", identifier()),
-            ],
-            &["items", "organizationId"],
-        ),
-        "loomex_project_select" => evolvable_object(
-            &[
-                ("profile", identifier()),
-                ("project", project_schema()),
-                ("changed", boolean()),
-            ],
-            &["profile", "project", "changed"],
         ),
         "loomex_workflow_list" => evolvable_object(
             &[
@@ -1142,18 +1108,6 @@ fn array_of(items: Value) -> Value {
 
 fn organization_schema() -> Value {
     evolvable_object(&[("id", identifier()), ("name", string())], &["id", "name"])
-}
-
-fn project_schema() -> Value {
-    evolvable_object(
-        &[
-            ("id", identifier()),
-            ("organizationId", identifier()),
-            ("name", string()),
-            ("status", string()),
-        ],
-        &["id", "organizationId", "name", "status"],
-    )
 }
 
 fn workflow_schema() -> Value {
@@ -1389,8 +1343,6 @@ mod tests {
 
     fn output_fixture(name: &str) -> Value {
         let organization = json!({"id":"org-1","name":"Loomex"});
-        let project =
-            json!({"id":"project-1","organizationId":"org-1","name":"Demo","status":"active"});
         let run = || {
             json!({
                 "execution":{"id":"run-1","status":"running"},
@@ -1446,14 +1398,10 @@ mod tests {
             "loomex_org_list" => json!({"items":[organization]}),
             "loomex_org_create" => json!({
                 "profile":"default","organization":organization,"changed":true,
-                "runnerBootstrap":{},"serviceActivation":{},"nextAction":"project.list"
+                "runnerBootstrap":{},"serviceActivation":{},"nextAction":"workflow.list"
             }),
             "loomex_org_select" => {
                 json!({"profile":"default","organization":organization,"changed":true})
-            }
-            "loomex_project_list" => json!({"items":[project],"organizationId":"org-1"}),
-            "loomex_project_select" => {
-                json!({"profile":"default","project":project,"changed":true})
             }
             "loomex_workflow_list" => {
                 json!({"workflows":[{"id":"workflow-1","name":"Review"}],"nextCursor":null})
@@ -1549,7 +1497,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_unique_route_and_strict_top_level_schema() {
         let definitions = definitions();
-        assert_eq!(definitions.len(), 36);
+        assert_eq!(definitions.len(), 34);
         let mut names = HashSet::new();
         for tool in definitions {
             assert!(names.insert(tool.name));
@@ -1594,11 +1542,7 @@ mod tests {
 
     #[test]
     fn list_tools_publish_table_template_metadata() {
-        for name in [
-            "loomex_org_list",
-            "loomex_project_list",
-            "loomex_workflow_list",
-        ] {
+        for name in ["loomex_org_list", "loomex_workflow_list"] {
             let definition = definitions()
                 .into_iter()
                 .find(|definition| definition.name == name)
@@ -1679,7 +1623,7 @@ mod tests {
         .unwrap();
 
         additive["setupRequired"] = json!(false);
-        additive["recommendedNextAction"] = json!("project.select");
+        additive["recommendedNextAction"] = json!("workflow.list");
         additive["recommendationReason"] = json!("runner_identity_mismatch");
         validate_output(
             &definition.output_schema,

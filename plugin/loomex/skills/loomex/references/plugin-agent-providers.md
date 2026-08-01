@@ -132,8 +132,8 @@ provider and all of its child processes can write only in the selected execution
 apart from the provider's own narrow runtime-state directory needed for
 credentials and conversation metadata (`.gemini/antigravity-cli` for AGY and
 `.claude` for Claude). AGY's `.gemini/antigravity-cli/scratch` tree is
-explicitly denied because it is an AGY-created project workspace, not runtime
-state. No other user project path is writable; if the native sandbox is
+explicitly denied because it is an AGY-created organization workspace, not runtime
+state. No other user workspace path is writable; if the native sandbox is
 unavailable, the Runner fails closed. Backend still validates every declared
 `changed_files` path as a separate result-contract check.
 For a `resume` directive, Backend places `--conversation <sessionId>` before

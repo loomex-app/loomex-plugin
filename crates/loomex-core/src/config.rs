@@ -25,7 +25,6 @@ pub struct CliProfile {
     pub server_url: String,
     pub host_header: Option<String>,
     pub organization_id: Option<String>,
-    pub project_id: Option<String>,
     pub runner_id: Option<String>,
 }
 
@@ -42,7 +41,6 @@ pub struct ResolvedCliSettings {
     pub server_url: String,
     pub host_header: Option<String>,
     pub organization_id: Option<String>,
-    pub project_id: Option<String>,
     pub runner_id: Option<String>,
 }
 
@@ -187,9 +185,6 @@ impl CliConfig {
             if let Some(organization_id) = &profile.organization_id {
                 document.push_str(&toml_line("organizationId", organization_id));
             }
-            if let Some(project_id) = &profile.project_id {
-                document.push_str(&toml_line("projectId", project_id));
-            }
             if let Some(runner_id) = &profile.runner_id {
                 document.push_str(&toml_line("runnerId", runner_id));
             }
@@ -235,7 +230,6 @@ impl CliConfig {
             server_url,
             host_header,
             organization_id: base.organization_id,
-            project_id: base.project_id,
             runner_id: base.runner_id,
         })
     }
@@ -257,7 +251,6 @@ impl CliConfig {
             "serverUrl" => Some(profile.server_url.clone()),
             "hostHeader" => profile.host_header.clone(),
             "organizationId" => profile.organization_id.clone(),
-            "projectId" => profile.project_id.clone(),
             "runnerId" => profile.runner_id.clone(),
             _ => None,
         })
@@ -300,9 +293,6 @@ impl CliConfig {
                     organization_id.clone(),
                 ));
             }
-            if let Some(project_id) = &profile.project_id {
-                entries.push((format!("profiles.{name}.projectId"), project_id.clone()));
-            }
             if let Some(runner_id) = &profile.runner_id {
                 entries.push((format!("profiles.{name}.runnerId"), runner_id.clone()));
             }
@@ -319,7 +309,6 @@ impl CliConfig {
             "serverUrl" | "server_url" | "server" => profile.server_url = value,
             "hostHeader" | "host_header" => profile.host_header = optional_value(value),
             "organizationId" | "organization_id" => profile.organization_id = optional_value(value),
-            "projectId" | "project_id" => profile.project_id = optional_value(value),
             "runnerId" | "runner_id" => profile.runner_id = optional_value(value),
             _ => return Err(CoreError::new("CONFIG_KEY_UNSUPPORTED", key)),
         }
@@ -354,7 +343,6 @@ impl CliProfile {
             server_url: DEFAULT_SERVER_URL.to_string(),
             host_header: None,
             organization_id: None,
-            project_id: None,
             runner_id: None,
         }
     }
@@ -364,7 +352,6 @@ impl CliProfile {
             server_url: STAGE_SERVER_URL.to_string(),
             host_header: None,
             organization_id: None,
-            project_id: None,
             runner_id: None,
         }
     }
@@ -374,7 +361,6 @@ impl CliProfile {
             server_url: LOCAL_SERVER_URL.to_string(),
             host_header: Some("loomex.localhost".to_string()),
             organization_id: None,
-            project_id: None,
             runner_id: None,
         }
     }
@@ -606,7 +592,6 @@ hostHeader = "loomex.localhost"
             "serverUrl = \"http://127.0.0.1:28000\"\n",
             "hostHeader = \"loomex.localhost\"\n",
             "organizationId = \"org_123\"\n",
-            "projectId = \"prj_123\"\n",
         ]
         .join("");
 

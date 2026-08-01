@@ -25,10 +25,9 @@ message RunnerToServer {
   string runner_session_id = 2;
   string runner_device_id = 3;
   string organization_id = 4;
-  string project_id = 5;
-  uint64 sequence = 6;
-  string idempotency_key = 7;
-  google.protobuf.Timestamp sent_at = 8;
+  uint64 sequence = 5;
+  string idempotency_key = 6;
+  google.protobuf.Timestamp sent_at = 7;
 
   oneof payload {
     RunnerHello hello = 20;
@@ -48,10 +47,9 @@ message ServerToRunner {
   string protocol_version = 1;
   string runner_session_id = 2;
   string organization_id = 3;
-  string project_id = 4;
-  uint64 sequence = 5;
-  string idempotency_key = 6;
-  google.protobuf.Timestamp sent_at = 7;
+  uint64 sequence = 4;
+  string idempotency_key = 5;
+  google.protobuf.Timestamp sent_at = 6;
 
   oneof payload {
     ServerHello hello = 20;
@@ -127,23 +125,22 @@ message ToolCallRequest {
   string workflow_id = 3;
   string node_id = 4;
   string organization_id = 5;
-  string project_id = 6;
-  string execution_root_id = 7;
-  uint32 attempt = 8;
-  string capability = 9;
-  ExecutionProvider provider = 10;
-  string idempotency_key = 11;
-  string execution_root_path = 12;
-  string working_directory = 13;
-  google.protobuf.Struct input = 14;
-  PolicyContext policy = 15;
-  ApprovalRequirement approval = 16;
-  google.protobuf.Timestamp requested_at = 17;
-  google.protobuf.Timestamp expires_at = 18;
-  google.protobuf.Duration deadline = 19;
-  uint64 max_output_chunk_bytes = 20;
-  uint64 max_total_output_bytes = 21;
-  map<string, string> trace_context = 22;
+  string execution_root_id = 6;
+  uint32 attempt = 7;
+  string capability = 8;
+  ExecutionProvider provider = 9;
+  string idempotency_key = 10;
+  string execution_root_path = 11;
+  string working_directory = 12;
+  google.protobuf.Struct input = 13;
+  PolicyContext policy = 14;
+  ApprovalRequirement approval = 15;
+  google.protobuf.Timestamp requested_at = 16;
+  google.protobuf.Timestamp expires_at = 17;
+  google.protobuf.Duration deadline = 18;
+  uint64 max_output_chunk_bytes = 19;
+  uint64 max_total_output_bytes = 20;
+  map<string, string> trace_context = 21;
 }
 
 message PolicyContext {
