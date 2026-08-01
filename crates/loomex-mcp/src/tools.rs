@@ -353,7 +353,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool_with_meta(
             "loomex_human_respond",
             "Respond to human request",
-            "Submit a durable response to a workflow human-in-the-loop request.",
+            "Submit a durable response only for a text human-in-the-loop request. For radio, checkbox, boolean, single_select, or multi_select requests, never call this tool: call loomex_human_open with the exact humanRequest so the interactive side-panel form renders and submits the canonical value fields.",
             obj(
                 &[
                     ("requestId", identifier()),

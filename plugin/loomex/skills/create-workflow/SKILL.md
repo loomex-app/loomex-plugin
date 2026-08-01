@@ -32,6 +32,13 @@ Loomex Workflow; it is not a separate server-side AI execution path.
   `agentTask.prompt` byte-for-byte as the only sub-agent prompt, and obey its
   `sessionDirective` exactly. Submit the actual response through the normal
   `loomex_agent_task_respond` path with the exact execution/request id.
+- If the builder returns a Human Input request, route it by its exact
+  `inputSpec.inputType`: use `loomex_human_respond` only for `text`; use
+  `loomex_human_open` for `radio`, `checkbox`, `boolean`, `single_select`, or
+  `multi_select`. Never answer a typed form with `optionId`, `selected`, or a
+  hand-built `otherText` payload, and never ask the user to provide radio
+  answers in chat. The side-panel form must render the server-provided
+  questions and submit canonical `value`/`values` fields for the same request.
 - The seeded workflow owns designer/reviewer prompts and the repair loop. Do not
   construct a prompt, add an output suffix, locally validate, repair, or alter
   the agent result.

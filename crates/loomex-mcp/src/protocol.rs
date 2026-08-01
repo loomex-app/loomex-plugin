@@ -286,6 +286,21 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
         .pointer("/data/humanRequest")
         .map(is_pending_codex_task)
         .unwrap_or(false);
+    let pending_typed_human = requests.iter().any(is_pending_typed_human_request);
+    let waiting_typed_human = envelope
+        .pointer("/data/humanRequest")
+        .map(is_pending_typed_human_request)
+        .unwrap_or(false);
+    if (name == "loomex_human_list" && pending_typed_human)
+        || (name == "loomex_run_wait" && waiting_typed_human)
+    {
+        let serialized = serde_json::to_string(envelope).map_err(|error| {
+            RpcError::new(-32603, format!("could not encode tool result: {error}"))
+        })?;
+        return Ok(format!(
+            "TYPED HUMAN INPUT CONTRACT: this is a live non-text human request. Call loomex_human_open with the exact humanRequest object now. Do not call loomex_human_respond, do not invent optionId/selected fields, do not ask for the values in chat, and do not ask the user to say continue. The side-panel form submits canonical value/values fields and resumes the same execution.\n\n{serialized}"
+        ));
+    }
     if (name == "loomex_agent_task_list" && pending_codex_task)
         || (name == "loomex_run_wait" && waiting_codex_task)
     {
@@ -339,6 +354,21 @@ fn is_pending_codex_task(request: &Value) -> bool {
         .pointer("/providerExecution/mode")
         .and_then(Value::as_str)
         == Some("codex_sub_agent")
+}
+
+fn is_pending_typed_human_request(request: &Value) -> bool {
+    if !is_pending_request(request) {
+        return false;
+    }
+    let input_spec = request
+        .get("inputSpec")
+        .or_else(|| request.pointer("/payload/inputSpec"));
+    matches!(
+        input_spec
+            .and_then(|spec| spec.get("inputType"))
+            .and_then(Value::as_str),
+        Some("radio" | "checkbox" | "boolean" | "single_select" | "multi_select")
+    )
 }
 
 fn normalize_daemon_arguments(tool: &str, mut arguments: Value) -> Value {
@@ -728,6 +758,32 @@ mod tests {
         assert!(text.contains("not a question for the user"));
         assert!(text.contains("Do not end this task"));
         assert!(text.contains("Continue bounded loomex_run_wait"));
+    }
+
+    #[test]
+    fn typed_human_request_requires_the_interactive_form() {
+        let text = tool_result_text(
+            "loomex_run_wait",
+            &success_envelope(
+                "loomex_run_wait",
+                "request-1".to_string(),
+                json!({
+                    "humanRequest": {
+                        "status": "pending",
+                        "inputSpec": {
+                            "inputType": "radio",
+                            "collectionMode": "batch",
+                            "questions": []
+                        }
+                    }
+                }),
+            ),
+        )
+        .unwrap();
+
+        assert!(text.contains("TYPED HUMAN INPUT CONTRACT"));
+        assert!(text.contains("loomex_human_open"));
+        assert!(text.contains("Do not call loomex_human_respond"));
     }
 
     #[test]
