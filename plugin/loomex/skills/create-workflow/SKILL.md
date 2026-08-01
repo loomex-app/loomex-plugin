@@ -11,7 +11,7 @@ Use this skill when the user wants Loomex to design a workflow from a natural-la
 
 - Loomex is the only control surface. If setup, authentication, project scope, Runner, the builder API, sub-agent dispatch, or validation fails, stop and report the exact error.
 - Call `loomex_setup_status` first. Complete authentication and organization/project selection before calling `loomex_workflow_create`.
-- Do not require a binding or local workspace path for workflow creation. Creation is project-scoped and produces JSON only.
+- Do not require an execution root or local workspace path for workflow creation. Creation is project-scoped and produces JSON only.
 - Call `loomex_workflow_create` with the user's request verbatim in `prompt`. Do not rewrite, summarize, translate, or augment the user's request.
 - When the result contains `agentTask`, treat it as internal work. Verify `agentTask.promptContract.sha256` against the exact UTF-8 bytes of `agentTask.prompt`.
 - Follow `agentTask.sessionDirective` exactly: spawn a new Codex sub-agent for `spawn`; resume the exact session id for `resume`. Use the server-selected `resolvedModel` and reasoning effort.

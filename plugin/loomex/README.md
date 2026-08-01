@@ -34,10 +34,13 @@ curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.59/install-codex.sh | sh
+curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.60/install-codex.sh | sh
 ```
 
-The `0.1.59` release adds guided account registration, logout, organization
+The `0.1.60` release removes persistent project/workspace binding from the
+Runner contract. Projects remain workflow metadata only; every execution
+supplies its own local workspace root. It also includes the guided account
+registration, logout, organization
 creation and organization switching, while keeping pending Codex sub-agent tasks separate from
 resolved Gemini/Claude Runner tasks and routes `run_wait` by the resolved
 provider. It also makes Loomex automatically recover rejected local
@@ -148,7 +151,7 @@ select installation bytes.
 Typical prompts:
 
 - `Show my Loomex workflows.`
-- `Bind this repository to Loomex and run release-review.`
+- `Use this repository to run release-review.`
 - `Wait for run 123 and show me any human requests.`
 - `Show pending Loomex approvals.`
 
@@ -192,8 +195,8 @@ finish before Codex is closed so that the Runner service has been installed.
 
 ## Local workspace safety
 
-Loomex operates only inside an explicit execution workspace. Binding creation
-associates a project with a Runner and never stores a filesystem path. The
+Loomex operates only inside an explicit execution workspace. Projects are
+metadata only and are never associated with a Runner or filesystem path. The
 canonical `workspacePath` is supplied by `loomex_workflow_run` for every
 execution and is carried through the server job payload to the Runner. The
 Runner owns path containment, symlink escape prevention, execution policy,

@@ -3,16 +3,6 @@ use crate::{CoreError, CoreResult};
 pub const PROTOCOL_VERSION: &str = "runner.v1";
 pub const MINIMUM_SUPPORTED_VERSION: &str = "runner.v1";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StreamIdentity {
-    pub organization_id: String,
-    pub project_id: String,
-    pub runner_device_id: String,
-    pub runner_session_id: String,
-    pub protocol_version: String,
-    pub runner_version: String,
-}
-
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SequenceTracker {
     next_expected: u64,

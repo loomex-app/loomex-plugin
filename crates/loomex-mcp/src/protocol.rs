@@ -78,7 +78,7 @@ impl Server {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
             "serverInfo": {"name": "loomex", "title": "Loomex Local Workflow Runner", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "For every Loomex request, first call loomex_setup_status. For setup.plan, immediately call read-only loomex_setup_plan. Ask approval only before loomex_setup_apply. Complete user/Runner auth and org/project scope; binding/workspace per-run; resume the original request. Never require a special setup phrase. Loomex is the execution surface: on error, stop and report exact state. Never replace failures with shell, edits, provider CLIs, or ad-hoc work. Only loomex_* recovery/diagnostic tools may follow failure."
+            "instructions": "For Loomex requests, call loomex_setup_status first. For setup planning, call read-only loomex_setup_plan; ask approval only before loomex_setup_apply. Complete auth and org/project context. Runner is organization-scoped; projects are never attached to the Runner. Provide an execution root/workspace for each run. On error, stop and report exact state; never replace Loomex with shell, edits, provider CLIs, or ad-hoc work. Only loomex_* recovery/diagnostic tools may follow a failure."
         }))
     }
 
@@ -558,13 +558,13 @@ mod tests {
         );
         let instructions = response["result"]["instructions"].as_str().unwrap();
         assert!(instructions.len() <= 512);
+        assert!(instructions.starts_with("For Loomex requests, call loomex_setup_status first"));
+        assert!(instructions.contains("call read-only loomex_setup_plan"));
+        assert!(instructions.contains("ask approval only before loomex_setup_apply"));
+        assert!(instructions.contains("projects are never attached to the Runner"));
         assert!(
-            instructions.starts_with("For every Loomex request, first call loomex_setup_status")
+            instructions.contains("Only loomex_* recovery/diagnostic tools may follow a failure")
         );
-        assert!(instructions.contains("immediately call read-only loomex_setup_plan"));
-        assert!(instructions.contains("Ask approval only before loomex_setup_apply"));
-        assert!(instructions.contains("resume the original request"));
-        assert!(instructions.contains("Never require a special setup phrase"));
     }
 
     #[tokio::test]
@@ -870,7 +870,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             list_response["result"]["tools"].as_array().unwrap().len(),
-            39
+            36
         );
         let null_metadata_response = server()
             .handle(json!({
@@ -946,10 +946,6 @@ mod tests {
 
     #[test]
     fn daemon_argument_aliases_match_the_local_control_contract() {
-        assert_eq!(
-            normalize_daemon_arguments("loomex_binding_create", json!({"projectId":"p"})),
-            json!({"projectId":"p"})
-        );
         assert_eq!(
             normalize_daemon_arguments(
                 "loomex_human_respond",

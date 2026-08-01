@@ -122,13 +122,13 @@ form. `--dangerously-skip-permissions` is part of the server-owned provider
 command so AGY can run headlessly without waiting for a permission prompt. It
 must not be removed or replaced with a different permission mode. The
 server-owned `--add-dir` value is the exact `runnerWorkspacePath`; it gives AGY
-the selected Runner binding as its workspace and must not be replaced or
+the execution root as its workspace and must not be replaced or
 omitted.
 Do not add AGY's `--sandbox` flag: AGY may redirect edits into its own scratch
 directory instead of the selected Runner workspace. For both AGY and Claude,
 `runnerExecution.workspaceScope=provider_write_confined` requires the Runner to
 apply its native process-level write sandbox before starting the provider. The
-provider and all of its child processes can write only in the selected binding,
+provider and all of its child processes can write only in the selected execution root,
 apart from the provider's own narrow runtime-state directory needed for
 credentials and conversation metadata (`.gemini/antigravity-cli` for AGY and
 `.claude` for Claude). AGY's `.gemini/antigravity-cli/scratch` tree is

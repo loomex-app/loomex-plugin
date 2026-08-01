@@ -408,9 +408,6 @@ fn is_bootstrap_method(method: &str) -> bool {
             | "org.select"
             | "project.list"
             | "project.select"
-            | "binding.list"
-            | "binding.create"
-            | "binding.revoke"
             | "runner.control"
     )
 }
@@ -651,19 +648,6 @@ mod tests {
                 Bootstrap,
                 json!({"projectId": "project-1"}),
             ),
-            ("loomex_binding_list", "binding.list", Bootstrap, json!({})),
-            (
-                "loomex_binding_create",
-                "binding.create",
-                Bootstrap,
-                json!({"projectId": "project-1"}),
-            ),
-            (
-                "loomex_binding_revoke",
-                "binding.revoke",
-                Bootstrap,
-                json!({"projectId": "project-1", "bindingId": "binding-1", "confirm": true}),
-            ),
             ("loomex_workflow_list", "workflow.list", Daemon, json!({})),
             (
                 "loomex_workflow_show",
@@ -677,7 +661,6 @@ mod tests {
                 Daemon,
                 json!({
                     "workflowId": "workflow-1",
-                    "bindingId": "binding-1",
                     "workspacePath": "/repo",
                     "idempotencyKey": "idem-run-123",
                 }),
@@ -791,7 +774,7 @@ mod tests {
         use std::collections::HashSet;
 
         let contracts = tool_contracts();
-        assert_eq!(contracts.len(), 39);
+        assert_eq!(contracts.len(), 36);
         let advertised = crate::tools::definitions();
         assert_eq!(advertised.len(), contracts.len());
         let expected_names = contracts

@@ -75,7 +75,8 @@ message RunnerHello {
   string nonce = 5;
   string runner_device_id = 6;
   string runner_session_id = 7;
-  BindingContext binding = 8;
+  // Runner identity is organization-scoped. Execution roots are supplied on
+  // individual execution/tool requests and are never advertised at connect.
   uint64 last_received_server_sequence = 9;
   uint64 resume_after_server_sequence = 10;
   google.protobuf.Struct platform = 11;
@@ -94,13 +95,6 @@ message ServerHello {
   google.protobuf.Timestamp server_time = 9;
   bool update_required = 10;
   string update_message = 11;
-}
-
-message BindingContext {
-  string organization_id = 1;
-  string project_id = 2;
-  string project_runner_binding_id = 3;
-  string local_root_path = 4;
 }
 
 message HeartbeatConfig {
@@ -134,12 +128,12 @@ message ToolCallRequest {
   string node_id = 4;
   string organization_id = 5;
   string project_id = 6;
-  string project_runner_binding_id = 7;
+  string execution_root_id = 7;
   uint32 attempt = 8;
   string capability = 9;
   ExecutionProvider provider = 10;
   string idempotency_key = 11;
-  string local_root_path = 12;
+  string execution_root_path = 12;
   string working_directory = 13;
   google.protobuf.Struct input = 14;
   PolicyContext policy = 15;

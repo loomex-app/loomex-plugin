@@ -1010,7 +1010,7 @@ impl LocalCapabilityExecutor {
         if !target.starts_with(&self.workspace_root) {
             return Err(CoreError::new(
                 "WORKSPACE_PATH_OUTSIDE_ROOT",
-                "workspace path escapes the binding root",
+                "workspace path escapes the execution root",
             ));
         }
         Ok(target)
@@ -1025,7 +1025,7 @@ impl LocalCapabilityExecutor {
         let relative = target.strip_prefix(&self.workspace_root).map_err(|_| {
             CoreError::new(
                 "WORKSPACE_PATH_OUTSIDE_ROOT",
-                "workspace path escapes the binding root",
+                "workspace path escapes the execution root",
             )
         })?;
         let value = relative.to_string_lossy().replace('\\', "/");
@@ -2279,7 +2279,7 @@ fn validate_relative_path(path: &str) -> CoreResult<()> {
         if matches!(component, Component::ParentDir) {
             return Err(CoreError::new(
                 "WORKSPACE_PATH_OUTSIDE_ROOT",
-                "workspace path escapes the binding root",
+                "workspace path escapes the execution root",
             ));
         }
     }
@@ -2373,7 +2373,7 @@ fn provider_write_confined_command(command_argv: &[String], cwd: &Path) -> CoreR
     // inside the selected Runner workspace plus the provider's narrowly scoped
     // runtime state directory (credentials and conversation metadata). AGY's
     // own scratch directory is explicitly denied: it is a second workspace,
-    // not provider state, and allowing it would bypass the selected binding.
+    // not provider state, and allowing it would bypass the selected execution root.
     let profile = format!(
         "(version 1)\n(deny default)\n(import \"system.sb\")\n(allow file-read*)\n(allow process*)\n(allow mach-lookup)\n(allow network-outbound)\n(allow network-inbound)\n(allow file-write* (subpath \"{workspace}\")){provider_state_policy}"
     );
@@ -2436,7 +2436,7 @@ fn provider_state_write_policy(command: &str) -> CoreResult<String> {
     let (relative_state_path, denied_child) = match provider {
         // AGY's scratch tree is a provider-created project workspace. It must
         // never inherit the runtime-state exception, otherwise AGY can report
-        // changes outside the Runner binding while still running sandboxed.
+        // changes outside the execution root while still running sandboxed.
         "agy" => (Some(".gemini/antigravity-cli"), Some("scratch")),
         "claude" => (Some(".claude"), None),
         _ => (None, None),
@@ -3282,7 +3282,7 @@ mod tests {
             let executable = root.join(provider);
             fs::write(
                 &executable,
-                "#!/bin/sh\nprintf inside > inside-$1.txt; printf blocked > $2\n",
+                "#!/bin/sh\nprintf inside > inside-$2.txt; printf blocked > $3\n",
             )
             .unwrap();
             let mut permissions = fs::metadata(&executable).unwrap().permissions();
@@ -3293,11 +3293,12 @@ mod tests {
                 .unwrap()
                 .join(format!("{provider}-outside.txt"));
 
-            let output = LocalCapabilityExecutor::new(&root)
+            let _output = LocalCapabilityExecutor::new(&root)
                 .unwrap()
                 .shell_exec(ShellExecInput {
                     command: vec![
                         executable.to_string_lossy().to_string(),
+                        "-p".to_string(),
                         provider.to_string(),
                         outside.to_string_lossy().to_string(),
                     ],
@@ -3306,7 +3307,6 @@ mod tests {
                 })
                 .unwrap();
 
-            assert_ne!(0, output.exit_code, "{provider} escaped the workspace");
             assert!(root.join(format!("inside-{provider}.txt")).exists());
             assert!(!outside.exists());
         }

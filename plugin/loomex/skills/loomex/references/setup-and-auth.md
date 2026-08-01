@@ -51,8 +51,8 @@ If `recommendedNextAction` is `auth.status`, do not create another setup plan,
 even when the registered service is inactive or deferred while authentication
 is incomplete. Continue with authentication and organization/project scope,
 then resume the original Loomex request. Runner authentication is independent
-from project scope; the filesystem workspace and any execution scope are
-selected when that execution starts.
+from project scope; the filesystem workspace and execution root are selected
+when that execution starts.
 If `loomex_org_list` or another scope call returns a successful response with
 `reauthRequired: true` and an embedded `auth` challenge, the Plugin has already
 cleared stale local credentials and started a replacement device flow. Show the
@@ -60,8 +60,8 @@ returned verification URI/code, call `loomex_auth_wait` with the exact returned
 `loginId`, and retry the failed scope call after authentication succeeds. Do not
 ask the user to edit config, register a workspace, or manually delete tokens.
 If the authenticated Runner identity is stale or mismatched, re-bootstrap the
-Runner credential through the setup/auth flow. Do not create a project binding
-or persist a workspace merely to make the service start.
+Runner credential through the setup/auth flow. Do not create a project scope
+record or persist a workspace merely to make the service start.
 If the action is `unsupported`, report the structured reason and do not attempt
 setup. If it is `package.error`, report `bundledRuntime.error`; do not misreport
 a malformed or unavailable package as an unsupported platform.

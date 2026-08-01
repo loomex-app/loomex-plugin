@@ -1,6 +1,3 @@
-use crate::binding::{
-    normalize_workspace_path, validate_workspace_path_inside_binding, ProjectRunnerBinding,
-};
 use crate::{CoreError, CoreResult};
 
 pub const MVP_CAPABILITIES: &[&str] = &[
@@ -22,6 +19,19 @@ pub const MVP_CAPABILITIES: &[&str] = &[
 pub const CONTRACT_MVP_COMPAT_CAPABILITIES: &[&str] = &[];
 
 pub const RESERVED_CAPABILITIES: &[&str] = &["git.commit", "git.push"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionRoot {
+    pub path: String,
+}
+
+impl ExecutionRoot {
+    pub fn new(path: impl AsRef<str>) -> CoreResult<Self> {
+        Ok(Self {
+            path: normalize_workspace_path(path.as_ref())?,
+        })
+    }
+}
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 pub enum PolicyDecision {
@@ -224,7 +234,7 @@ impl PolicyEngine {
     pub fn evaluate(
         &self,
         input: &PolicyEvaluationInput,
-        binding: &ProjectRunnerBinding,
+        execution_root: &ExecutionRoot,
     ) -> CoreResult<PolicyEvaluation> {
         let support = capability_support(&input.capability);
         if support == CapabilitySupport::ReservedNoExecutor {
@@ -237,15 +247,15 @@ impl PolicyEngine {
         }
 
         if let Some(requested_path) = &input.requested_path {
-            validate_workspace_path_inside_binding(
-                binding,
+            validate_workspace_path_inside_root(
+                execution_root,
                 requested_path,
                 input.resolved_path.as_deref(),
             )
             .map_err(|_| {
                 CoreError::new(
                     "POLICY_DENIED_OUTSIDE_WORKSPACE",
-                    "policy denied path outside binding workspace",
+                    "policy denied path outside execution root",
                 )
             })?;
         }
@@ -283,9 +293,9 @@ impl PolicyEngine {
     pub fn dry_run(
         &self,
         input: &PolicyEvaluationInput,
-        binding: &ProjectRunnerBinding,
+        execution_root: &ExecutionRoot,
     ) -> CoreResult<PolicyEvaluation> {
-        self.evaluate(input, binding)
+        self.evaluate(input, execution_root)
     }
 }
 
@@ -453,6 +463,70 @@ fn source_precedence(source: PolicySource) -> u8 {
     }
 }
 
+fn validate_workspace_path_inside_root(
+    execution_root: &ExecutionRoot,
+    requested_path: &str,
+    resolved_path: Option<&str>,
+) -> CoreResult<()> {
+    let requested = normalize_workspace_path(requested_path)?;
+    if !path_is_under_prefix(&execution_root.path, &requested) {
+        return Err(CoreError::new(
+            "WORKSPACE_PATH_OUTSIDE_EXECUTION_ROOT",
+            "requested path is outside the execution root",
+        ));
+    }
+    if let Some(resolved_path) = resolved_path {
+        let resolved = normalize_workspace_path(resolved_path)?;
+        if !path_is_under_prefix(&execution_root.path, &resolved) {
+            return Err(CoreError::new(
+                "WORKSPACE_SYMLINK_ESCAPE",
+                "resolved path escapes the execution root",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn normalize_workspace_path(input: &str) -> CoreResult<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(CoreError::new(
+            "EMPTY_WORKSPACE_PATH",
+            "workspace path is required",
+        ));
+    }
+    let replaced = trimmed.replace('\\', "/");
+    let absolute = replaced.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in replaced.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return Err(CoreError::new(
+                        "WORKSPACE_PATH_TRAVERSAL",
+                        "workspace path cannot escape above root",
+                    ));
+                }
+            }
+            _ => parts.push(part),
+        }
+    }
+    let normalized = parts.join("/");
+    if normalized.is_empty() {
+        return Ok(if absolute {
+            "/".to_string()
+        } else {
+            ".".to_string()
+        });
+    }
+    Ok(if absolute {
+        format!("/{normalized}")
+    } else {
+        normalized
+    })
+}
+
 fn rule_matches(rule: &PolicyRule, input: &PolicyEvaluationInput) -> bool {
     if rule.capability != "*" && rule.capability != input.capability {
         return false;
@@ -540,22 +614,10 @@ fn apply_shell_risk_floor(
 
 #[cfg(test)]
 mod tests {
-    use crate::binding::{BindingStatus, ProjectRunnerBinding, WorkspacePath};
-
     use super::*;
 
-    fn binding() -> ProjectRunnerBinding {
-        ProjectRunnerBinding {
-            id: "bind_123".to_string(),
-            organization_id: "org_123".to_string(),
-            project_id: "prj_123".to_string(),
-            runner_device_id: "device_123".to_string(),
-            workspace: WorkspacePath::new("/Users/example/app", None).unwrap(),
-            status: BindingStatus::Active,
-            created_by: "user_123".to_string(),
-            last_seen_at_epoch_ms: Some(1_000),
-            revoked_at_epoch_ms: None,
-        }
+    fn execution_root() -> ExecutionRoot {
+        ExecutionRoot::new("/Users/example/app").unwrap()
     }
 
     fn layer(source: PolicySource, capability: &str, decision: PolicyDecision) -> PolicyLayer {
@@ -575,7 +637,10 @@ mod tests {
         )]);
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("git.status"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("git.status"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(PolicyDecision::Allow, evaluation.decision);
@@ -586,7 +651,10 @@ mod tests {
         let engine = PolicyEngine::default();
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("shell.exec"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("shell.exec"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(PolicyDecision::Ask, evaluation.decision);
@@ -601,7 +669,10 @@ mod tests {
         )]);
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("fs.write"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("fs.write"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(PolicyDecision::Deny, evaluation.decision);
@@ -614,7 +685,7 @@ mod tests {
         let evaluation = engine
             .dry_run(
                 &PolicyEvaluationInput::capability("future.unknown"),
-                &binding(),
+                &execution_root(),
             )
             .unwrap();
 
@@ -630,7 +701,10 @@ mod tests {
         ]);
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("fs.read"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("fs.read"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(PolicySource::Organization, evaluation.source);
@@ -645,7 +719,10 @@ mod tests {
         ]);
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("fs.write"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("fs.write"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(PolicyDecision::Deny, evaluation.decision);
@@ -657,7 +734,7 @@ mod tests {
         let mut input = PolicyEvaluationInput::capability("fs.read");
         input.requested_path = Some("/Users/example/secret.txt".to_string());
 
-        let err = engine.dry_run(&input, &binding()).unwrap_err();
+        let err = engine.dry_run(&input, &execution_root()).unwrap_err();
 
         assert_eq!("POLICY_DENIED_OUTSIDE_WORKSPACE", err.code);
     }
@@ -674,7 +751,7 @@ mod tests {
         let mut input = PolicyEvaluationInput::capability("fs.read");
         input.requested_path = Some("/Users/example/app/.env".to_string());
 
-        let evaluation = engine.dry_run(&input, &binding()).unwrap();
+        let evaluation = engine.dry_run(&input, &execution_root()).unwrap();
 
         assert_eq!(PolicyDecision::Deny, evaluation.decision);
     }
@@ -693,7 +770,7 @@ mod tests {
         input.http_host = Some("api.internal".to_string());
         input.http_method = Some("GET".to_string());
 
-        let evaluation = engine.dry_run(&input, &binding()).unwrap();
+        let evaluation = engine.dry_run(&input, &execution_root()).unwrap();
 
         assert_eq!(PolicyDecision::Allow, evaluation.decision);
     }
@@ -708,7 +785,7 @@ mod tests {
         let mut input = PolicyEvaluationInput::capability("shell.exec");
         input.shell_command = Some("sh -c 'rm -rf build'".to_string());
 
-        let evaluation = engine.dry_run(&input, &binding()).unwrap();
+        let evaluation = engine.dry_run(&input, &execution_root()).unwrap();
 
         assert_eq!(PolicyDecision::Ask, evaluation.decision);
         assert_eq!("shell_command_requires_review", evaluation.reason);
@@ -724,7 +801,7 @@ mod tests {
         let mut input = PolicyEvaluationInput::capability("shell.exec");
         input.shell_command = Some("sh -c 'rm -rf build'".to_string());
 
-        let evaluation = engine.dry_run(&input, &binding()).unwrap();
+        let evaluation = engine.dry_run(&input, &execution_root()).unwrap();
 
         assert_eq!(PolicyDecision::Deny, evaluation.decision);
     }
@@ -734,7 +811,10 @@ mod tests {
         let engine = PolicyEngine::default();
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("git.push"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("git.push"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(
@@ -752,7 +832,10 @@ mod tests {
     fn expanded_capabilities_are_policy_bound_mvp_executor_actions() {
         for capability in ["browser.playwright", "db.query", "docker.exec", "test.run"] {
             let evaluation = PolicyEngine::default()
-                .dry_run(&PolicyEvaluationInput::capability(capability), &binding())
+                .dry_run(
+                    &PolicyEvaluationInput::capability(capability),
+                    &execution_root(),
+                )
                 .unwrap();
 
             assert_eq!(PolicyDecision::Ask, evaluation.decision);
@@ -773,7 +856,10 @@ mod tests {
             }]);
 
             let evaluation = engine
-                .dry_run(&PolicyEvaluationInput::capability(capability), &binding())
+                .dry_run(
+                    &PolicyEvaluationInput::capability(capability),
+                    &execution_root(),
+                )
                 .unwrap();
 
             assert_eq!(PolicyDecision::Deny, evaluation.decision);
@@ -810,7 +896,10 @@ mod tests {
         .unwrap();
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("shell.exec"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("shell.exec"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(PolicyDecision::Deny, evaluation.decision);
@@ -848,7 +937,7 @@ mod tests {
         let evaluation = engine
             .dry_run(
                 &PolicyEvaluationInput::capability("http.request"),
-                &binding(),
+                &execution_root(),
             )
             .unwrap();
 
@@ -882,7 +971,10 @@ mod tests {
         .unwrap();
 
         let evaluation = engine
-            .dry_run(&PolicyEvaluationInput::capability("fs.write"), &binding())
+            .dry_run(
+                &PolicyEvaluationInput::capability("fs.write"),
+                &execution_root(),
+            )
             .unwrap();
 
         assert_eq!(PolicyDecision::Deny, evaluation.decision);

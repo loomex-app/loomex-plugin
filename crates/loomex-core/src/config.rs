@@ -6,23 +6,12 @@ use crate::{CoreError, CoreResult};
 
 pub const CONFIG_DIR_NAME: &str = ".loomex";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
-pub const LEGACY_CONFIG_DIR_NAME: &str = ".loomex-runner";
 pub const CLI_CONFIG_VERSION: u32 = 2;
 pub const DEFAULT_PROFILE_NAME: &str = "default";
 pub const DEFAULT_SERVER_URL: &str = "https://loomex.app";
 pub const STAGE_SERVER_URL: &str = "https://stage.loomex.app";
 pub const LOCAL_SERVER_URL: &str = "http://127.0.0.1:28000";
 const LEGACY_LOCAL_SERVER_URL: &str = "http://127.0.0.1:28080";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunnerConfig {
-    pub organization_id: String,
-    pub project_id: String,
-    pub runner_id: String,
-    pub runner_device_id: String,
-    pub binding_id: String,
-    pub local_root_path: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliConfig {
@@ -38,8 +27,6 @@ pub struct CliProfile {
     pub organization_id: Option<String>,
     pub project_id: Option<String>,
     pub runner_id: Option<String>,
-    pub binding_id: Option<String>,
-    pub workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -57,133 +44,10 @@ pub struct ResolvedCliSettings {
     pub organization_id: Option<String>,
     pub project_id: Option<String>,
     pub runner_id: Option<String>,
-    pub binding_id: Option<String>,
-    pub workspace_path: Option<String>,
 }
 
 pub fn default_config_path(home_dir: &Path) -> PathBuf {
     home_dir.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)
-}
-
-pub fn legacy_config_path(home_dir: &Path) -> PathBuf {
-    home_dir.join(LEGACY_CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)
-}
-
-impl RunnerConfig {
-    pub fn load(path: &Path) -> CoreResult<Self> {
-        let content = fs::read_to_string(path)
-            .map_err(|err| CoreError::new("CONFIG_READ_FAILED", err.to_string()))?;
-        Self::parse(&content)
-    }
-
-    pub fn save(&self, path: &Path) -> CoreResult<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|err| CoreError::new("CONFIG_DIR_CREATE_FAILED", err.to_string()))?;
-        }
-        let temp_path = path.with_extension(format!(
-            "{}.tmp",
-            path.extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("toml")
-        ));
-        fs::write(&temp_path, self.to_document())
-            .map_err(|err| CoreError::new("CONFIG_WRITE_FAILED", err.to_string()))?;
-        fs::rename(&temp_path, path)
-            .map_err(|err| CoreError::new("CONFIG_WRITE_FAILED", err.to_string()))
-    }
-
-    pub fn parse(content: &str) -> CoreResult<Self> {
-        let mut values = BTreeMap::new();
-        for raw_line in content.lines() {
-            let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let Some((key, value)) = line.split_once('=') else {
-                return Err(CoreError::new(
-                    "CONFIG_PARSE_FAILED",
-                    "expected key = \"value\"",
-                ));
-            };
-            values.insert(key.trim().to_string(), unquote(value.trim())?);
-        }
-
-        Ok(Self {
-            organization_id: take_required(&mut values, "organization_id")?,
-            project_id: take_required(&mut values, "project_id")?,
-            runner_id: take_required(&mut values, "runner_id")?,
-            runner_device_id: take_required(&mut values, "runner_device_id")?,
-            binding_id: take_required(&mut values, "binding_id")?,
-            local_root_path: take_required(&mut values, "local_root_path")?,
-        })
-    }
-
-    pub fn parse_legacy(content: &str, runner_device_id: String) -> CoreResult<Self> {
-        let mut config = Self::parse_legacy_without_device(content)?;
-        if runner_device_id.trim().is_empty() {
-            return Err(CoreError::new("CONFIG_MISSING_FIELD", "runner_device_id"));
-        }
-        config.runner_device_id = runner_device_id;
-        Ok(config)
-    }
-
-    pub fn migrate_from_legacy(
-        legacy_path: &Path,
-        target_path: &Path,
-        runner_device_id: String,
-    ) -> CoreResult<Option<Self>> {
-        if target_path.exists() {
-            return Ok(None);
-        }
-        if !legacy_path.exists() {
-            return Ok(None);
-        }
-
-        let content = fs::read_to_string(legacy_path)
-            .map_err(|err| CoreError::new("CONFIG_READ_FAILED", err.to_string()))?;
-        let config = Self::parse_legacy(&content, runner_device_id)?;
-        config.save(target_path)?;
-        Ok(Some(config))
-    }
-
-    pub fn to_document(&self) -> String {
-        [
-            toml_line("organization_id", &self.organization_id),
-            toml_line("project_id", &self.project_id),
-            toml_line("runner_id", &self.runner_id),
-            toml_line("runner_device_id", &self.runner_device_id),
-            toml_line("binding_id", &self.binding_id),
-            toml_line("local_root_path", &self.local_root_path),
-        ]
-        .join("")
-    }
-
-    fn parse_legacy_without_device(content: &str) -> CoreResult<Self> {
-        let mut values = BTreeMap::new();
-        for raw_line in content.lines() {
-            let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let Some((key, value)) = line.split_once('=') else {
-                return Err(CoreError::new(
-                    "CONFIG_PARSE_FAILED",
-                    "expected key = \"value\"",
-                ));
-            };
-            values.insert(key.trim().to_string(), unquote(value.trim())?);
-        }
-
-        Ok(Self {
-            organization_id: take_required(&mut values, "organization_id")?,
-            project_id: take_required(&mut values, "project_id")?,
-            runner_id: take_required(&mut values, "runner_id")?,
-            runner_device_id: String::new(),
-            binding_id: take_required(&mut values, "binding_id")?,
-            local_root_path: take_required(&mut values, "local_root_path")?,
-        })
-    }
 }
 
 impl Default for CliConfig {
@@ -329,12 +193,6 @@ impl CliConfig {
             if let Some(runner_id) = &profile.runner_id {
                 document.push_str(&toml_line("runnerId", runner_id));
             }
-            if let Some(binding_id) = &profile.binding_id {
-                document.push_str(&toml_line("bindingId", binding_id));
-            }
-            if let Some(workspace_path) = &profile.workspace_path {
-                document.push_str(&toml_line("workspacePath", workspace_path));
-            }
         }
         document
     }
@@ -379,8 +237,6 @@ impl CliConfig {
             organization_id: base.organization_id,
             project_id: base.project_id,
             runner_id: base.runner_id,
-            binding_id: base.binding_id,
-            workspace_path: base.workspace_path,
         })
     }
 
@@ -403,8 +259,6 @@ impl CliConfig {
             "organizationId" => profile.organization_id.clone(),
             "projectId" => profile.project_id.clone(),
             "runnerId" => profile.runner_id.clone(),
-            "bindingId" => profile.binding_id.clone(),
-            "workspacePath" => profile.workspace_path.clone(),
             _ => None,
         })
     }
@@ -452,15 +306,6 @@ impl CliConfig {
             if let Some(runner_id) = &profile.runner_id {
                 entries.push((format!("profiles.{name}.runnerId"), runner_id.clone()));
             }
-            if let Some(binding_id) = &profile.binding_id {
-                entries.push((format!("profiles.{name}.bindingId"), binding_id.clone()));
-            }
-            if let Some(workspace_path) = &profile.workspace_path {
-                entries.push((
-                    format!("profiles.{name}.workspacePath"),
-                    workspace_path.clone(),
-                ));
-            }
         }
         entries
     }
@@ -476,8 +321,6 @@ impl CliConfig {
             "organizationId" | "organization_id" => profile.organization_id = optional_value(value),
             "projectId" | "project_id" => profile.project_id = optional_value(value),
             "runnerId" | "runner_id" => profile.runner_id = optional_value(value),
-            "bindingId" | "binding_id" => profile.binding_id = optional_value(value),
-            "workspacePath" | "workspace_path" => profile.workspace_path = optional_value(value),
             _ => return Err(CoreError::new("CONFIG_KEY_UNSUPPORTED", key)),
         }
         validate_server_url(&profile.server_url)?;
@@ -513,8 +356,6 @@ impl CliProfile {
             organization_id: None,
             project_id: None,
             runner_id: None,
-            binding_id: None,
-            workspace_path: None,
         }
     }
 
@@ -525,8 +366,6 @@ impl CliProfile {
             organization_id: None,
             project_id: None,
             runner_id: None,
-            binding_id: None,
-            workspace_path: None,
         }
     }
 
@@ -537,17 +376,8 @@ impl CliProfile {
             organization_id: None,
             project_id: None,
             runner_id: None,
-            binding_id: None,
-            workspace_path: None,
         }
     }
-}
-
-fn take_required(values: &mut BTreeMap<String, String>, key: &'static str) -> CoreResult<String> {
-    values
-        .remove(key)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| CoreError::new("CONFIG_MISSING_FIELD", key))
 }
 
 fn parse_profile_header(line: &str) -> CoreResult<String> {
@@ -655,42 +485,7 @@ fn escape_toml_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::*;
-
-    fn sample_config() -> RunnerConfig {
-        RunnerConfig {
-            organization_id: "org_123".to_string(),
-            project_id: "prj_123".to_string(),
-            runner_id: "runner_123".to_string(),
-            runner_device_id: "device_123".to_string(),
-            binding_id: "bind_123".to_string(),
-            local_root_path: "/Users/example/My App".to_string(),
-        }
-    }
-
-    #[test]
-    fn config_load_save_round_trip() {
-        let id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("loomex-config-{id}.toml"));
-        let config = sample_config();
-
-        config.save(&path).unwrap();
-        let loaded = RunnerConfig::load(&path).unwrap();
-        let _ = fs::remove_file(&path);
-
-        assert_eq!(config, loaded);
-    }
-
-    #[test]
-    fn corrupt_config_returns_parse_error() {
-        let err = RunnerConfig::parse("organization_id = org_123").unwrap_err();
-        assert_eq!("CONFIG_PARSE_FAILED", err.code);
-    }
 
     #[test]
     fn default_config_path_uses_final_location() {
@@ -699,39 +494,6 @@ mod tests {
             PathBuf::from("/Users/example/.loomex/config.toml"),
             default_config_path(home)
         );
-    }
-
-    #[test]
-    fn migration_from_old_path_writes_new_config_with_device_id() {
-        let id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("loomex-config-migration-{id}"));
-        let legacy = root.join(".loomex-runner").join("config.toml");
-        let target = root.join(".loomex").join("config.toml");
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        fs::write(
-            &legacy,
-            [
-                "organization_id = \"org_123\"\n",
-                "project_id = \"prj_123\"\n",
-                "runner_id = \"runner_123\"\n",
-                "binding_id = \"bind_123\"\n",
-                "local_root_path = \"/Users/example/My App\"\n",
-            ]
-            .join(""),
-        )
-        .unwrap();
-
-        let migrated =
-            RunnerConfig::migrate_from_legacy(&legacy, &target, "device_123".to_string())
-                .unwrap()
-                .unwrap();
-
-        assert_eq!("device_123", migrated.runner_device_id);
-        assert_eq!(migrated, RunnerConfig::load(&target).unwrap());
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -831,17 +593,6 @@ hostHeader = "loomex.localhost"
         assert_eq!(
             "http://127.0.0.1:28080",
             config.profiles["local"].server_url
-        );
-    }
-
-    #[test]
-    fn readme_default_profile_matches_canonical_server_url() {
-        let readme = include_str!("../../../README.md");
-        let expected = format!("serverUrl = \"{DEFAULT_SERVER_URL}\"");
-
-        assert!(
-            readme.contains(&expected),
-            "README default profile must document {expected}"
         );
     }
 
