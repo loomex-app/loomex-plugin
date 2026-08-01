@@ -76,6 +76,10 @@ test("references use the implemented public MCP argument contract", async () => 
     path.join(root, "skills", "loomex", "references", "runner-operations.md"),
     "utf8",
   );
+  const createWorkflow = await readFile(
+    path.join(root, "skills", "create-workflow", "SKILL.md"),
+    "utf8",
+  );
 
   assert.match(setup, /returned `planId`, exact returned `channel` and `installService`/);
   assert.match(setup, /exact `targetVersion` and `confirm: true`/);
@@ -88,6 +92,8 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(runs, /required `workflowId`, `workspacePath`, and `idempotencyKey`/);
   assert.match(runs, /required `executionId`,\s+a non-empty audit `reason`, and `idempotencyKey`/);
   assert.match(human, /public `response` field/);
+  assert.match(createWorkflow, /use\s+`loomex_human_open` for `radio`, `checkbox`, `boolean`/);
+  assert.match(createWorkflow, /Never answer a typed form with `optionId`, `selected`/);
   assert.match(human, /filtered by `workflowId`, `executionId`/);
   assert.match(human, /returned `nextCursor`/);
   assert.match(human, /public `approvalId`/);
@@ -213,7 +219,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.65");
+  assert.equal(manifest.version, "0.1.66");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);

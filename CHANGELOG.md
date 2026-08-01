@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.66
+
+- Restore the canonical workflow-builder entry Human Input node.
+- Route typed Human Input requests through the interactive side-panel form and
+  reject manual radio payload construction in the Plugin guidance.
+
 ## 0.1.65
 
 - Run AI workflow creation through the hidden system workflow using the normal
