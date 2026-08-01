@@ -30,8 +30,8 @@ use loomex_core::{
     FsReadInput, FsWriteInput, HttpManagementApiClient, HumanRequestSummary,
     LocalCapabilityExecutor, LocalControlDispatcher, LocalControlPaths, LocalControlRequest,
     LocalControlResponse, LogEntry, ManagementApiClient, ManagementCredential, Organization,
-    Project, Runner, RunnerServiceManifest, RunnerServicePlatform, RunnerServiceSpec,
-    RuntimeInstaller, SbomPackage, ShellCancellationToken, ShellExecInput, SystemCredentialStore,
+    Runner, RunnerServiceManifest, RunnerServicePlatform, RunnerServiceSpec, RuntimeInstaller,
+    SbomPackage, ShellCancellationToken, ShellExecInput, SystemCredentialStore,
     WorkflowRunStartRequest, LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
@@ -236,7 +236,6 @@ fn run(args: Vec<String>) -> Result<String, String> {
         [command, rest @ ..] if command == "login" => run_login(rest, &parsed.options),
         [command, rest @ ..] if command == "logout" => run_logout(rest, &parsed.options),
         [command, rest @ ..] if command == "org" => run_org(rest, &parsed.options),
-        [command, rest @ ..] if command == "project" => run_project(rest, &parsed.options),
         [command, rest @ ..] if command == "workflow" => run_workflow(rest, &parsed.options),
         [command, rest @ ..] if command == "approval" => run_approval(rest, &parsed.options),
         [command, rest @ ..] if command == "support" => run_support(rest, &parsed.options),
@@ -265,9 +264,7 @@ fn direct_cli_is_lifecycle_mutation(args: &[String]) -> bool {
         [command, subcommand, ..] if command == "profile" => {
             matches!(subcommand.as_str(), "use" | "switch")
         }
-        [command, subcommand, ..] if command == "org" || command == "project" => {
-            subcommand == "select"
-        }
+        [command, subcommand, ..] if command == "org" => subcommand == "select",
         [command, subcommand] if command == "runner" => {
             matches!(subcommand.as_str(), "start" | "stop")
         }
@@ -377,7 +374,7 @@ fn completion_script(shell: &str) -> Result<String, String> {
             r#"_loomex_complete()
 {
   local cur="${COMP_WORDS[COMP_CWORD]}"
-  local commands="login logout config profile org project workflow runner approval policy trace support completion"
+  local commands="login logout config profile org workflow runner approval policy trace support completion"
   COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
 }
 complete -F _loomex_complete loomex"#
@@ -393,7 +390,6 @@ _loomex() {
     'config:Read or write CLI config'
     'profile:List or switch profiles'
     'org:List or select organizations'
-    'project:List or select projects'
     'workflow:Run workflows'
     'runner:Control and diagnose the runner'
     'approval:List or resolve local approvals'
@@ -406,7 +402,7 @@ _loomex "$@""#
                 .to_string(),
         ),
         "fish" => Ok(
-            r#"complete -c loomex -f -a "login logout config profile org project workflow runner approval policy trace support completion""#
+            r#"complete -c loomex -f -a "login logout config profile org workflow runner approval policy trace support completion""#
                 .to_string(),
         ),
         _ => Err(format!(
@@ -625,7 +621,6 @@ fn run_login_with<C: ManagementApiClient, S: CredentialStore>(
             "storageWarning": storage_outcome.warning,
             "userAuthenticated": user_token,
             "runnerAuthenticated": !user_token,
-            "projectSelectionRequired": user_token,
             "deviceLogin": device_challenge.as_ref().map(|challenge| json!({
                 "verificationUri": challenge.verification_uri,
                 "userCode": challenge.user_code
@@ -795,9 +790,6 @@ fn run_org_with<C: ManagementApiClient>(
                     organization.id.clone(),
                 )
                 .map_err(format_core_error)?;
-            config
-                .set_key(&format!("profiles.{profile}.projectId"), String::new())
-                .map_err(format_core_error)?;
             config.save(config_path).map_err(format_core_error)?;
             if options.json {
                 return Ok(json!({
@@ -816,98 +808,6 @@ fn run_org_with<C: ManagementApiClient>(
     }
 }
 
-fn run_project(args: &[String], options: &GlobalOptions) -> Result<String, String> {
-    let config_path = cli_config_path();
-    let mut config = load_cli_config_from(&config_path)?;
-    let resolved = config
-        .resolve(options.config_overrides(), |key| env::var(key).ok())
-        .map_err(format_core_error)?;
-    let store = SystemCredentialStore::new(credential_dir());
-    let credential = load_user_credential(&store, &resolved.profile)?;
-    let organization_id = resolved
-        .organization_id
-        .clone()
-        .or_else(|| Some(credential.organization_id.clone()))
-        .ok_or_else(|| "PROJECT_CONTEXT_MISSING: select an organization first".to_string())?;
-    let mut client =
-        HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
-            .map_err(format_core_error)?;
-    run_project_with(
-        args,
-        options,
-        &mut config,
-        &config_path,
-        &credential,
-        &mut client,
-        &resolved.profile,
-        &organization_id,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_project_with<C: ManagementApiClient>(
-    args: &[String],
-    options: &GlobalOptions,
-    config: &mut CliConfig,
-    config_path: &std::path::Path,
-    credential: &ManagementCredential,
-    client: &mut C,
-    profile: &str,
-    organization_id: &str,
-) -> Result<String, String> {
-    match args {
-        [] => Ok(PROJECT_HELP.to_string()),
-        [value] if is_help(value) => Ok(PROJECT_HELP.to_string()),
-        [subcommand] if subcommand == "list" => {
-            let projects = client
-                .list_projects(credential, organization_id)
-                .map_err(format_core_error)?;
-            if projects.is_empty() {
-                return Err(format!(
-                    "PROJECT_ACCESS_EMPTY: organization {organization_id} has no accessible projects"
-                ));
-            }
-            format_projects(&projects, options)
-        }
-        [subcommand, project_id] if subcommand == "select" => {
-            let project = client
-                .get_project(credential, project_id)
-                .map_err(format_core_error)?;
-            if project.organization_id != organization_id {
-                return Err(
-                    "PROJECT_ORGANIZATION_MISMATCH: project belongs to another organization"
-                        .to_string(),
-                );
-            }
-            if project.status != "active" {
-                return Err(format!(
-                    "PROJECT_UNAVAILABLE: project status is {}",
-                    project.status
-                ));
-            }
-            config
-                .set_key(&format!("profiles.{profile}.projectId"), project.id.clone())
-                .map_err(format_core_error)?;
-            config.save(config_path).map_err(format_core_error)?;
-            if options.json {
-                return Ok(json!({
-                    "schemaVersion": "loomex.cli.projectSelection/v1",
-                    "profile": profile,
-                    "project": project
-                })
-                .to_string());
-            }
-            Ok(format!(
-                "selected project: {} ({})",
-                project.name, project.id
-            ))
-        }
-        [subcommand, ..] => Err(format!(
-            "unknown project subcommand: {subcommand}\n{PROJECT_HELP}"
-        )),
-    }
-}
-
 fn format_organizations(
     organizations: &[Organization],
     options: &GlobalOptions,
@@ -922,21 +822,6 @@ fn format_organizations(
     Ok(organizations
         .iter()
         .map(|organization| format!("{}\t{}", organization.id, organization.name))
-        .collect::<Vec<_>>()
-        .join("\n"))
-}
-
-fn format_projects(projects: &[Project], options: &GlobalOptions) -> Result<String, String> {
-    if options.json {
-        return Ok(json!({
-            "schemaVersion": "loomex.cli.projectList/v1",
-            "items": projects
-        })
-        .to_string());
-    }
-    Ok(projects
-        .iter()
-        .map(|project| format!("{}\t{}\t{}", project.id, project.name, project.status))
         .collect::<Vec<_>>()
         .join("\n"))
 }
@@ -967,7 +852,7 @@ fn load_user_credential<S: CredentialStore + ?Sized>(
         .load(&user_profile)
         .map_err(format_core_error)?
         .ok_or_else(|| {
-            "USER_AUTH_REQUIRED: authenticate with the Codex plugin before selecting an organization or project"
+            "USER_AUTH_REQUIRED: authenticate with the Codex plugin before selecting an organization"
                 .to_string()
         })?;
     credential
@@ -1048,7 +933,6 @@ struct RunnerStatusReport {
     profile: String,
     server_url: String,
     host_header: Option<String>,
-    selected_project_id: Option<String>,
     runner: Option<Runner>,
     active_runs: Vec<String>,
     warnings: Vec<String>,
@@ -1090,7 +974,6 @@ impl DoctorCheck {
 struct WorkflowRunRequest {
     workflow_id: String,
     organization_id: String,
-    project_id: String,
     workspace_path: Option<String>,
     idempotency_key: String,
     input: Option<Value>,
@@ -1106,7 +989,6 @@ impl WorkflowRunRequest {
         resolved: &loomex_core::ResolvedCliSettings,
         read_input: impl FnOnce(&str) -> Result<Value, String>,
     ) -> Result<Self, String> {
-        let mut project_id = resolved.project_id.clone();
         let mut workspace_path = None;
         let mut input_arg = None;
         let mut human_input = None;
@@ -1115,10 +997,6 @@ impl WorkflowRunRequest {
         let mut index = 0;
         while index < args.len() {
             match args[index].as_str() {
-                "--project" => {
-                    index += 1;
-                    project_id = Some(required_value(args, index, "--project")?);
-                }
                 "--workspace" => {
                     index += 1;
                     workspace_path = Some(required_value(args, index, "--workspace")?);
@@ -1145,9 +1023,6 @@ impl WorkflowRunRequest {
             .organization_id
             .clone()
             .ok_or_else(|| "ORG_CONTEXT_MISSING: select an organization first".to_string())?;
-        let project_id = project_id.ok_or_else(|| {
-            "PROJECT_CONTEXT_MISSING: provide --project or select a project".to_string()
-        })?;
         let input = input_arg
             .map(|input_arg| {
                 let input = read_input(&input_arg)?;
@@ -1162,7 +1037,6 @@ impl WorkflowRunRequest {
         Ok(Self {
             workflow_id: workflow_id.to_string(),
             organization_id,
-            project_id,
             workspace_path,
             idempotency_key: idempotency_key(
                 "workflow-run",
@@ -1618,7 +1492,7 @@ fn run_runner_plugin_control(args: &[String], options: &GlobalOptions) -> Result
         return Err("PLUGIN_CONTROL_PARAMS_INVALID: params must be a JSON object".to_string());
     }
     // Serialize every bootstrap mutation that can change setup readiness,
-    // service state, identity, or project selection. Setup apply then
+    // service state or identity. Setup apply then
     // revalidates and consumes one stable reviewed snapshot under this lock.
     let lifecycle_mutation = plugin_control_is_lifecycle_mutation(method);
     let _lifecycle_lock = lifecycle_mutation
@@ -1677,19 +1551,6 @@ fn run_runner_plugin_control(args: &[String], options: &GlobalOptions) -> Result
                 plugin_org_select(&params, options)?
             }
         }
-        "project.list" => plugin_project_list(&params, options)?,
-        "project.select" => {
-            let changing = plugin_validate_project_selection(&params, options)?;
-            if changing {
-                // Project selection changes management scope only. Runner
-                // authentication and the durable local service are
-                // organization-scoped; do not stop/rebootstrap them merely
-                // because the user picked another project.
-                plugin_project_select(&params, options)?
-            } else {
-                plugin_project_select(&params, options)?
-            }
-        }
         "runner.control" => plugin_runner_control(&params)?,
         "status" | "runner.status" => plugin_runner_status(options)?,
         "doctor" => {
@@ -1729,7 +1590,6 @@ fn plugin_control_is_lifecycle_mutation(method: &str) -> bool {
             | "auth.logout"
             | "org.create"
             | "org.select"
-            | "project.select"
             | "runner.control"
     )
 }
@@ -1782,7 +1642,7 @@ fn recover_stale_profile_auth(
     plugin_invalidate_local_control_files()?;
     let config_path = cli_config_path();
     let mut config = load_cli_config_from(&config_path)?;
-    clear_plugin_runner_scope(&mut config, &resolved.profile, true)?;
+    clear_plugin_runner_scope(&mut config, &resolved.profile)?;
     config.save(&config_path).map_err(format_core_error)?;
 
     let store = SystemCredentialStore::new(credential_dir());
@@ -1841,7 +1701,7 @@ fn plugin_org_create(params: &Value, options: &GlobalOptions) -> Result<Value, S
         .create_organization(&credential, name, slug)
         .map_err(format_core_error)?;
 
-    clear_plugin_runner_scope(&mut config, &resolved.profile, true)?;
+    clear_plugin_runner_scope(&mut config, &resolved.profile)?;
     config
         .set_key(
             &format!("profiles.{}.organizationId", resolved.profile),
@@ -1859,7 +1719,7 @@ fn plugin_org_create(params: &Value, options: &GlobalOptions) -> Result<Value, S
         "changed": true,
         "runnerBootstrap": runner_bootstrap,
         "serviceActivation": service_activation,
-        "nextAction": "project.list",
+        "nextAction": "workflow.list",
     }))
 }
 
@@ -1902,18 +1762,12 @@ fn plugin_org_select(params: &Value, options: &GlobalOptions) -> Result<Value, S
         }));
     }
     if scope_changed {
-        clear_plugin_runner_scope(&mut config, &resolved.profile, true)?;
+        clear_plugin_runner_scope(&mut config, &resolved.profile)?;
     }
     config
         .set_key(
             &format!("profiles.{}.organizationId", resolved.profile),
             organization.id.clone(),
-        )
-        .map_err(format_core_error)?;
-    config
-        .set_key(
-            &format!("profiles.{}.projectId", resolved.profile),
-            String::new(),
         )
         .map_err(format_core_error)?;
     config.save(&config_path).map_err(format_core_error)?;
@@ -1942,135 +1796,8 @@ fn plugin_validate_org_selection(params: &Value, options: &GlobalOptions) -> Res
     Ok(resolved.organization_id.as_deref() != Some(organization_id))
 }
 
-fn plugin_project_list(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
-    let config = load_cli_config()?;
-    let resolved = config
-        .resolve(options.config_overrides(), |key| env::var(key).ok())
-        .map_err(format_core_error)?;
-    let organization_id = params
-        .get("organizationId")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .or(resolved.organization_id.as_deref())
-        .ok_or_else(|| "PROJECT_CONTEXT_MISSING: select or provide an organization".to_string())?;
-    let store = SystemCredentialStore::new(credential_dir());
-    let credential = load_user_credential(&store, &resolved.profile)?;
-    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
-        .map_err(format_core_error)?;
-    let projects = client
-        .list_projects(&credential, organization_id)
-        .map_err(format_core_error)?;
-    Ok(json!({"items": projects, "organizationId": organization_id}))
-}
-
-fn plugin_project_select(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
-    let project_id = plugin_required_string(params, "projectId")?;
-    let config_path = cli_config_path();
-    let mut config = load_cli_config_from(&config_path)?;
-    let resolved = config
-        .resolve(options.config_overrides(), |key| env::var(key).ok())
-        .map_err(format_core_error)?;
-    let store = SystemCredentialStore::new(credential_dir());
-    let credential = load_user_credential(&store, &resolved.profile)?;
-    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
-        .map_err(format_core_error)?;
-    let project = client
-        .get_project(&credential, project_id)
-        .map_err(format_core_error)?;
-    if let Some(selected_organization_id) = resolved.organization_id.as_deref() {
-        if project.organization_id != selected_organization_id {
-            return Err(
-                "PROJECT_ORGANIZATION_MISMATCH: project belongs to another organization"
-                    .to_string(),
-            );
-        }
-    }
-    if project.status != "active" {
-        return Err(format!(
-            "PROJECT_UNAVAILABLE: project status is {}",
-            project.status
-        ));
-    }
-    let scope_changed = resolved.project_id.as_deref() != Some(project_id);
-    if scope_changed {
-        clear_plugin_execution_scope(&mut config, &resolved.profile, false)?;
-    }
-    config
-        .set_key(
-            &format!("profiles.{}.organizationId", resolved.profile),
-            project.organization_id.clone(),
-        )
-        .map_err(format_core_error)?;
-    config
-        .set_key(
-            &format!("profiles.{}.projectId", resolved.profile),
-            project.id.clone(),
-        )
-        .map_err(format_core_error)?;
-    config.save(&config_path).map_err(format_core_error)?;
-    Ok(json!({"profile": resolved.profile, "project": project, "changed": scope_changed}))
-}
-
-fn plugin_validate_project_selection(
-    params: &Value,
-    options: &GlobalOptions,
-) -> Result<bool, String> {
-    let project_id = plugin_required_string(params, "projectId")?;
-    let config = load_cli_config()?;
-    let resolved = config
-        .resolve(options.config_overrides(), |key| env::var(key).ok())
-        .map_err(format_core_error)?;
-    let store = SystemCredentialStore::new(credential_dir());
-    let credential = load_user_credential(&store, &resolved.profile)?;
-    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
-        .map_err(format_core_error)?;
-    let project = client
-        .get_project(&credential, project_id)
-        .map_err(format_core_error)?;
-    if resolved
-        .organization_id
-        .as_deref()
-        .is_some_and(|organization_id| project.organization_id != organization_id)
-    {
-        return Err(
-            "PROJECT_ORGANIZATION_MISMATCH: project belongs to another organization".to_string(),
-        );
-    }
-    if project.status != "active" {
-        return Err(format!(
-            "PROJECT_UNAVAILABLE: project status is {}",
-            project.status
-        ));
-    }
-    Ok(resolved.project_id.as_deref() != Some(project_id))
-}
-
-fn clear_plugin_runner_scope(
-    config: &mut CliConfig,
-    profile: &str,
-    clear_project: bool,
-) -> Result<(), String> {
-    let mut keys = vec!["runnerId"];
-    if clear_project {
-        keys.push("projectId");
-    }
-    for key in keys {
-        config
-            .set_key(&format!("profiles.{profile}.{key}"), String::new())
-            .map_err(format_core_error)?;
-    }
-    Ok(())
-}
-
-fn clear_plugin_execution_scope(
-    config: &mut CliConfig,
-    profile: &str,
-    clear_project: bool,
-) -> Result<(), String> {
-    let mut keys = Vec::new();
-    if clear_project {
-        keys.push("projectId");
-    }
+fn clear_plugin_runner_scope(config: &mut CliConfig, profile: &str) -> Result<(), String> {
+    let keys = ["runnerId"];
     for key in keys {
         config
             .set_key(&format!("profiles.{profile}.{key}"), String::new())
@@ -2080,7 +1807,7 @@ fn clear_plugin_execution_scope(
 }
 
 fn clear_plugin_auth_scope(config: &mut CliConfig, profile: &str) -> Result<(), String> {
-    for key in ["organizationId", "projectId", "runnerId", "workspacePath"] {
+    for key in ["organizationId", "runnerId"] {
         config
             .set_key(&format!("profiles.{profile}.{key}"), String::new())
             .map_err(format_core_error)?;
@@ -2396,8 +2123,8 @@ fn plugin_setup_recommendation(
         (true, "setup.plan", "service_ready_but_inactive")
     } else {
         // A registered service may intentionally remain inactive until Runner
-        // authentication completes. Project selection and execution roots are
-        // not service-lifecycle prerequisites.
+        // authentication completes. Execution roots are not service-lifecycle
+        // prerequisites.
         (false, "auth.status", "continue_runner_authentication")
     }
 }
@@ -3477,7 +3204,6 @@ fn plugin_auth_status(options: &GlobalOptions) -> Result<Value, String> {
         "profile": resolved.profile,
         "serverUrl": resolved.server_url,
         "organizationId": resolved.organization_id,
-        "projectId": resolved.project_id,
         "expiresAt": runner_expires_at.as_ref().or(user_expires_at.as_ref()),
         "userExpiresAt": user_expires_at,
         "runnerExpiresAt": runner_expires_at,
@@ -3509,7 +3235,7 @@ fn plugin_auth_start(params: &Value, options: &GlobalOptions) -> Result<Value, S
             "AUTH_LOGOUT_REQUIRED: logout before starting a new device authorization".to_string(),
         );
     }
-    // A new device-auth flow must never inherit an organization/project from a
+    // A new device-auth flow must never inherit an organization from a
     // previous account or from a manually removed credential. The new account
     // is scoped again after authentication and organization selection.
     clear_plugin_auth_scope(&mut config, &resolved.profile)?;
@@ -3622,7 +3348,6 @@ fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Resul
         "runnerAuthenticated": false,
         "organizationSelectionRequired": true,
         "organizationId": Value::Null,
-        "projectId": Value::Null,
         "profile": resolved.profile,
         "serverUrl": resolved.server_url,
         "storageBackend": storage_backend_name(storage.backend),
@@ -3940,7 +3665,7 @@ fn plugin_runner_control(params: &Value) -> Result<Value, String> {
     if action != "stop" {
         // Starting/restarting the service is the point at which a user-auth
         // credential is exchanged for the durable Runner credential. It must
-        // not be gated by project selection or an execution workspace.
+        // not be gated by organization selection or an execution workspace.
         plugin_bootstrap_runner_auth(&GlobalOptions::default())?;
         let readiness = plugin_service_bootstrap_readiness(&GlobalOptions::default())?;
         if readiness.get("ready").and_then(Value::as_bool) != Some(true) {
@@ -4245,9 +3970,9 @@ fn plugin_service_bootstrap_readiness(options: &GlobalOptions) -> Result<Value, 
 /// Ensure that the local durable Runner has its own runner-control credential.
 ///
 /// A user/device login authenticates the person using Loomex; the Runner
-/// credential authenticates the local execution service. Project/workflow scope
-/// is metadata, while the execution-local root is resolved only when a run
-/// starts.
+/// credential authenticates the local execution service. Workflow metadata is
+/// organization-scoped, while the execution-local root is resolved only when a
+/// run starts.
 fn plugin_bootstrap_runner_auth(options: &GlobalOptions) -> Result<Value, String> {
     let config_path = cli_config_path();
     let mut config = load_cli_config_from(&config_path)?;
@@ -5542,7 +5267,6 @@ fn start_local_control_server(
 ) -> Result<(), String> {
     let paths = LocalControlPaths::from_environment().map_err(format_core_error)?;
     let dispatcher = LocalControlDispatcher::new(client, credential).with_context(
-        resolved.project_id.clone(),
         resolved.runner_id.clone(),
         log_path.or_else(|| env::var_os(LOG_PATH_ENV).map(PathBuf::from)),
     );
@@ -7159,7 +6883,6 @@ fn run_workflow_with<C: ManagementApiClient>(
                     credential,
                     &WorkflowRunStartRequest {
                         organization_id: request.organization_id.clone(),
-                        project_id: request.project_id.clone(),
                         workflow_id: request.workflow_id.clone(),
                         inputs: input,
                         workspace_path: request.workspace_path.clone(),
@@ -7189,7 +6912,6 @@ fn run_workflow_with<C: ManagementApiClient>(
                     "runId": response.id,
                     "status": response.status,
                     "workflowId": request.workflow_id,
-                    "projectId": request.project_id,
                     "uiUrl": response.ui_url,
                     "humanInput": human_resolution,
                     "follow": {
@@ -7502,7 +7224,6 @@ fn build_support_bundle(log_limit: usize) -> Result<Value, String> {
         "config": config_entries,
         "runnerStatus": {
             "status": status.status,
-            "selectedProjectId": status.selected_project_id,
             "warnings": status.warnings
         },
         "policySnapshot": support_policy_snapshot(),
@@ -7884,12 +7605,7 @@ fn parsed_stub(command: &str, args: &[String], options: &GlobalOptions) -> Resul
 fn requires_later_input(command: &str) -> bool {
     matches!(
         command,
-        "login"
-            | "workflow run"
-            | "approval approve"
-            | "approval deny"
-            | "project select"
-            | "org select"
+        "login" | "workflow run" | "approval approve" | "approval deny" | "org select"
     )
 }
 
@@ -7940,7 +7656,6 @@ fn build_runner_status_report<C: ManagementApiClient>(
         profile: resolved.profile.clone(),
         server_url: resolved.server_url.clone(),
         host_header: resolved.host_header.clone(),
-        selected_project_id: resolved.project_id.clone(),
         runner,
         active_runs: active_run_ids_from_logs(log_entries),
         warnings,
@@ -7982,7 +7697,6 @@ fn format_runner_status_report(
             "profile": report.profile,
             "serverUrl": report.server_url,
             "hostHeader": report.host_header,
-            "selectedProjectId": report.selected_project_id,
             "runner": report.runner,
             "activeRuns": report.active_runs,
             "warnings": report.warnings,
@@ -7994,13 +7708,6 @@ fn format_runner_status_report(
         format!("runner status: {}", report.status),
         format!("profile: {}", report.profile),
         format!("server: {}", report.server_url),
-        format!(
-            "project: {}",
-            report
-                .selected_project_id
-                .as_deref()
-                .unwrap_or("not selected")
-        ),
         format!("active runs: {}", report.active_runs.len()),
     ]
     .join("\n"))
@@ -8867,7 +8574,6 @@ usage:
   loomex config list
   loomex profile list|current|use NAME
   loomex org list|select ORG_ID
-  loomex project list|select PROJECT_ID
   loomex setup install --version VERSION [--channel stable|beta]
   loomex workflow list|show WORKFLOW_ID|run WORKFLOW_ID --input JSON [--follow]
   loomex runner start|stop|status|logs|doctor|service|release|ops
@@ -8948,7 +8654,6 @@ usage:
   loomex workflow run WORKFLOW_ID --workspace PATH --input JSON [--follow]";
 
 const ORG_HELP: &str = "usage:\n  loomex org list\n  loomex org select ORG_ID";
-const PROJECT_HELP: &str = "usage:\n  loomex project list\n  loomex project select PROJECT_ID";
 const APPROVAL_HELP: &str = "\
 usage:
   loomex approval list [--path PATH]

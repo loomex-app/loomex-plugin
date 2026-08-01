@@ -164,7 +164,6 @@
 
       function kindFor(tool) {
         if (tool === "loomex_org_list") return "organizations";
-        if (tool === "loomex_project_list") return "projects";
         if (tool === "loomex_workflow_list") return "workflows";
         return "items";
       }
@@ -182,7 +181,6 @@
       function columnsFor(kind) {
         if (kind === "workflows") return [["name", "Name"], ["nodeCount", "Nodes"], ["executionCount", "Executions"]];
         if (kind === "organizations") return [["name", "Name"], ["slug", "Slug"], ["id", "ID"]];
-        if (kind === "projects") return [["name", "Name"], ["slug", "Slug"], ["id", "ID"]];
         return [["name", "Name"], ["id", "ID"]];
       }
 
@@ -208,7 +206,6 @@
 
       function actionFor(row) {
         if (listKind === "organizations" && row.id) return ["loomex_org_select", { organizationId: row.id }, "Select"];
-        if (listKind === "projects" && row.id) return ["loomex_project_select", { projectId: row.id }, "Select"];
         if (listKind === "workflows" && row.id) return ["loomex_workflow_run", { workflowId: row.id, name: row.name || row.title || row.id }, "Run"];
         return null;
       }
@@ -220,7 +217,7 @@
         try {
           const result = envelope(await window.openai.callTool(toolName, arguments_));
           if (result.ok === false) throw new Error(result.error?.message || "Selection failed.");
-          saveActionState(toolName, arguments_.organizationId || arguments_.projectId, "Selected");
+          saveActionState(toolName, arguments_.organizationId || arguments_.workflowId, "Selected");
           button.textContent = "Selected";
         } catch (error) {
           button.disabled = false;
@@ -238,7 +235,7 @@
         button.textContent = "Starting…";
         try {
           await window.openai.sendFollowUpMessage({
-            prompt: `Run the Loomex workflow "${workflow.name}" (workflowId: ${workflow.workflowId}) in the currently selected project. First inspect its input schema if inputs are required, then start it with loomex_workflow_run and report the execution ID and next state.`,
+            prompt: `Run the Loomex workflow "${workflow.name}" (workflowId: ${workflow.workflowId}) in the currently selected organization. First inspect its input schema if inputs are required, then start it with loomex_workflow_run and report the execution ID and next state.`,
             scrollToBottom: true,
           });
           saveActionState("loomex_workflow_run", workflow.workflowId, "Started");
@@ -264,7 +261,7 @@
         listKind = kindFor(result.tool);
         rows = normalizedRows(data);
         titleEl.textContent = titleFor(listKind);
-        summaryEl.textContent = listKind === "workflows" ? "Available Loomex workflows in the selected project." : `Available ${listKind} in your Loomex account.`;
+        summaryEl.textContent = listKind === "workflows" ? "Available Loomex workflows in the selected organization." : `Available ${listKind} in your Loomex account.`;
         toolbarEl.classList.toggle("hidden", rows.length === 0);
         if (!rows.length) { setState(`No ${listKind} found.`); return; }
         stateEl.classList.add("hidden");
@@ -274,7 +271,7 @@
 
       function renderRows() {
         const columns = columnsFor(listKind);
-        const hasAction = listKind === "organizations" || listKind === "projects" || listKind === "workflows";
+          const hasAction = listKind === "organizations" || listKind === "workflows";
         const actionHeader = hasAction ? "<th>Action</th>" : "";
         headEl.innerHTML = (listKind === "workflows" ? actionHeader : "") + columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("") + (listKind === "workflows" ? "" : actionHeader);
         const query = searchEl.value.trim().toLowerCase();
@@ -287,7 +284,7 @@
             return `<td${className}>${escapeHtml(value)}</td>`;
           }).join("");
           const action = actionFor(row);
-          const actionId = action && (action[1].organizationId || action[1].projectId || action[1].workflowId);
+          const actionId = action && (action[1].organizationId || action[1].workflowId);
           const savedAction = action && actionState(action[0], actionId);
           const actionCell = action
             ? `<td><button data-tool="${action[0]}" data-id="${escapeHtml(actionId)}" data-name="${escapeHtml(action[1].name || "")}" ${savedAction ? "disabled" : ""}>${escapeHtml(savedAction?.label || action[2])}</button></td>`
@@ -300,7 +297,7 @@
             void runWorkflow(button, { workflowId: id, name: button.dataset.name || id });
             return;
           }
-          const args = button.dataset.tool === "loomex_org_select" ? { organizationId: id } : { projectId: id };
+          const args = { organizationId: id };
           void selectRow(button, button.dataset.tool, args);
         }));
       }

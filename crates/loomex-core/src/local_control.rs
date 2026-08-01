@@ -170,7 +170,6 @@ pub fn read_local_control_token(paths: &LocalControlPaths) -> CoreResult<String>
 pub struct LocalControlDispatcher<C> {
     client: Arc<Mutex<C>>,
     credential: ManagementCredential,
-    project_id: Option<String>,
     runner_id: Option<String>,
     log_path: Option<PathBuf>,
     started_at: Instant,
@@ -181,20 +180,13 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
         Self {
             client: Arc::new(Mutex::new(client)),
             credential,
-            project_id: None,
             runner_id: None,
             log_path: None,
             started_at: Instant::now(),
         }
     }
 
-    pub fn with_context(
-        mut self,
-        project_id: Option<String>,
-        runner_id: Option<String>,
-        log_path: Option<PathBuf>,
-    ) -> Self {
-        self.project_id = project_id;
+    pub fn with_context(mut self, runner_id: Option<String>, log_path: Option<PathBuf>) -> Self {
         self.runner_id = runner_id;
         self.log_path = log_path;
         self
@@ -209,7 +201,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                     "authenticated": true,
                     "profile": self.credential.profile,
                     "organizationId": self.credential.organization_id,
-                    "projectId": self.project_id,
                     "runnerId": self.runner_id,
                     "self": client.get_runner_self_status(&self.credential)?,
                     "uptimeSeconds": self.started_at.elapsed().as_secs(),
@@ -226,7 +217,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
             "workflow.list" => self.with_client(|client| {
                 client.list_runner_workflows_filtered(
                     &self.credential,
-                    optional_string(params, "projectId"),
                     Some("plugin"),
                     optional_string(params, "query"),
                     optional_string(params, "cursor"),
@@ -271,9 +261,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                 })
             }
             "workflow.create" => {
-                let project_id = optional_string(params, "projectId")
-                    .or(self.project_id.as_deref())
-                    .ok_or_else(|| CoreError::new("PROJECT_CONTEXT_MISSING", "projectId is required"))?;
                 let prompt = required_string(params, "prompt")?;
                 let idempotency_key = required_string(params, "idempotencyKey")?;
                 let model = optional_string(params, "model");
@@ -281,7 +268,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                     client.start_workflow_builder(
                         &self.credential,
                         &WorkflowBuilderStartRequest {
-                            project_id: project_id.to_string(),
                             prompt: prompt.to_string(),
                             model: model.map(str::to_string),
                             idempotency_key: idempotency_key.to_string(),
@@ -440,7 +426,7 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
             "doctor" => self.doctor(params),
             "setup.status" | "setup.plan" | "setup.apply" | "setup.rollback" | "auth.status" |
             "auth.start" | "auth.wait" |
-            "auth.logout" | "org.list" | "org.select" | "project.list" | "project.select" |
+            "auth.logout" | "org.list" | "org.select" |
             "runner.control" => Err(CoreError::new(
                 "LOCAL_CONTROL_METHOD_REQUIRES_BOOTSTRAP_CLIENT",
                 format!("{method} must be handled by the bootstrap client before/around the authenticated service"),
@@ -1420,11 +1406,8 @@ mod tests {
     #[test]
     fn doctor_reports_real_backend_failure_and_workspace_success() {
         let client = crate::HttpManagementApiClient::new("http://127.0.0.1:1", None).unwrap();
-        let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
-            Some("project-test".to_string()),
-            Some("runner-test".to_string()),
-            None,
-        );
+        let dispatcher = LocalControlDispatcher::new(client, test_credential())
+            .with_context(Some("runner-test".to_string()), None);
 
         let result = dispatcher.dispatch("doctor", &json!({})).unwrap();
 
@@ -1465,11 +1448,8 @@ mod tests {
         });
         let client =
             crate::HttpManagementApiClient::new(format!("http://{address}"), None).unwrap();
-        let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
-            Some("project-test".to_string()),
-            Some("runner-configured".to_string()),
-            None,
-        );
+        let dispatcher = LocalControlDispatcher::new(client, test_credential())
+            .with_context(Some("runner-configured".to_string()), None);
 
         let result = dispatcher.dispatch("doctor", &json!({})).unwrap();
 
@@ -1497,11 +1477,8 @@ mod tests {
         let _ = fs::remove_file(&log_path);
         fs::write(&log_path, "").unwrap();
         let client = crate::HttpManagementApiClient::new("http://127.0.0.1:1", None).unwrap();
-        let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
-            Some("project-test".to_string()),
-            Some("runner-test".to_string()),
-            Some(log_path.clone()),
-        );
+        let dispatcher = LocalControlDispatcher::new(client, test_credential())
+            .with_context(Some("runner-test".to_string()), Some(log_path.clone()));
 
         let normal = dispatcher.dispatch("doctor", &json!({})).unwrap();
         let verbose = dispatcher
@@ -1549,11 +1526,8 @@ mod tests {
         )
         .unwrap();
         let client = crate::HttpManagementApiClient::new("http://127.0.0.1:1", None).unwrap();
-        let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
-            None,
-            None,
-            Some(log_path.clone()),
-        );
+        let dispatcher = LocalControlDispatcher::new(client, test_credential())
+            .with_context(None, Some(log_path.clone()));
 
         let result = dispatcher
             .dispatch("logs.tail", &json!({"limit": 10}))

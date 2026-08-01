@@ -44,7 +44,6 @@ pub enum PolicyDecision {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PolicySource {
     BuiltInDefault,
-    Project,
     Organization,
     EnterpriseManaged,
     LocalConfig,
@@ -172,7 +171,6 @@ pub struct ManagedPolicyDocument {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedPolicySnapshot {
     pub organization: Option<ManagedPolicyDocument>,
-    pub project: Option<ManagedPolicyDocument>,
     pub local_config: Option<PolicyLayer>,
 }
 
@@ -203,21 +201,6 @@ impl ManagedPolicyDocument {
             locked: true,
             layer: PolicyLayer {
                 source: PolicySource::Organization,
-                default_decision: None,
-                rules,
-            },
-            previous_versions: vec![],
-        }
-    }
-
-    pub fn project(policy_id: impl Into<String>, version: u64, rules: Vec<PolicyRule>) -> Self {
-        Self {
-            policy_id: policy_id.into(),
-            version,
-            rollout_percent: 100,
-            locked: true,
-            layer: PolicyLayer {
-                source: PolicySource::Project,
                 default_decision: None,
                 rules,
             },
@@ -314,14 +297,6 @@ pub fn managed_policy_engine(
         if policy_applies_to_runner(org_policy.rollout_percent, runner_rollout_bucket)? {
             let mut layer = org_policy.layer.clone();
             layer.source = PolicySource::Organization;
-            layers.push(layer);
-        }
-    }
-    if let Some(project_policy) = &snapshot.project {
-        validate_managed_policy_document(project_policy)?;
-        if policy_applies_to_runner(project_policy.rollout_percent, runner_rollout_bucket)? {
-            let mut layer = project_policy.layer.clone();
-            layer.source = PolicySource::Project;
             layers.push(layer);
         }
     }
@@ -457,9 +432,8 @@ fn source_precedence(source: PolicySource) -> u8 {
     match source {
         PolicySource::BuiltInDefault => 0,
         PolicySource::LocalConfig => 1,
-        PolicySource::Project => 2,
-        PolicySource::Organization => 3,
-        PolicySource::EnterpriseManaged => 4,
+        PolicySource::Organization => 2,
+        PolicySource::EnterpriseManaged => 3,
     }
 }
 
@@ -631,7 +605,7 @@ mod tests {
     #[test]
     fn allow_decision() {
         let engine = PolicyEngine::new(vec![layer(
-            PolicySource::Project,
+            PolicySource::Organization,
             "git.status",
             PolicyDecision::Allow,
         )]);
@@ -663,7 +637,7 @@ mod tests {
     #[test]
     fn deny_decision() {
         let engine = PolicyEngine::new(vec![layer(
-            PolicySource::Project,
+            PolicySource::Organization,
             "fs.write",
             PolicyDecision::Deny,
         )]);
@@ -694,9 +668,9 @@ mod tests {
     }
 
     #[test]
-    fn org_policy_override_project_policy() {
+    fn organization_policy_layers_are_deterministic() {
         let engine = PolicyEngine::new(vec![
-            layer(PolicySource::Project, "fs.read", PolicyDecision::Ask),
+            layer(PolicySource::Organization, "fs.read", PolicyDecision::Ask),
             layer(PolicySource::Organization, "fs.read", PolicyDecision::Allow),
         ]);
 
@@ -714,7 +688,7 @@ mod tests {
     #[test]
     fn deny_cannot_be_weakened_by_local_config() {
         let engine = PolicyEngine::new(vec![
-            layer(PolicySource::Project, "fs.write", PolicyDecision::Deny),
+            layer(PolicySource::Organization, "fs.write", PolicyDecision::Deny),
             layer(PolicySource::LocalConfig, "fs.write", PolicyDecision::Allow),
         ]);
 
@@ -744,7 +718,7 @@ mod tests {
         let mut rule = PolicyRule::for_capability("fs.read", PolicyDecision::Deny);
         rule.sensitive_path_pattern = Some(".env".to_string());
         let engine = PolicyEngine::new(vec![PolicyLayer {
-            source: PolicySource::Project,
+            source: PolicySource::Organization,
             default_decision: Some(PolicyDecision::Ask),
             rules: vec![rule],
         }]);
@@ -762,7 +736,7 @@ mod tests {
         rule.host = Some("api.internal".to_string());
         rule.method = Some("GET".to_string());
         let engine = PolicyEngine::new(vec![PolicyLayer {
-            source: PolicySource::Project,
+            source: PolicySource::Organization,
             default_decision: Some(PolicyDecision::Ask),
             rules: vec![rule],
         }]);
@@ -778,7 +752,7 @@ mod tests {
     #[test]
     fn shell_command_risk_classification() {
         let engine = PolicyEngine::new(vec![layer(
-            PolicySource::Project,
+            PolicySource::Organization,
             "shell.exec",
             PolicyDecision::Allow,
         )]);
@@ -850,7 +824,7 @@ mod tests {
     fn browser_and_docker_can_be_denied_by_policy() {
         for capability in ["browser.playwright", "docker.exec"] {
             let engine = PolicyEngine::new(vec![PolicyLayer {
-                source: PolicySource::Project,
+                source: PolicySource::Organization,
                 default_decision: Some(PolicyDecision::Ask),
                 rules: vec![PolicyRule::for_capability(capability, PolicyDecision::Deny)],
             }]);
@@ -865,84 +839,6 @@ mod tests {
             assert_eq!(PolicyDecision::Deny, evaluation.decision);
             assert_eq!("matched_rule", evaluation.reason);
         }
-    }
-
-    #[test]
-    fn managed_org_deny_overrides_project_allow() {
-        let org_policy = ManagedPolicyDocument::organization(
-            "org_policy",
-            3,
-            vec![PolicyRule::for_capability(
-                "shell.exec",
-                PolicyDecision::Deny,
-            )],
-        );
-        let project_policy = ManagedPolicyDocument::project(
-            "project_policy",
-            2,
-            vec![PolicyRule::for_capability(
-                "shell.exec",
-                PolicyDecision::Allow,
-            )],
-        );
-        let engine = managed_policy_engine(
-            &ManagedPolicySnapshot {
-                organization: Some(org_policy),
-                project: Some(project_policy),
-                local_config: None,
-            },
-            0,
-        )
-        .unwrap();
-
-        let evaluation = engine
-            .dry_run(
-                &PolicyEvaluationInput::capability("shell.exec"),
-                &execution_root(),
-            )
-            .unwrap();
-
-        assert_eq!(PolicyDecision::Deny, evaluation.decision);
-        assert_eq!(PolicySource::Organization, evaluation.source);
-    }
-
-    #[test]
-    fn managed_project_policy_can_make_org_policy_stricter() {
-        let org_policy = ManagedPolicyDocument::organization(
-            "org_policy",
-            1,
-            vec![PolicyRule::for_capability(
-                "http.request",
-                PolicyDecision::Allow,
-            )],
-        );
-        let project_policy = ManagedPolicyDocument::project(
-            "project_policy",
-            5,
-            vec![PolicyRule::for_capability(
-                "http.request",
-                PolicyDecision::Deny,
-            )],
-        );
-        let engine = managed_policy_engine(
-            &ManagedPolicySnapshot {
-                organization: Some(org_policy),
-                project: Some(project_policy),
-                local_config: None,
-            },
-            0,
-        )
-        .unwrap();
-
-        let evaluation = engine
-            .dry_run(
-                &PolicyEvaluationInput::capability("http.request"),
-                &execution_root(),
-            )
-            .unwrap();
-
-        assert_eq!(PolicyDecision::Deny, evaluation.decision);
-        assert_eq!(PolicySource::Project, evaluation.source);
     }
 
     #[test]
@@ -963,7 +859,6 @@ mod tests {
         let engine = managed_policy_engine(
             &ManagedPolicySnapshot {
                 organization: Some(org_policy),
-                project: None,
                 local_config: Some(local_config),
             },
             0,

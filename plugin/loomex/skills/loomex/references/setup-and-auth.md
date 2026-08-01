@@ -33,7 +33,7 @@ switches the active version.
 
 On a first install before Runner authentication is complete, the per-user
 service is registered with deferred start. Completing Runner authentication
-activates and health-checks the installed service; project scope and execution
+activates and health-checks the installed service; organization scope and execution
 workspace are not service-readiness prerequisites. Rollback follows the same
 readiness rule: an installed but not-yet-ready service remains deferred, and a
 failed activation restores the prior runtime pointer or returns an explicit
@@ -49,9 +49,9 @@ service is healthy, long-running workflow execution no longer depends on Codex.
 
 If `recommendedNextAction` is `auth.status`, do not create another setup plan,
 even when the registered service is inactive or deferred while authentication
-is incomplete. Continue with authentication and organization/project scope,
+is incomplete. Continue with authentication and organization scope,
 then resume the original Loomex request. Runner authentication is independent
-from project scope; the filesystem workspace and execution root are selected
+from organization scope; the filesystem workspace and execution root are selected
 when that execution starts.
 If `loomex_org_list` or another scope call returns a successful response with
 `reauthRequired: true` and an embedded `auth` challenge, the Plugin has already
@@ -60,7 +60,7 @@ returned verification URI/code, call `loomex_auth_wait` with the exact returned
 `loginId`, and retry the failed scope call after authentication succeeds. Do not
 ask the user to edit config, register a workspace, or manually delete tokens.
 If the authenticated Runner identity is stale or mismatched, re-bootstrap the
-Runner credential through the setup/auth flow. Do not create a project scope
+Runner credential through the setup/auth flow. Do not create a organization scope
 record or persist a workspace merely to make the service start.
 If the action is `unsupported`, report the structured reason and do not attempt
 setup. If it is `package.error`, report `bundledRuntime.error`; do not misreport
