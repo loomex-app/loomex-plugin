@@ -1,6 +1,6 @@
 {
   "name": "loomex",
-  "version": "0.1.63",
+  "version": "0.1.64",
   "description": "Run durable Loomex workflows from natural Codex requests with guided first-use setup.",
   "author": {
     "name": "Loomex"

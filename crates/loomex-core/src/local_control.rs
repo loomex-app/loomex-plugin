@@ -264,12 +264,20 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                 let prompt = required_string(params, "prompt")?;
                 let idempotency_key = required_string(params, "idempotencyKey")?;
                 let model = optional_string(params, "model");
+                let workspace_path = optional_string(params, "workspacePath")
+                    .map(validate_local_control_workspace)
+                    .transpose()?;
+                let workspace_path = match workspace_path {
+                    Some(path) => path.to_string_lossy().to_string(),
+                    None => temporary_workflow_builder_workspace()?.to_string_lossy().to_string(),
+                };
                 self.with_client(|client| {
                     client.start_workflow_builder(
                         &self.credential,
                         &WorkflowBuilderStartRequest {
                             prompt: prompt.to_string(),
                             model: model.map(str::to_string),
+                            workspace_path: Some(workspace_path),
                             idempotency_key: idempotency_key.to_string(),
                         },
                     )
@@ -286,6 +294,17 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                         &self.credential,
                         session_id,
                         response,
+                        idempotency_key,
+                    )
+                })
+            }
+            "workflow.create.finalize" => {
+                let session_id = required_string(params, "sessionId")?;
+                let idempotency_key = required_string(params, "idempotencyKey")?;
+                self.with_client(|client| {
+                    client.finalize_workflow_builder(
+                        &self.credential,
+                        session_id,
                         idempotency_key,
                     )
                 })
@@ -718,6 +737,20 @@ fn validate_local_control_workspace(workspace_path: &str) -> CoreResult<PathBuf>
         .map_err(|error| CoreError::new("WORKSPACE_READ_FAILED", error.to_string()))?;
     validate_workspace_access_without_mutation(&canonical)?;
     Ok(canonical)
+}
+
+fn temporary_workflow_builder_workspace() -> CoreResult<PathBuf> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| CoreError::new("WORKFLOW_BUILDER_WORKSPACE_FAILED", error.to_string()))?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "loomex-workflow-builder-{}-{suffix}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path)
+        .map_err(|error| CoreError::new("WORKFLOW_BUILDER_WORKSPACE_FAILED", error.to_string()))?;
+    validate_local_control_workspace(&path.to_string_lossy())
 }
 
 #[cfg(unix)]

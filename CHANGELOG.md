@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.64
+
+- Run AI workflow creation through the hidden, editable Loomex system workflow.
+- Dispatch designer and reviewer nodes through the normal Plugin agent contract,
+  validate the repaired workflow on the Backend, and persist the resulting
+  Workflow automatically.
+- Add explicit finalization support and keep the system builder hidden from
+  user workflow discovery.
+
 ## 0.1.63
 
 - Harden AI workflow-builder dispatch so repair attempts resume the exact

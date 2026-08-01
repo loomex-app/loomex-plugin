@@ -225,6 +225,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 &[
                     ("prompt", workflow_prompt()),
                     ("model", string()),
+                    ("workspacePath", path_string()),
                     ("idempotencyKey", idempotency_key()),
                 ],
                 &["prompt", "idempotencyKey"],
@@ -243,6 +244,20 @@ pub fn definitions() -> Vec<ToolDefinition> {
                     ("idempotencyKey", idempotency_key()),
                 ],
                 &["sessionId", "response", "idempotencyKey"],
+            ),
+            mutating(false, true, true),
+        ),
+        tool(
+            "loomex_workflow_create_finalize",
+            "Finalize AI workflow creation",
+            "Validate the completed system workflow execution and persist its result as a normal active Loomex workflow.",
+            "workflow.create.finalize",
+            obj(
+                &[
+                    ("sessionId", identifier()),
+                    ("idempotencyKey", idempotency_key()),
+                ],
+                &["sessionId", "idempotencyKey"],
             ),
             mutating(false, true, true),
         ),
@@ -511,6 +526,7 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_workflow_run" => "workflow.run",
                 "loomex_workflow_create" => "workflow.create",
                 "loomex_workflow_create_respond" => "workflow.create.respond",
+                "loomex_workflow_create_finalize" => "workflow.create.finalize",
                 "loomex_run_list" => "run.list",
                 "loomex_run_get" => "run.get",
                 "loomex_run_wait" => "run.wait",
@@ -974,13 +990,18 @@ fn output_data_schema(tool_name: &str) -> Value {
             ],
         ),
         "loomex_workflow_run" | "loomex_run_get" | "loomex_run_wait" => run_detail_schema(),
-        "loomex_workflow_create" | "loomex_workflow_create_respond" => evolvable_object(
+        "loomex_workflow_create"
+        | "loomex_workflow_create_respond"
+        | "loomex_workflow_create_finalize" => evolvable_object(
             &[
                 ("builderSession", nullable(evolvable_object(&[], &[]))),
                 ("status", string()),
+                ("nextAction", nullable(string())),
+                ("execution", nullable(evolvable_object(&[], &[]))),
                 ("agentTask", nullable(evolvable_object(&[], &[]))),
                 ("validationErrors", array_of(string())),
                 ("workflowDraft", nullable(evolvable_object(&[], &[]))),
+                ("workflow", nullable(evolvable_object(&[], &[]))),
             ],
             &["builderSession", "status"],
         ),
@@ -1429,6 +1450,12 @@ mod tests {
                 "status":"completed",
                 "workflowDraft": {"name":"Review","workflow":{"nodes":[],"transitions":[]}}
             }),
+            "loomex_workflow_create_finalize" => json!({
+                "builderSession": {"id":"builder-session-1","status":"completed","attemptCount":1},
+                "status":"completed",
+                "workflow": {"id":"workflow-1","name":"Review"},
+                "workflowDraft": {"name":"Review","workflow":{"nodes":[],"transitions":[]}}
+            }),
             "loomex_run_list" => {
                 json!({"executions":[{"id":"run-1","status":"running"}],"nextCursor":null})
             }
@@ -1500,7 +1527,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_unique_route_and_strict_top_level_schema() {
         let definitions = definitions();
-        assert_eq!(definitions.len(), 34);
+        assert_eq!(definitions.len(), 35);
         let mut names = HashSet::new();
         for tool in definitions {
             assert!(names.insert(tool.name));
