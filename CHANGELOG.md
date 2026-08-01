@@ -6,6 +6,8 @@
   workflow execution contract, including clarification, review, and repair.
 - Add the reviewer workflow-validation MCP tool and accept valid JSON-string
   agent outputs before Backend schema validation.
+- Include the live workflow node catalog in the clarification, designer, and
+  reviewer agent context.
 
 ## 0.1.64
 
