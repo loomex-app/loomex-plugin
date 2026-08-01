@@ -89,8 +89,10 @@ translate, summarize, reorder, sanitize, add a preamble or append a suffix.
 Do not add workflow inputs, previous outputs, workspace context, output schema,
 or `resumeInstructions`: Backend decides which resolved node inputs may reach
 the provider and has already compiled them into the immutable prompt. Verify the
-server-provided `promptContract.sha256` against the exact UTF-8 prompt bytes
-before execution; if it does not match, return `PLUGIN_AGENT_PROMPT_TAMPERED`.
+The Plugin runtime verifies the server-provided `promptContract.sha256` against
+ the exact UTF-8 prompt bytes before exposing the task. Do not implement SHA-256
+ manually in Codex or use `exec` for verification. If the runtime reports a
+ mismatch, return `PLUGIN_AGENT_PROMPT_TAMPERED`.
 
 For Codex specifically, the sub-agent's prompt parameter has exactly one
 source: `agentTask.prompt`. It must not contain a hand-written message such as

@@ -114,9 +114,11 @@ Read every reference needed for the user's request before calling its tools.
    `input`, `nodeInput`, `previousOutputs`, `questions`, `answers`, workspace
    paths, execution IDs, or `schemas`; do not prepend a role/execution
    preamble, append an output contract, or restate the task. Those fields are
-   inspection/validation data only. If `promptContract.sha256` does not match
-   the exact prompt bytes, stop with `PLUGIN_AGENT_PROMPT_TAMPERED` rather than
-   repairing or rebuilding the prompt. When the sub-agent edits the selected
+   inspection/validation data only. The Plugin runtime verifies
+   `promptContract.sha256` with native SHA-256 before exposing the task; do not
+   implement hash verification manually in Codex. If the runtime reports a
+   mismatch, stop with `PLUGIN_AGENT_PROMPT_TAMPERED` rather than repairing or
+   rebuilding the prompt. When the sub-agent edits the selected
    local workspace directly, omit optional `files`/file-list output fields
    unless the server schema explicitly requires them; never invent a file
    manifest that can trigger a Runner file-write operation.

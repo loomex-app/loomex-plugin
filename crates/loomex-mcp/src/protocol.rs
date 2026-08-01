@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::{mpsc, Semaphore};
 
@@ -214,16 +215,39 @@ impl Server {
             .await
         {
             Ok(data) => {
-                let success = success_envelope(name, request_id.clone(), data);
-                match tools::validate_output(&definition.output_schema, &success) {
-                    Ok(()) => success,
-                    Err(error) => failure_envelope(
-                        name,
-                        request_id,
-                        &ClientError::Protocol(format!(
-                            "local control returned data outside the {name} output contract: {error}"
-                        )),
-                    ),
+                if matches!(name, "loomex_agent_task_list" | "loomex_run_wait") {
+                    if let Err(error) = verify_agent_prompt_integrity(&data) {
+                        let prompt_error = crate::ipc::ControlError {
+                            code: error.code.to_string(),
+                            message: error.message,
+                            retryable: false,
+                        };
+                        failure_envelope(name, request_id, &ClientError::Remote(prompt_error))
+                    } else {
+                        let success = success_envelope(name, request_id.clone(), data);
+                        match tools::validate_output(&definition.output_schema, &success) {
+                            Ok(()) => success,
+                            Err(error) => failure_envelope(
+                                name,
+                                request_id,
+                                &ClientError::Protocol(format!(
+                                    "local control returned data outside the {name} output contract: {error}"
+                                )),
+                            ),
+                        }
+                    }
+                } else {
+                    let success = success_envelope(name, request_id.clone(), data);
+                    match tools::validate_output(&definition.output_schema, &success) {
+                        Ok(()) => success,
+                        Err(error) => failure_envelope(
+                            name,
+                            request_id,
+                            &ClientError::Protocol(format!(
+                                "local control returned data outside the {name} output contract: {error}"
+                            )),
+                        ),
+                    }
                 }
             }
             Err(error) => failure_envelope(name, request_id, &error),
@@ -268,7 +292,7 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             RpcError::new(-32603, format!("could not encode tool result: {error}"))
         })?;
         return Ok(format!(
-            "LEGACY WORKFLOW BUILDER DISPATCH CONTRACT: this is an internal migration-only response. The builder session id is `builderSession.id`, never the sub-agent session id. Verify `agentTask.promptContract.sha256`; pass `agentTask.prompt` as the sole sub-agent prompt byte-for-byte. Follow the server-managed `agentTask.sessionDirective` exactly: action resumed must reuse the selected session. Never submit a repair with action spawned. Submit the structured result through the legacy workflow-builder response tool. Do not edit files, run shell commands, call provider CLIs, or construct a new prompt. New create-workflow requests must use the hidden system workflow through `loomex_workflow_list`, `loomex_workflow_show`, and `loomex_workflow_run`.\n\n{serialized}"
+            "LEGACY WORKFLOW BUILDER DISPATCH CONTRACT: this is an internal migration-only response. The Plugin runtime has already verified `agentTask.promptContract.sha256` with native SHA-256. The builder session id is `builderSession.id`, never the sub-agent session id. Pass `agentTask.prompt` as the sole sub-agent prompt byte-for-byte. Follow the server-managed `agentTask.sessionDirective` exactly: action resumed must reuse the selected session. Never submit a repair with action spawned. Submit the structured result through the legacy workflow-builder response tool. Do not edit files, run shell commands, call provider CLIs, or construct a new prompt. New create-workflow requests must use the hidden system workflow through `loomex_workflow_list`, `loomex_workflow_show`, and `loomex_workflow_run`.\n\n{serialized}"
         ));
     }
     let requests = envelope
@@ -308,7 +332,7 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             RpcError::new(-32603, format!("could not encode tool result: {error}"))
         })?;
         return Ok(format!(
-            "CODEX DISPATCH CONTRACT: execute only the server-selected Codex route. Pass `agentTask.prompt` as the sole sub-agent prompt, byte-for-byte. Do not construct a prompt from task, answers, workspace, execution metadata, or schemas; do not add a preamble or output-contract suffix. Verify `promptContract.sha256` first. For direct local workspace edits, omit optional file-list output fields unless the server schema requires them.\n\n{serialized}"
+            "CODEX DISPATCH CONTRACT: the Plugin runtime has already verified `agentTask.promptContract.sha256` with native SHA-256. Execute only the server-selected Codex route. Pass `agentTask.prompt` as the sole sub-agent prompt, byte-for-byte. Do not construct a prompt from task, answers, workspace, execution metadata, or schemas; do not add a preamble or output-contract suffix. If the Plugin returned an error, stop and report it exactly. For direct local workspace edits, omit optional file-list output fields unless the server schema requires them.\n\n{serialized}"
         ));
     }
     if (name == "loomex_agent_task_list" && pending_runner_task && !pending_codex_task)
@@ -318,6 +342,61 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
     }
     serde_json::to_string(envelope)
         .map_err(|error| RpcError::new(-32603, format!("could not encode tool result: {error}")))
+}
+
+struct PromptIntegrityError {
+    code: &'static str,
+    message: String,
+}
+
+fn verify_agent_prompt_integrity(data: &Value) -> Result<(), PromptIntegrityError> {
+    let mut requests = Vec::new();
+    if let Some(request) = data.get("humanRequest") {
+        requests.push(request);
+    }
+    if let Some(requests_value) = data.get("humanRequests").and_then(Value::as_array) {
+        requests.extend(requests_value.iter());
+    }
+    if let Some(agent_task) = data.get("agentTask") {
+        requests.push(agent_task);
+    }
+
+    for request in requests {
+        if !is_pending_codex_task(request) {
+            continue;
+        }
+        let task = request.get("agentTask").unwrap_or(request);
+        let prompt =
+            task.get("prompt")
+                .and_then(Value::as_str)
+                .ok_or_else(|| PromptIntegrityError {
+                    code: "PLUGIN_AGENT_PROMPT_UNAVAILABLE",
+                    message: "pending Codex task has no prompt".to_string(),
+                })?;
+        let expected = task
+            .pointer("/promptContract/sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| PromptIntegrityError {
+                code: "PLUGIN_AGENT_PROMPT_HASH_MISSING",
+                message: "pending Codex task has no promptContract.sha256".to_string(),
+            })?;
+        if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(PromptIntegrityError {
+                code: "PLUGIN_AGENT_PROMPT_HASH_INVALID",
+                message: "promptContract.sha256 is not a SHA-256 digest".to_string(),
+            });
+        }
+        let actual = format!("{:x}", Sha256::digest(prompt.as_bytes()));
+        if actual != expected {
+            return Err(PromptIntegrityError {
+                code: "PLUGIN_AGENT_PROMPT_TAMPERED",
+                message: format!(
+                    "server prompt hash does not match the exact UTF-8 prompt bytes (expected {expected}, actual {actual})"
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn is_pending_request(request: &Value) -> bool {
@@ -877,6 +956,45 @@ mod tests {
 
         assert!(text.contains("durable Runner"));
         assert!(text.contains("Continue bounded loomex_run_wait"));
+    }
+
+    #[test]
+    fn native_prompt_hash_verification_accepts_exact_server_prompt() {
+        let prompt = "server-owned prompt";
+        let expected = format!("{:x}", Sha256::digest(prompt.as_bytes()));
+        let data = json!({
+            "humanRequest": {
+                "status": "pending",
+                "type": "plugin_agent",
+                "agentTask": {
+                    "resolvedProvider": "codex",
+                    "providerExecution": {"mode": "codex_sub_agent"},
+                    "prompt": prompt,
+                    "promptContract": {"sha256": expected}
+                }
+            }
+        });
+
+        assert!(verify_agent_prompt_integrity(&data).is_ok());
+    }
+
+    #[test]
+    fn native_prompt_hash_verification_rejects_changed_prompt() {
+        let data = json!({
+            "humanRequest": {
+                "status": "pending",
+                "type": "plugin_agent",
+                "agentTask": {
+                    "resolvedProvider": "codex",
+                    "providerExecution": {"mode": "codex_sub_agent"},
+                    "prompt": "changed prompt",
+                    "promptContract": {"sha256": format!("{:x}", Sha256::digest(b"server prompt"))}
+                }
+            }
+        });
+
+        let error = verify_agent_prompt_integrity(&data).unwrap_err();
+        assert_eq!(error.code, "PLUGIN_AGENT_PROMPT_TAMPERED");
     }
 
     #[test]
