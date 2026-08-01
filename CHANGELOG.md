@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.68
+
+- Add a verified, role-aware workflow builder Guide Pack with read-only
+  reference context and guide audit metadata.
+- Preserve Backend-owned workflow builder prompts byte-for-byte while exposing
+  catalog-guided context to Clarifier, Designer, and Reviewer tasks.
+
 ## 0.1.67
 
 - Verify server-owned agent prompts in the native Plugin runtime with SHA-256

@@ -33,6 +33,10 @@ Loomex Workflow; it is not a separate server-side AI execution path.
   the only sub-agent prompt, and obey its
   `sessionDirective` exactly. Submit the actual response through the normal
   `loomex_agent_task_respond` path with the exact execution/request id.
+- For builder agent tasks, pass `agentTask.referenceContext` separately as
+  read-only context and preserve `agentTask.guideAudit` in the response
+  metadata. Never append, summarize, translate, or merge guide content into
+  `agentTask.prompt`.
 - If the builder returns a Human Input request, route it by its exact
   `inputSpec.inputType`: use `loomex_human_respond` only for `text`; use
   `loomex_human_open` for `radio`, `checkbox`, `boolean`, `single_select`, or

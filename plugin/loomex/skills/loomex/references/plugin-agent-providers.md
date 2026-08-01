@@ -24,6 +24,9 @@ Read these fields before executing anything:
 - `agentTask.runnerExecution` for the Runner job id, terminal result contract,
   provider, and model. For Claude/Gemini this is the only execution route.
 - `agentTask.sessionDirective` for the required `spawn`/`resume` action.
+- `agentTask.referenceContext` for verified, read-only workflow-builder guides
+  and `agentTask.guideAudit` for their ids, hashes, pack version, and catalog
+  digest.
 - `agentTask.runnerWorkspacePath` for the exact local workspace path sent by the
   Plugin and echoed by Backend. This is the only valid provider process `cwd`.
 
@@ -83,6 +86,10 @@ the workflow-authored prompt unchanged between markers plus a canonical
 and output schemas, and selected workspace scope. `promptTemplate` and
 `promptContext` are audit fields only; never rebuild `agentTask.prompt` from
 them, from `input`, or from `schemas`.
+
+For workflow-builder tasks, `referenceContext` is a separate read-only
+transport field. Forward it separately to the sub-agent and preserve
+`guideAudit`; never append guide content to `agentTask.prompt`.
 
 Forward `agentTask.prompt` verbatim for every route: do not paraphrase,
 translate, summarize, reorder, sanitize, add a preamble or append a suffix.
