@@ -252,6 +252,12 @@ impl Server {
             }
             Err(error) => failure_envelope(name, request_id, &error),
         };
+        let mut envelope = envelope;
+        if envelope.get("ok") == Some(&Value::Bool(true))
+            && matches!(name, "loomex_agent_task_list" | "loomex_run_wait")
+        {
+            crate::guide_pack::enrich_agent_tasks(&mut envelope);
+        }
         debug_assert!(tools::validate_output(&definition.output_schema, &envelope).is_ok());
         let is_error = envelope.get("ok") == Some(&Value::Bool(false));
         let text = tool_result_text(name, &envelope)?;
@@ -292,7 +298,7 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             RpcError::new(-32603, format!("could not encode tool result: {error}"))
         })?;
         return Ok(format!(
-            "LEGACY WORKFLOW BUILDER DISPATCH CONTRACT: this is an internal migration-only response. The Plugin runtime has already verified `agentTask.promptContract.sha256` with native SHA-256. The builder session id is `builderSession.id`, never the sub-agent session id. Pass `agentTask.prompt` as the sole sub-agent prompt byte-for-byte. Follow the server-managed `agentTask.sessionDirective` exactly: action resumed must reuse the selected session. Never submit a repair with action spawned. Submit the structured result through the legacy workflow-builder response tool. Do not edit files, run shell commands, call provider CLIs, or construct a new prompt. New create-workflow requests must use the hidden system workflow through `loomex_workflow_list`, `loomex_workflow_show`, and `loomex_workflow_run`.\n\n{serialized}"
+            "LEGACY WORKFLOW BUILDER DISPATCH CONTRACT: this is an internal migration-only response. The Plugin runtime has already verified `agentTask.promptContract.sha256` with native SHA-256. The builder session id is `builderSession.id`, never the sub-agent session id. Pass `agentTask.prompt` as the sole sub-agent prompt byte-for-byte. Pass `agentTask.referenceContext` separately as read-only reference context; never append it to the prompt. Follow the server-managed `agentTask.sessionDirective` exactly: action resumed must reuse the selected session. Never submit a repair with action spawned. Submit the structured result through the legacy workflow-builder response tool. Do not edit files, run shell commands, call provider CLIs, or construct a new prompt. New create-workflow requests must use the hidden system workflow through `loomex_workflow_list`, `loomex_workflow_show`, and `loomex_workflow_run`.\n\n{serialized}"
         ));
     }
     let requests = envelope
@@ -332,7 +338,7 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             RpcError::new(-32603, format!("could not encode tool result: {error}"))
         })?;
         return Ok(format!(
-            "CODEX DISPATCH CONTRACT: the Plugin runtime has already verified `agentTask.promptContract.sha256` with native SHA-256. Execute only the server-selected Codex route. Pass `agentTask.prompt` as the sole sub-agent prompt, byte-for-byte. Do not construct a prompt from task, answers, workspace, execution metadata, or schemas; do not add a preamble or output-contract suffix. If the Plugin returned an error, stop and report it exactly. For direct local workspace edits, omit optional file-list output fields unless the server schema requires them.\n\n{serialized}"
+            "CODEX DISPATCH CONTRACT: the Plugin runtime has already verified `agentTask.promptContract.sha256` with native SHA-256. Execute only the server-selected Codex route. Pass `agentTask.prompt` as the sole sub-agent prompt, byte-for-byte. Pass `agentTask.referenceContext` separately as read-only context and preserve `agentTask.guideAudit` in the agent response metadata. Never construct a prompt from task, answers, workspace, execution metadata, schemas, or guides; do not add a preamble or output-contract suffix. If the Plugin returned an error, stop and report it exactly. For direct local workspace edits, omit optional file-list output fields unless the server schema requires them.\n\n{serialized}"
         ));
     }
     if (name == "loomex_agent_task_list" && pending_runner_task && !pending_codex_task)
@@ -895,6 +901,7 @@ mod tests {
         .unwrap();
 
         assert!(text.contains("CODEX DISPATCH CONTRACT"));
+        assert!(text.contains("referenceContext"));
         let result: Value = serde_json::from_str(text.rsplit_once("\n\n").unwrap().1).unwrap();
         assert_eq!(
             result["data"]["humanRequests"][1]["agentTask"]["resolvedProvider"],
@@ -925,6 +932,7 @@ mod tests {
         .unwrap();
 
         assert!(text.contains("CODEX DISPATCH CONTRACT"));
+        assert!(text.contains("guideAudit"));
         let result: Value = serde_json::from_str(text.rsplit_once("\n\n").unwrap().1).unwrap();
         assert_eq!(
             result["data"]["humanRequest"]["agentTask"]["resolvedProvider"],
@@ -1055,6 +1063,7 @@ mod tests {
         assert!(text.contains("builderSession.id"));
         assert!(text.contains("action resumed"));
         assert!(text.contains("Never submit a repair with action spawned"));
+        assert!(text.contains("referenceContext"));
     }
 
     #[test]

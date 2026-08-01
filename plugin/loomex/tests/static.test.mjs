@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -40,6 +41,41 @@ test("plugin exposes only the supported focused child skills", async () => {
   assert.deepEqual(skillDirectories, ["create-workflow", "login", "logout", "loomex", "organization-create", "organization-switch", "setup", "workflow"]);
   const router = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
   for (const name of childSkills) assert.match(router, new RegExp(`\\b${name}\\b`));
+});
+
+test("workflow guide pack is complete and hash-pinned", async () => {
+  const guidesRoot = path.join(root, "skills", "create-workflow", "guides");
+  const index = JSON.parse(await readFile(path.join(guidesRoot, "index.json"), "utf8"));
+  assert.equal(index.schemaVersion, "loomex.workflow-guides/v1");
+  assert.equal(index.packVersion, "1");
+  const required = new Set([
+    "workflow-contract",
+    "catalog-summary",
+    "node.start",
+    "node.end",
+    "node.ai-agent",
+    "node.person",
+    "node.human",
+    "node.condition",
+    "node.switch",
+    "node.tool",
+    "node.sub-workflow",
+    "pattern.human-radio-after-agent",
+    "pattern.human-checkbox-after-agent",
+    "pattern.developer-reviewer-loop",
+    "pattern.condition-after-review",
+    "pattern.person-memory",
+    "pattern.clarifier-loop",
+  ]);
+  assert.equal(index.guides.length, required.size);
+  for (const entry of index.guides) {
+    assert.equal(required.delete(entry.id), true, entry.id);
+    assert.match(entry.path, /^(?:node-guides|patterns)\/[^/]+\.md$|^[-a-z]+\.md$/);
+    const bytes = await readFile(path.join(guidesRoot, entry.path));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), entry.sha256, entry.id);
+    assert.ok(Array.isArray(entry.audience) && entry.audience.length > 0, entry.id);
+  }
+  assert.equal(required.size, 0);
 });
 
 test("documentation states durable execution and the closed-Codex limitation", async () => {
@@ -219,7 +255,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.67");
+  assert.equal(manifest.version, "0.1.68");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);
