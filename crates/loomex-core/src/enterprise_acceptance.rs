@@ -384,9 +384,9 @@ pub fn official_acceptance_checks() -> Vec<EnterpriseAcceptanceCheck> {
         ),
         check("login", "Login runner", ["auth_event", "selected_org"]),
         check(
-            "bind",
-            "Bind project workspace",
-            ["binding_id", "workspace_path"],
+            "execution_root",
+            "Bind a workspace root for one execution",
+            ["workflow_run_id", "workspace_path"],
         ),
         check(
             "policy_enforce",

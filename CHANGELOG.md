@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.60
+
+- Remove persistent project/workspace binding from the Plugin Runner contract.
+- Scope Runner authentication to the organization and require the execution
+  workspace root on each workflow run.
+- Remove the legacy binding transport, bind command, and Runner config migration.
+
 ## 0.1.59
 
 - Align the Codex marketplace discovery smoke test with the current 39-tool

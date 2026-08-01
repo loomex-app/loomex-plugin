@@ -26,7 +26,7 @@ Before `loomex_workflow_run`, confirm:
 - supplied inputs, especially secrets or environment names;
 - declared local capabilities and known approval points.
 
-Call it with required `workflowId`, `bindingId`, and `idempotencyKey`. Its
+Call it with required `workflowId`, `workspacePath`, and `idempotencyKey`. Its
 optional public fields are `inputs`, `version`, and `sessionId`. Reuse the same
 idempotency key only when safely retrying the same request; use a new key for an
 intentional new run. Include `version`

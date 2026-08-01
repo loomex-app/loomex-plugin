@@ -17,8 +17,8 @@ when status or doctor identifies an unhealthy local service.
 
 If doctor reports `RUNNER_IDENTITY_MISMATCH`, show the expected and observed
 identities when the tool safely returns them and explain which authenticated
-profile and binding are selected. Never silently re-register, rebind, delete
-credentials, or replace identity state. Use read-only setup, auth, binding, and
+profile and runner identity are selected. Never silently re-register or delete
+credentials, or replace identity state. Use read-only setup and auth, and
 doctor results to determine whether the mismatch is stale local state or the
 wrong selected scope; any repair or selection change follows its normal preview
 and explicit-confirmation flow.

@@ -10,7 +10,6 @@ const tools = [
   "loomex_setup_status", "loomex_setup_plan", "loomex_setup_apply", "loomex_setup_rollback",
   "loomex_auth_status", "loomex_auth_start", "loomex_auth_wait", "loomex_auth_register", "loomex_auth_register_verify", "loomex_auth_logout",
   "loomex_org_list", "loomex_org_create", "loomex_org_select", "loomex_project_list", "loomex_project_select",
-  "loomex_binding_list", "loomex_binding_create", "loomex_binding_revoke",
   "loomex_workflow_list", "loomex_workflow_show", "loomex_workflow_run",
   "loomex_workflow_create", "loomex_workflow_create_respond",
   "loomex_run_list", "loomex_run_get", "loomex_run_wait", "loomex_run_cancel",
@@ -22,7 +21,7 @@ const tools = [
 
 test("skill exposes the settled MCP tool contract exactly", async () => {
   const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
-  assert.equal(tools.length, 39);
+  assert.equal(tools.length, 36);
   for (const name of tools) assert.match(skill, new RegExp(`\\b${name}\\b`), name);
   assert.doesNotMatch(skill, /loomex_organization_|loomex_human_request_/);
 });
@@ -61,10 +60,6 @@ test("references use the implemented public MCP argument contract", async () => 
     path.join(root, "skills", "loomex", "references", "setup-and-auth.md"),
     "utf8",
   );
-  const binding = await readFile(
-    path.join(root, "skills", "loomex", "references", "workspace-binding.md"),
-    "utf8",
-  );
   const runs = await readFile(
     path.join(root, "skills", "loomex", "references", "workflows-and-runs.md"),
     "utf8",
@@ -87,12 +82,10 @@ test("references use the implemented public MCP argument contract", async () => 
   assert.match(setup, /returned `loginId`/);
   assert.match(setup, /state-changing operation/);
   assert.doesNotMatch(setup, /recovery token|flow ID/);
-  assert.match(binding, /`workspacePath`/);
-  assert.match(binding, /`projectId`, exact `bindingId`, and `confirm: true`/);
   assert.match(runs, /`loomex_run_list` currently requires `workflowId`/);
   assert.match(runs, /send it back as `afterSequence`/);
   assert.match(runs, /optional `version`/);
-  assert.match(runs, /required `workflowId`, `bindingId`, and `idempotencyKey`/);
+  assert.match(runs, /required `workflowId`, `workspacePath`, and `idempotencyKey`/);
   assert.match(runs, /required `executionId`,\s+a non-empty audit `reason`, and `idempotencyKey`/);
   assert.match(human, /public `response` field/);
   assert.match(human, /filtered by `workflowId`, `executionId`/);
@@ -158,7 +151,7 @@ test("retryable management failures recover state before considering restart", a
   assert.match(runs, /Restarting the Runner cannot continue that same terminal execution/);
   assert.match(runner, /Recommend restart only\s+when status or doctor identifies an unhealthy local service/);
   assert.match(runner, /`RUNNER_IDENTITY_MISMATCH`/);
-  assert.match(runner, /Never silently re-register, rebind, delete\s+credentials, or replace identity state/);
+  assert.match(runner, /Never silently re-register or delete\s+credentials, or replace identity state/);
   assert.match(human, /`resolved` response confirms the human request, not the\s+workflow's later state/);
   assert.match(human, /follow the `loomex_run_get` recovery flow/);
   assert.match(architecture, /does not restart a healthy Runner to force a\s+reconnect/);
@@ -220,7 +213,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.59");
+  assert.equal(manifest.version, "0.1.60");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);
