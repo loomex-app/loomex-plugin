@@ -17,11 +17,14 @@ Loomex Workflow; it is not a separate server-side AI execution path.
   provider CLIs, or a fallback implementation.
 - Call `loomex_setup_status` first and complete authentication and organization
   selection before starting creation.
-- Call `loomex_workflow_create` exactly once with the user's request verbatim in
-  `prompt`. Do not rewrite, summarize, translate, or augment it.
-- The tool starts a normal plugin execution of the hidden seeded workflow and
-  returns `execution.id` plus `builderSession.id`. The hidden workflow is not
-  returned by workflow discovery and must not be shown as a user workflow.
+- Discover the hidden seeded workflow through `loomex_workflow_list` with
+  `systemKey: "workflow_builder"`, then inspect that exact id with
+  `loomex_workflow_show`. This system workflow is the only create-workflow
+  implementation; it is never shown in the ordinary user workflow list.
+- Start that exact workflow with the normal `loomex_workflow_run` contract. Put
+  the user's request verbatim in `inputs.prompt`. Do not rewrite, summarize,
+  translate, or augment it. Omit `workspacePath` for this internal system run;
+  Loomex allocates a fresh execution-local workspace.
 - Continue with bounded `loomex_run_wait` calls for that exact execution until
   Loomex returns a real `plugin_agent` task or a terminal state. Internal agent
   and reviewer requests are not human questions. Follow the normal Codex
@@ -33,8 +36,8 @@ Loomex Workflow; it is not a separate server-side AI execution path.
   construct a prompt, add an output suffix, locally validate, repair, or alter
   the agent result.
 - When the execution reaches `completed`, call
-  `loomex_workflow_create_finalize` once with the returned builder session id
-  and a fresh idempotency key. The server performs canonical validation,
+  `loomex_workflow_create_finalize` once with the returned
+  `builderSession.id` and a fresh idempotency key. The server performs canonical validation,
   imports the valid definition, publishes version one, and returns the saved
   Workflow.
 - If finalization returns `WORKFLOW_BUILDER_OUTPUT_INVALID`, stop and report the
@@ -48,7 +51,13 @@ Loomex Workflow; it is not a separate server-side AI execution path.
 
 ```text
 loomex_setup_status
-loomex_workflow_create(prompt=<verbatim user request>, idempotencyKey=<fresh>)
+loomex_workflow_list(systemKey="workflow_builder")
+loomex_workflow_show(workflowId=<system workflow id>, version="active")
+loomex_workflow_run(
+  workflowId=<system workflow id>,
+  inputs={"prompt": <verbatim user request>},
+  idempotencyKey=<fresh>,
+)
 loomex_run_wait(executionId=<returned execution.id>, ...)
 loomex_agent_task_respond(...)       # only when run.wait exposes plugin_agent
 loomex_run_wait(...)                  # repeat until terminal
@@ -58,5 +67,6 @@ loomex_workflow_create_finalize(
 )
 ```
 
-Do not call the old `loomex_workflow_create_respond` builder-draft flow for a
-new request. It remains only for inspecting legacy sessions during migration.
+Do not call `loomex_workflow_create` or the old
+`loomex_workflow_create_respond` builder-draft flow for a new request. They
+remain only for inspecting legacy sessions during migration.

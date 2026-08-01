@@ -990,10 +990,21 @@ pub trait ManagementApiClient {
         &mut self,
         credential: &ManagementCredential,
     ) -> CoreResult<Vec<RunnerWorkflowSummary>>;
+    fn validate_runner_workflow_definition(
+        &mut self,
+        _credential: &ManagementCredential,
+        _definition: &Value,
+    ) -> CoreResult<Value> {
+        Err(CoreError::new(
+            "WORKFLOW_VALIDATION_UNSUPPORTED",
+            "management client does not support workflow validation",
+        ))
+    }
     fn list_runner_workflows_filtered(
         &mut self,
         credential: &ManagementCredential,
         execution_mode: Option<&str>,
+        system_key: Option<&str>,
         query: Option<&str>,
         cursor: Option<&str>,
         limit: usize,
@@ -1001,6 +1012,15 @@ pub trait ManagementApiClient {
         let mut workflows = self.list_runner_workflows(credential)?;
         if let Some(execution_mode) = execution_mode.filter(|value| !value.trim().is_empty()) {
             workflows.retain(|workflow| runner_workflow_execution_mode(workflow) == execution_mode);
+        }
+        if let Some(system_key) = system_key.filter(|value| !value.trim().is_empty()) {
+            workflows.retain(|workflow| {
+                workflow
+                    .extra
+                    .get("systemKey")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value == system_key)
+            });
         }
         if let Some(query) = query.filter(|value| !value.trim().is_empty()) {
             let query = query.to_ascii_lowercase();
@@ -1971,10 +1991,25 @@ impl ManagementApiClient for HttpManagementApiClient {
         Ok(envelope.data.workflows)
     }
 
+    fn validate_runner_workflow_definition(
+        &mut self,
+        credential: &ManagementCredential,
+        definition: &Value,
+    ) -> CoreResult<Value> {
+        let response = self
+            .post_with_auth("/runner-control/runner/v1/workflows/validate/", credential)
+            .json(&serde_json::json!({"definition": definition}))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
+        Ok(envelope.data)
+    }
+
     fn list_runner_workflows_filtered(
         &mut self,
         credential: &ManagementCredential,
         execution_mode: Option<&str>,
+        system_key: Option<&str>,
         query: Option<&str>,
         cursor: Option<&str>,
         limit: usize,
@@ -1982,6 +2017,9 @@ impl ManagementApiClient for HttpManagementApiClient {
         let mut params = vec![format!("limit={}", limit.clamp(1, 200))];
         if let Some(value) = execution_mode.filter(|value| !value.trim().is_empty()) {
             params.push(format!("executionMode={}", encode_query(value)));
+        }
+        if let Some(value) = system_key.filter(|value| !value.trim().is_empty()) {
+            params.push(format!("systemKey={}", encode_query(value)));
         }
         if let Some(value) = query.filter(|value| !value.trim().is_empty()) {
             params.push(format!("query={}", encode_query(value)));
@@ -3154,6 +3192,7 @@ mod tests {
             .list_runner_workflows_filtered(
                 &credential,
                 Some("plugin"),
+                None,
                 Some("review me"),
                 Some("cursor-1"),
                 200,

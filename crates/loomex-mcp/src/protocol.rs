@@ -268,7 +268,7 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             RpcError::new(-32603, format!("could not encode tool result: {error}"))
         })?;
         return Ok(format!(
-            "WORKFLOW BUILDER DISPATCH CONTRACT: this is internal Loomex work. Call loomex_workflow_create exactly once for this user request. If it returns agentTask, do not call loomex_workflow_create again; use loomex_workflow_create_respond for every attempt. Verify `agentTask.promptContract.sha256`; pass `agentTask.prompt` as the sole sub-agent prompt byte-for-byte. Follow the current `agentTask.sessionDirective` exactly: action spawn means create one new sub-agent and report its actual id with agentSession.action spawned; action resume means resume only sessionDirective.sessionId and report that same id with agentSession.action resumed. The builder session id passed to loomex_workflow_create_respond is data.builderSession.id; it is not the sub-agent session id. Keep the actual sub-agent session id, provider, model, and action across attempts. Never submit a repair with action spawned, never spawn a replacement for resume, and never reuse the prior JSON without giving the resumed sub-agent the new repair prompt. Do not edit files, run shell commands, call provider CLIs, construct a new prompt, or return anything except the server-defined JSON response. Submit each response with a fresh idempotency key. If the server returns another agentTask with validationErrors, repeat with loomex_workflow_create_respond and the same sub-agent session.\n\n{serialized}"
+            "LEGACY WORKFLOW BUILDER DISPATCH CONTRACT: this is an internal migration-only response. The builder session id is `builderSession.id`, never the sub-agent session id. Verify `agentTask.promptContract.sha256`; pass `agentTask.prompt` as the sole sub-agent prompt byte-for-byte. Follow the server-managed `agentTask.sessionDirective` exactly: action resumed must reuse the selected session. Never submit a repair with action spawned. Submit the structured result through the legacy workflow-builder response tool. Do not edit files, run shell commands, call provider CLIs, or construct a new prompt. New create-workflow requests must use the hidden system workflow through `loomex_workflow_list`, `loomex_workflow_show`, and `loomex_workflow_run`.\n\n{serialized}"
         ));
     }
     let requests = envelope
@@ -877,7 +877,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(text.contains("Call loomex_workflow_create exactly once"));
+        assert!(text.contains("New create-workflow requests must use the hidden system workflow"));
         assert!(text.contains("builderSession.id"));
         assert!(text.contains("action resumed"));
         assert!(text.contains("Never submit a repair with action spawned"));
@@ -910,7 +910,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             list_response["result"]["tools"].as_array().unwrap().len(),
-            35
+            36
         );
         let null_metadata_response = server()
             .handle(json!({
