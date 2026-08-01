@@ -88,15 +88,15 @@ server is the source of truth for sub-agent continuity. Provider routing and
 the explicit command/fallback policy are defined in
 [plugin-agent-providers.md](plugin-agent-providers.md).
 
-For the AI workflow builder, call `loomex_workflow_create` exactly once for the
-user request. Its `builderSession.id` is the `sessionId` for
-`loomex_workflow_create_respond`; it is different from the provider sub-agent
-session id in `agentTask.sessionDirective.sessionId`. After the first response,
-never call `loomex_workflow_create` again. Use the returned repair `agentTask`
-and submit through `loomex_workflow_create_respond` with a fresh idempotency key.
-On a repair directive, resume the exact existing sub-agent and set
-`agentSession.action` to `resumed`; do not spawn a replacement or reuse the old
-draft without sending the new repair prompt to that resumed session.
+For AI workflow creation, call `loomex_workflow_create` exactly once. It starts
+the hidden system workflow and returns both `builderSession.id` and a normal
+execution id. Continue that execution with bounded `loomex_run_wait` calls and
+dispatch every `plugin_agent` request through the normal
+`loomex_agent_task_respond` contract. The system workflow owns the designer,
+reviewer, and repair loop. When the execution is completed, call
+`loomex_workflow_create_finalize` with the builder session id and a fresh
+idempotency key. Finalization performs canonical validation and persists the
+user Workflow; the returned draft alone is never a saved Workflow.
 
 `agentTask.prompt` is already the immutable provider-ready prompt. It includes
 the allowed resolved node input and schema context selected by Backend. Use

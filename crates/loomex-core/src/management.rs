@@ -131,6 +131,8 @@ pub struct WorkflowRunStartResponse {
 pub struct WorkflowBuilderStartRequest {
     pub prompt: String,
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "workspacePath")]
+    pub workspace_path: Option<String>,
     pub idempotency_key: String,
 }
 
@@ -973,6 +975,17 @@ pub trait ManagementApiClient {
             "management client does not support the workflow builder",
         ))
     }
+    fn finalize_workflow_builder(
+        &mut self,
+        _credential: &ManagementCredential,
+        _session_id: &str,
+        _idempotency_key: &str,
+    ) -> CoreResult<Value> {
+        Err(CoreError::new(
+            "WORKFLOW_BUILDER_UNSUPPORTED",
+            "management client does not support finalizing the workflow builder",
+        ))
+    }
     fn list_runner_workflows(
         &mut self,
         credential: &ManagementCredential,
@@ -1799,7 +1812,30 @@ impl ManagementApiClient for HttpManagementApiClient {
             .json(&serde_json::json!({
                 "prompt": request.prompt,
                 "model": request.model,
+                "workspacePath": request.workspace_path,
             }))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
+        Ok(envelope.data)
+    }
+
+    fn finalize_workflow_builder(
+        &mut self,
+        credential: &ManagementCredential,
+        session_id: &str,
+        idempotency_key: &str,
+    ) -> CoreResult<Value> {
+        let response = self
+            .post_with_auth(
+                &format!(
+                    "/runner-control/runner/v1/workflow-builder/sessions/{}/finalize/",
+                    encode_path(session_id)
+                ),
+                credential,
+            )
+            .header("Idempotency-Key", idempotency_key)
+            .json(&serde_json::json!({}))
             .send()
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
         let envelope: ClientEnvelope<Value> = parse_json_response(response)?;

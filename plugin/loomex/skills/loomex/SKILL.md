@@ -155,7 +155,7 @@ Read every reference needed for the user's request before calling its tools.
 - Scope: `loomex_org_list`, `loomex_org_create`, `loomex_org_select`,
 - Workflows: `loomex_workflow_list`, `loomex_workflow_show`,
   `loomex_workflow_run`, `loomex_workflow_create`,
-  `loomex_workflow_create_respond`
+  `loomex_workflow_create_respond`, `loomex_workflow_create_finalize`
 - Runs: `loomex_run_list`, `loomex_run_get`, `loomex_run_wait`,
   `loomex_run_cancel`
 - Human requests: `loomex_human_list`, `loomex_human_open`,

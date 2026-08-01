@@ -673,6 +673,15 @@ mod tests {
                 }),
             ),
             (
+                "loomex_workflow_create_finalize",
+                "workflow.create.finalize",
+                Daemon,
+                json!({
+                    "sessionId": "builder-session-1",
+                    "idempotencyKey": "idem-builder-finalize-123"
+                }),
+            ),
+            (
                 "loomex_run_list",
                 "run.list",
                 Daemon,
@@ -765,7 +774,7 @@ mod tests {
         use std::collections::HashSet;
 
         let contracts = tool_contracts();
-        assert_eq!(contracts.len(), 34);
+        assert_eq!(contracts.len(), 35);
         let advertised = crate::tools::definitions();
         assert_eq!(advertised.len(), contracts.len());
         let expected_names = contracts
@@ -862,7 +871,7 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
             .into_iter()
             .filter(|(_, _, transport, _)| *transport == ExpectedTransport::Daemon)
             .collect::<Vec<_>>();
-        assert_eq!(contracts.len(), 16);
+        assert_eq!(contracts.len(), 17);
 
         let temp = tempfile::tempdir().unwrap();
         let socket_path = temp.path().join("control.sock");
