@@ -7,8 +7,6 @@ use crate::{CoreError, CoreResult};
 pub enum RunnerLifecycleState {
     NotAuthenticated,
     Authenticated,
-    ProjectNotSelected,
-    ProjectBound,
     Connecting,
     Connected,
     Running,
@@ -24,8 +22,6 @@ impl RunnerLifecycleState {
         match self {
             Self::NotAuthenticated => "not_authenticated",
             Self::Authenticated => "authenticated",
-            Self::ProjectNotSelected => "project_not_selected",
-            Self::ProjectBound => "project_bound",
             Self::Connecting => "connecting",
             Self::Connected => "connected",
             Self::Running => "running",
@@ -41,8 +37,6 @@ impl RunnerLifecycleState {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum RunnerLifecycleEvent {
     Authenticated,
-    ProjectRequired,
-    ProjectBound,
     ConnectStarted,
     Connected,
     ToolCallStarted,
@@ -94,15 +88,8 @@ impl RunnerStateMachine {
             (RunnerLifecycleState::NotAuthenticated, RunnerLifecycleEvent::Authenticated) => {
                 RunnerLifecycleState::Authenticated
             }
-            (RunnerLifecycleState::Authenticated, RunnerLifecycleEvent::ProjectRequired) => {
-                RunnerLifecycleState::ProjectNotSelected
-            }
             (
-                RunnerLifecycleState::Authenticated | RunnerLifecycleState::ProjectNotSelected,
-                RunnerLifecycleEvent::ProjectBound,
-            ) => RunnerLifecycleState::ProjectBound,
-            (
-                RunnerLifecycleState::ProjectBound
+                RunnerLifecycleState::Authenticated
                 | RunnerLifecycleState::Disconnected
                 | RunnerLifecycleState::Connected,
                 RunnerLifecycleEvent::ConnectStarted,
@@ -523,9 +510,6 @@ mod tests {
         assert_eq!("not_authenticated", machine.state().as_str());
         machine
             .transition(RunnerLifecycleEvent::Authenticated)
-            .unwrap();
-        machine
-            .transition(RunnerLifecycleEvent::ProjectBound)
             .unwrap();
         machine
             .transition(RunnerLifecycleEvent::ConnectStarted)

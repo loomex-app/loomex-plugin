@@ -28,4 +28,4 @@ backend directly, or ask the user to run a CLI command.
    organization yet.
 
 Never expose access tokens or passwords. A successful login does not imply that
-an organization, project, or execution workspace is selected.
+an organization, organization, or execution workspace is selected.

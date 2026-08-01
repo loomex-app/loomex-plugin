@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.61
+
+- Remove Project from the plugin MCP surface, runner protocol, organization
+  context, skills, and release tests.
+- Keep organization selection multi-organization while making execution roots
+  the only execution-local binding.
+
 ## 0.1.60
 
 - Remove persistent project/workspace binding from the Plugin Runner contract.

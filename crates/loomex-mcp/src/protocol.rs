@@ -78,7 +78,7 @@ impl Server {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
             "serverInfo": {"name": "loomex", "title": "Loomex Local Workflow Runner", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "For Loomex requests, call loomex_setup_status first. For setup planning, call read-only loomex_setup_plan; ask approval only before loomex_setup_apply. Complete auth and org/project context. Runner is organization-scoped; projects are never attached to the Runner. Provide an execution root/workspace for each run. On error, stop and report exact state; never replace Loomex with shell, edits, provider CLIs, or ad-hoc work. Only loomex_* recovery/diagnostic tools may follow a failure."
+            "instructions": "For Loomex requests, call loomex_setup_status first. For setup planning, call read-only loomex_setup_plan; ask approval only before loomex_setup_apply. Complete auth and organization context. Provide an execution root/workspace for each run. On error, stop and report exact state; never replace Loomex with shell, edits, provider CLIs, or ad-hoc work. Only loomex_* recovery/diagnostic tools may follow a failure."
         }))
     }
 
@@ -119,7 +119,7 @@ impl Server {
                     "uri": tools::LIST_TABLE_APP_URI,
                     "name": "Loomex List Table",
                     "title": "Loomex List Table",
-                    "description": "Interactive table for Loomex organizations, projects, and workflows.",
+                    "description": "Interactive table for Loomex organizations and workflows.",
                     "mimeType": MCP_APP_MIME_TYPE
                 }
             ]
@@ -561,7 +561,7 @@ mod tests {
         assert!(instructions.starts_with("For Loomex requests, call loomex_setup_status first"));
         assert!(instructions.contains("call read-only loomex_setup_plan"));
         assert!(instructions.contains("ask approval only before loomex_setup_apply"));
-        assert!(instructions.contains("projects are never attached to the Runner"));
+        assert!(instructions.contains("organization context"));
         assert!(
             instructions.contains("Only loomex_* recovery/diagnostic tools may follow a failure")
         );
@@ -663,7 +663,6 @@ mod tests {
         assert!(html.contains("Loomex"));
         assert!(html.contains("structuredContent"));
         assert!(html.contains("loomex_org_select"));
-        assert!(html.contains("loomex_project_select"));
         assert!(html.contains("loomex_workflow_run"));
         assert!(html.contains("sendFollowUpMessage"));
         assert!(html.contains("ui/notifications/tool-result"));
@@ -870,7 +869,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             list_response["result"]["tools"].as_array().unwrap().len(),
-            36
+            34
         );
         let null_metadata_response = server()
             .handle(json!({

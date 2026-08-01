@@ -98,7 +98,6 @@ pub enum TokenScope {
 pub struct StoredToken {
     pub scope: TokenScope,
     pub organization_id: String,
-    pub project_id: Option<String>,
     pub runner_device_id: Option<String>,
     pub audience: Option<String>,
     pub token: String,
@@ -113,7 +112,6 @@ impl std::fmt::Debug for StoredToken {
             .debug_struct("StoredToken")
             .field("scope", &self.scope)
             .field("organization_id", &self.organization_id)
-            .field("project_id", &self.project_id)
             .field("runner_device_id", &self.runner_device_id)
             .field("audience", &self.audience)
             .field("token", &"[REDACTED]")
@@ -133,7 +131,6 @@ impl StoredToken {
         Self {
             scope: TokenScope::Management,
             organization_id: organization_id.into(),
-            project_id: None,
             runner_device_id: None,
             audience: None,
             token: token.into(),

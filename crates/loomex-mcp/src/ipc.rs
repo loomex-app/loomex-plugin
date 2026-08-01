@@ -406,8 +406,6 @@ fn is_bootstrap_method(method: &str) -> bool {
             | "org.list"
             | "org.create"
             | "org.select"
-            | "project.list"
-            | "project.select"
             | "runner.control"
     )
 }
@@ -641,13 +639,6 @@ mod tests {
                 Bootstrap,
                 json!({"organizationId": "org-1"}),
             ),
-            ("loomex_project_list", "project.list", Bootstrap, json!({})),
-            (
-                "loomex_project_select",
-                "project.select",
-                Bootstrap,
-                json!({"projectId": "project-1"}),
-            ),
             ("loomex_workflow_list", "workflow.list", Daemon, json!({})),
             (
                 "loomex_workflow_show",
@@ -774,7 +765,7 @@ mod tests {
         use std::collections::HashSet;
 
         let contracts = tool_contracts();
-        assert_eq!(contracts.len(), 36);
+        assert_eq!(contracts.len(), 34);
         let advertised = crate::tools::definitions();
         assert_eq!(advertised.len(), contracts.len());
         let expected_names = contracts

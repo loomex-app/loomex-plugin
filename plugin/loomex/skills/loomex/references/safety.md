@@ -9,7 +9,7 @@
 - Do not pass credentials, API keys, tokens, or unrelated environment variables
   as workflow inputs. Use Loomex's credential facilities when the schema calls
   for a secret reference.
-- Preserve run, request, approval, setup transaction, organization, project, and
+- Preserve run, request, approval, setup transaction, organization, organization, and
   execution-root IDs from tool output. Do not manufacture or substitute IDs.
 - Distinguish accepted, queued, waiting, cancellation requested, rolled back,
   and terminal results. Transport success alone is not operation success.

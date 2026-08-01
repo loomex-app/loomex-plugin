@@ -2,7 +2,7 @@
 
 ## Discover
 
-Use `loomex_workflow_list` with the selected organization/project filters. Use
+Use `loomex_workflow_list` with the selected organization filters. Use
 `loomex_workflow_show` before a run when names collide, inputs are missing, or
 local capabilities and approval points need explanation. Pass `workflowId`;
 pass optional `version` when the user selected a particular immutable version.
@@ -22,7 +22,7 @@ may be called after the error.
 Before `loomex_workflow_run`, confirm:
 
 - workflow ID/version;
-- selected project, execution scope, and the execution-local workspace path;
+- selected organization, execution scope, and the execution-local workspace path;
 - supplied inputs, especially secrets or environment names;
 - declared local capabilities and known approval points.
 
@@ -157,10 +157,10 @@ requires a new user request and idempotency key. Do not confuse a retryable
 management transport failure with this authoritative terminal result.
 
 `loomex_run_list` currently requires `workflowId`; it cannot enumerate every run
-in a project. When the user lacks both execution ID and workflow ID, resolve the
+in a organization. When the user lacks both execution ID and workflow ID, resolve the
 workflow first with `loomex_workflow_list`. Then call `loomex_run_list` with the
 required `workflowId` and optional `status`, `cursor`, and `limit`, and let the
-user choose when multiple runs still match. Do not send `projectId` or an empty
+user choose when multiple runs still match. Do not send an organization context or an empty
 workflow ID to this tool.
 
 ## Cancel

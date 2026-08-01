@@ -2,7 +2,7 @@
 
 The Loomex plugin makes Codex a conversational client for Loomex. It can browse
 workflows, start and follow durable runs, and surface human requests and
-approval decisions. Runner authentication is independent from project scope;
+approval decisions. Runner authentication is independent from organization scope;
 each execution supplies its own local workspace path and execution scope.
 
 ## User experience
@@ -37,8 +37,8 @@ To install or upgrade to an exact plugin version:
 curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.60/install-codex.sh | sh
 ```
 
-The `0.1.60` release removes persistent project/workspace binding from the
-Runner contract. Projects remain workflow metadata only; every execution
+The `0.1.60` release removes persistent execution workspace binding from the
+Runner contract. Workflows are organization-scoped; every execution
 supplies its own local workspace root. It also includes the guided account
 registration, logout, organization
 creation and organization switching, while keeping pending Codex sub-agent tasks separate from
@@ -195,7 +195,7 @@ finish before Codex is closed so that the Runner service has been installed.
 
 ## Local workspace safety
 
-Loomex operates only inside an explicit execution workspace. Projects are
+Loomex operates only inside an explicit execution workspace. Organizations are
 metadata only and are never associated with a Runner or filesystem path. The
 canonical `workspacePath` is supplied by `loomex_workflow_run` for every
 execution and is carried through the server job payload to the Runner. The
@@ -250,7 +250,7 @@ This release-mode smoke installs `loomex@loomex` into a temporary, isolated
 `CODEX_HOME`, exercising the marketplace, plugin cache, `.mcp.json`, launcher,
 runtime manifest, platform selection, and checksum verification. It starts no
 model turn and calls no Loomex tool. It asserts the installed and MCP-advertised
-versions match the assembled manifest, and that Codex sees exactly 33 tools,
+versions match the assembled manifest, and that Codex sees exactly 34 tools,
 including setup, workflow discovery, and plugin agent-task tools.
 
 For a faster development-only check before assembling all native targets, pass

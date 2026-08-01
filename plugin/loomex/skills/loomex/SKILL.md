@@ -1,6 +1,6 @@
 ---
 name: loomex
-description: Use Loomex from Codex to set up its durable local Runner, log in or register, create or switch organizations, select projects, browse and run plugin workflows, follow long-running runs, execute plugin AI/person tasks, respond to human-in-the-loop requests, decide approvals, inspect status and logs, or repair and roll back Runner setup.
+description: Use Loomex from Codex to set up its durable local Runner, log in or register, create or switch organizations, browse and run organization-scoped workflows, follow long-running runs, execute plugin AI/person tasks, respond to human-in-the-loop requests, decide approvals, inspect status and logs, or repair and roll back Runner setup.
 ---
 
 # Loomex
@@ -36,8 +36,8 @@ Loomex is the only execution surface for Loomex work. This is fail-closed:
   execution is allowed only while handling a server-issued plugin agent task.
 - Setup, upgrade, repair, or uninstall/rollback: read
   [setup-and-auth.md](references/setup-and-auth.md).
-- Organization or project selection: use the selected organization/project
-  context; projects are metadata only and never own execution roots.
+- Organization or organization selection: use the selected organization
+  context; execution roots belong only to individual runs.
 - Browse workflows, start a run, wait, cancel, or resume after reconnect: read
   [workflows-and-runs.md](references/workflows-and-runs.md).
 - Human input or approval: read
@@ -61,9 +61,9 @@ Read every reference needed for the user's request before calling its tools.
    per-user service is not set up yet. Show the concrete plan; ask for approval
    only before `loomex_setup_apply`.
 3. When setup is complete, continue through Runner authentication and the
-   required organization/project scope, then resume the user's original request
+   required organization scope, then resume the user's original request
    in the same conversation. A registered service that is deferred or
-   inactive pending authentication is not a reason to repair setup. Project
+   inactive pending authentication is not a reason to repair setup. Execution
    execution root and the local workspace path are execution-scoped; they are not
    prerequisites for the durable Runner service.
    If authentication succeeds and `loomex_org_list` returns an empty `items`
@@ -79,8 +79,8 @@ Read every reference needed for the user's request before calling its tools.
    `loomex_auth_wait` with its exact `loginId`, and retry the original scope
    call after authentication succeeds. Do not ask the user to manually edit
    Loomex config or register a workspace.
-4. Reuse the selected organization and project when they unambiguously match
-   the request. Never silently widen project scope.
+4. Reuse the selected organization when it unambiguously matches
+   the request. Never silently widen organization scope.
 5. `loomex_workflow_list` only returns workflows whose execution model is
    `plugin`. App-only and server-only workflows are intentionally hidden from
    the Codex plugin workflow picker.
@@ -153,8 +153,6 @@ Read every reference needed for the user's request before calling its tools.
   `loomex_auth_wait`, `loomex_auth_register`,
   `loomex_auth_register_verify`, `loomex_auth_logout`
 - Scope: `loomex_org_list`, `loomex_org_create`, `loomex_org_select`,
-  `loomex_project_list`,
-  `loomex_project_select`
 - Workflows: `loomex_workflow_list`, `loomex_workflow_show`,
   `loomex_workflow_run`, `loomex_workflow_create`,
   `loomex_workflow_create_respond`

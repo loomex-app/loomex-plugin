@@ -11,7 +11,7 @@ not. Once a run is accepted, closing Codex does not cancel it. On the next Codex
 session, use `loomex_run_get` or `loomex_run_wait` and query the human and
 approval inboxes to recover its latest durable state.
 
-The adapter uses two local routes. Setup, authentication, organization/project
+The adapter uses two local routes. Setup, authentication, organization
 selection, and Runner control call the bundled `loomex`
 bootstrap executable, so first use works before a service socket or credential
 exists. Workflow/run/HITL/approval calls use the authenticated durable-service

@@ -45,7 +45,6 @@ pub struct AuthTokenResponse {
 pub struct ApiKeyExchangeResult {
     pub token: AuthTokenResponse,
     pub organization_id: Option<String>,
-    pub project_id: Option<String>,
     pub runner_id: Option<String>,
 }
 
@@ -53,7 +52,6 @@ pub struct ApiKeyExchangeResult {
 pub struct WorkspaceLoginResult {
     pub token: String,
     pub organization_id: Option<String>,
-    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +75,6 @@ impl ApiKeyExchangeResult {
         Self {
             token,
             organization_id: None,
-            project_id: None,
             runner_id: None,
         }
     }
@@ -87,15 +84,6 @@ impl ApiKeyExchangeResult {
 pub struct Organization {
     pub id: String,
     pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Project {
-    pub id: String,
-    pub organization_id: String,
-    pub name: String,
-    pub status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,7 +111,6 @@ pub struct RunnerUpsertRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowRunStartRequest {
     pub organization_id: String,
-    pub project_id: String,
     pub workflow_id: String,
     pub inputs: Value,
     #[serde(skip_serializing_if = "Option::is_none", rename = "workspacePath")]
@@ -142,7 +129,6 @@ pub struct WorkflowRunStartResponse {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowBuilderStartRequest {
-    pub project_id: String,
     pub prompt: String,
     pub model: Option<String>,
     pub idempotency_key: String,
@@ -338,8 +324,6 @@ struct RunnerAuthExchangeData {
     runner_token: String,
     token_type: String,
     organization_id: String,
-    #[serde(default)]
-    project_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,8 +332,6 @@ struct WorkspaceLoginData {
     token: String,
     #[serde(default)]
     organization: Option<WorkspaceOrganizationData>,
-    #[serde(default)]
-    projects: Vec<WorkspaceProjectData>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -376,18 +358,8 @@ struct WorkspaceOrganizationData {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkspaceProjectData {
-    id: String,
-    #[serde(default)]
-    organization_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct RunnerAuthRunner {
     id: String,
-    #[serde(default)]
-    project_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -948,16 +920,6 @@ pub trait ManagementApiClient {
         &mut self,
         credential: &ManagementCredential,
     ) -> CoreResult<Vec<Organization>>;
-    fn list_projects(
-        &mut self,
-        credential: &ManagementCredential,
-        organization_id: &str,
-    ) -> CoreResult<Vec<Project>>;
-    fn get_project(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-    ) -> CoreResult<Project>;
     fn get_current_runner(
         &mut self,
         credential: &ManagementCredential,
@@ -1018,7 +980,6 @@ pub trait ManagementApiClient {
     fn list_runner_workflows_filtered(
         &mut self,
         credential: &ManagementCredential,
-        _project_id: Option<&str>,
         execution_mode: Option<&str>,
         query: Option<&str>,
         cursor: Option<&str>,
@@ -1556,7 +1517,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             .send()
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
         let envelope: ClientEnvelope<RunnerAuthExchangeData> = parse_json_response(response)?;
-        let project_id = envelope.data.project_id.or(envelope.data.runner.project_id);
         Ok(ApiKeyExchangeResult {
             token: AuthTokenResponse {
                 access_token: envelope.data.runner_token,
@@ -1565,7 +1525,6 @@ impl ManagementApiClient for HttpManagementApiClient {
                 expires_at: RUNNER_TOKEN_NON_EXPIRING_EXPIRES_AT.to_string(),
             },
             organization_id: Some(envelope.data.organization_id),
-            project_id: project_id.clone(),
             runner_id: Some(envelope.data.runner.id.clone()),
         })
     }
@@ -1581,21 +1540,9 @@ impl ManagementApiClient for HttpManagementApiClient {
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
         let envelope: ClientEnvelope<WorkspaceLoginData> = parse_json_response(response)?;
         let organization_id = envelope.data.organization.map(|item| item.id);
-        let project_id = envelope
-            .data
-            .projects
-            .into_iter()
-            .find(|project| {
-                organization_id
-                    .as_deref()
-                    .map(|org| project.organization_id.as_deref() == Some(org))
-                    .unwrap_or(true)
-            })
-            .map(|project| project.id);
         Ok(WorkspaceLoginResult {
             token: envelope.data.token,
             organization_id,
-            project_id,
         })
     }
 
@@ -1650,21 +1597,9 @@ impl ManagementApiClient for HttpManagementApiClient {
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
         let envelope: ClientEnvelope<WorkspaceLoginData> = parse_json_response(response)?;
         let organization_id = envelope.data.organization.map(|item| item.id);
-        let project_id = envelope
-            .data
-            .projects
-            .into_iter()
-            .find(|project| {
-                organization_id
-                    .as_deref()
-                    .map(|org| project.organization_id.as_deref() == Some(org))
-                    .unwrap_or(true)
-            })
-            .map(|project| project.id);
         Ok(WorkspaceLoginResult {
             token: envelope.data.token,
             organization_id,
-            project_id,
         })
     }
 
@@ -1705,7 +1640,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             .send()
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
         let envelope: ClientEnvelope<RunnerAuthExchangeData> = parse_json_response(response)?;
-        let project_id = envelope.data.project_id.or(envelope.data.runner.project_id);
         Ok(ApiKeyExchangeResult {
             token: AuthTokenResponse {
                 access_token: envelope.data.runner_token,
@@ -1714,7 +1648,6 @@ impl ManagementApiClient for HttpManagementApiClient {
                 expires_at: RUNNER_TOKEN_NON_EXPIRING_EXPIRES_AT.to_string(),
             },
             organization_id: Some(envelope.data.organization_id),
-            project_id: project_id.clone(),
             runner_id: Some(envelope.data.runner.id.clone()),
         })
     }
@@ -1752,42 +1685,6 @@ impl ManagementApiClient for HttpManagementApiClient {
         let envelope: ClientEnvelope<RunnerWorkflowExecutionResponse> =
             parse_json_response(response)?;
         Ok(envelope.data)
-    }
-
-    fn list_projects(
-        &mut self,
-        credential: &ManagementCredential,
-        organization_id: &str,
-    ) -> CoreResult<Vec<Project>> {
-        let response = self
-            .get_with_auth(
-                &format!(
-                    "/projects/?organization_id={}",
-                    encode_query(organization_id)
-                ),
-                credential,
-            )
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let envelope: ClientEnvelope<Vec<Project>> = parse_json_response(response)?;
-        Ok(envelope.data)
-    }
-
-    fn get_project(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-    ) -> CoreResult<Project> {
-        let response = self
-            .get_with_auth("/projects/", credential)
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let envelope: ClientEnvelope<Vec<Project>> = parse_json_response(response)?;
-        envelope
-            .data
-            .into_iter()
-            .find(|project| project.id == project_id)
-            .ok_or_else(|| CoreError::new("PROJECT_NOT_FOUND", project_id))
     }
 
     fn get_current_runner(
@@ -1900,7 +1797,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             )
             .header("Idempotency-Key", &request.idempotency_key)
             .json(&serde_json::json!({
-                "projectId": request.project_id,
                 "prompt": request.prompt,
                 "model": request.model,
             }))
@@ -2042,16 +1938,12 @@ impl ManagementApiClient for HttpManagementApiClient {
     fn list_runner_workflows_filtered(
         &mut self,
         credential: &ManagementCredential,
-        project_id: Option<&str>,
         execution_mode: Option<&str>,
         query: Option<&str>,
         cursor: Option<&str>,
         limit: usize,
     ) -> CoreResult<Value> {
         let mut params = vec![format!("limit={}", limit.clamp(1, 200))];
-        if let Some(value) = project_id.filter(|value| !value.trim().is_empty()) {
-            params.push(format!("projectId={}", encode_query(value)));
-        }
         if let Some(value) = execution_mode.filter(|value| !value.trim().is_empty()) {
             params.push(format!("executionMode={}", encode_query(value)));
         }
@@ -3196,23 +3088,7 @@ mod tests {
     }
 
     #[test]
-    fn user_project_and_org_scoped_runner_bootstrap_http_contracts_are_exact() {
-        let (server_url, request, server) = serve_one_http_response(
-            r#"{"data":[{"id":"project-1","organizationId":"org-1","name":"Demo","status":"active"}]}"#,
-        );
-        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
-        let projects = client
-            .list_projects(&test_credential("user.jwt"), "org / one")
-            .unwrap();
-        let raw = captured_request(request, server);
-        assert_eq!(projects[0].id, "project-1");
-        assert!(
-            raw.starts_with("GET /api/v1/projects/?organization_id=org%20%2F%20one HTTP/1.1\r\n")
-        );
-        assert!(raw
-            .to_ascii_lowercase()
-            .contains("authorization: bearer user.jwt\r\n"));
-
+    fn org_scoped_runner_bootstrap_http_contract_is_exact() {
         let (server_url, request, server) = serve_one_http_response(
             r#"{"data":{"runner":{"id":"runner-1"},"runnerToken":"runner.jwt","tokenType":"Bearer","organizationId":"org-1"}}"#,
         );
@@ -3229,7 +3105,6 @@ mod tests {
             .to_ascii_lowercase()
             .contains("authorization: bearer user.jwt\r\n"));
         assert!(raw.contains(r#""organizationId":"org-1""#));
-        assert!(!raw.contains("projectId"));
     }
 
     #[test]
@@ -3242,7 +3117,6 @@ mod tests {
         let page = client
             .list_runner_workflows_filtered(
                 &credential,
-                Some("project-1"),
                 Some("plugin"),
                 Some("review me"),
                 Some("cursor-1"),
@@ -3254,7 +3128,6 @@ mod tests {
         assert!(raw.starts_with("GET /api/v1/runner-control/runner/v1/workflows/?"));
         for query in [
             "limit=200",
-            "projectId=project-1",
             "executionMode=plugin",
             "query=review%20me",
             "cursor=cursor-1",
@@ -3485,27 +3358,6 @@ mod tests {
 
         assert_eq!(organizations[0].id, "org_123");
         assert!(request.starts_with("GET /api/v1/organizations/ HTTP/1.1\r\n"));
-        assert!(request
-            .to_ascii_lowercase()
-            .contains("authorization: bearer user.jwt\r\n"));
-    }
-
-    #[test]
-    fn project_lookup_uses_collection_contract_instead_of_missing_detail_route() {
-        let (server_url, request_receiver, server) = serve_one_http_response(
-            r#"{"data":[{"id":"prj_other","organizationId":"org_123","name":"Other","status":"active"},{"id":"prj_123","organizationId":"org_123","name":"Demo","status":"active"}],"meta":{"version":"v1"}}"#,
-        );
-        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
-
-        let project = client
-            .get_project(&test_credential("user.jwt"), "prj_123")
-            .unwrap();
-        let request = request_receiver.recv().unwrap();
-        server.join().unwrap();
-
-        assert_eq!(project.name, "Demo");
-        assert!(request.starts_with("GET /api/v1/projects/ HTTP/1.1\r\n"));
-        assert!(!request.contains("/projects/prj_123"));
         assert!(request
             .to_ascii_lowercase()
             .contains("authorization: bearer user.jwt\r\n"));
@@ -3811,13 +3663,13 @@ mod tests {
     fn management_error_envelope_preserves_code_message_and_request_id() {
         let err = management_error_from_status_and_body(
             403,
-            r#"{"code":"PROJECT_FORBIDDEN","message":"No access","details":{"project_id":"prj_123"},"request_id":"req_123"}"#,
+            r#"{"code":"ORGANIZATION_FORBIDDEN","message":"No access","details":{"organization_id":"org_123"},"request_id":"req_123"}"#,
         );
 
-        assert_eq!("PROJECT_FORBIDDEN", err.code);
+        assert_eq!("ORGANIZATION_FORBIDDEN", err.code);
         assert!(err.message.contains("No access"));
         assert!(err.message.contains("request_id=req_123"));
-        assert!(err.message.contains("project_id"));
+        assert!(err.message.contains("organization_id"));
     }
 
     #[test]
@@ -3895,13 +3747,13 @@ mod tests {
     fn nested_management_error_envelope_preserves_contract_code() {
         let err = management_error_from_status_and_body(
             422,
-            r#"{"error":{"code":"LOCAL_RUNNER_REQUIRED","message":"Local workflow execution requires an online project runner.","details":{}},"meta":{"correlationId":"req_nested","version":"v1"}}"#,
+            r#"{"error":{"code":"LOCAL_RUNNER_REQUIRED","message":"Local workflow execution requires an online runner.","details":{}},"meta":{"correlationId":"req_nested","version":"v1"}}"#,
         );
 
         assert_eq!("LOCAL_RUNNER_REQUIRED", err.code);
         assert!(err
             .message
-            .contains("Local workflow execution requires an online project runner."));
+            .contains("Local workflow execution requires an online runner."));
         assert!(!err.message.contains("management API returned HTTP 422"));
     }
 }

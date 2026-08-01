@@ -74,7 +74,7 @@ pub use management::{
     CredentialStorageBackend, CredentialStorageOutcome, CredentialStore, DeviceLoginChallenge,
     HttpManagementApiClient, HumanRequestExecution, HumanRequestResolveResponse,
     HumanRequestSummary, LocalCredentialStore, ManagementApiClient, ManagementCredential,
-    Organization, Project, Runner, RunnerHumanRequestListQuery, RunnerHumanRequestListResponse,
+    Organization, Runner, RunnerHumanRequestListQuery, RunnerHumanRequestListResponse,
     RunnerJobEventCreateResponse, RunnerJobResponse, RunnerSessionResponse, RunnerUpsertRequest,
     RunnerWorkflowExecutionListResponse, RunnerWorkflowExecutionResponse,
     RunnerWorkflowExecutionStartOptions, RunnerWorkflowInputSchemaResponse, RunnerWorkflowSummary,
