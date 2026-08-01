@@ -250,8 +250,9 @@ This release-mode smoke installs `loomex@loomex` into a temporary, isolated
 `CODEX_HOME`, exercising the marketplace, plugin cache, `.mcp.json`, launcher,
 runtime manifest, platform selection, and checksum verification. It starts no
 model turn and calls no Loomex tool. It asserts the installed and MCP-advertised
-versions match the assembled manifest, and that Codex sees exactly 34 tools,
-including setup, workflow discovery, and plugin agent-task tools.
+versions match the assembled manifest, and that Codex sees exactly 35 tools,
+including setup, workflow discovery, workflow creation finalization, and plugin
+agent-task tools.
 
 For a faster development-only check before assembling all native targets, pass
 `--loomex-mcp /absolute/path/to/loomex-mcp --expected-version <version>`. That
