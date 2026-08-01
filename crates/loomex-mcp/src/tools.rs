@@ -223,7 +223,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
             "workflow.create",
             obj(
                 &[
-                    ("prompt", string()),
+                    ("prompt", workflow_prompt()),
                     ("model", string()),
                     ("idempotencyKey", idempotency_key()),
                 ],
@@ -1220,6 +1220,9 @@ fn log_entry_schema() -> Value {
 
 fn string() -> Value {
     json!({"type":"string","minLength":1,"maxLength":1024})
+}
+fn workflow_prompt() -> Value {
+    json!({"type":"string","minLength":1,"maxLength":20000})
 }
 fn short_string() -> Value {
     json!({"type":"string","minLength":1,"maxLength":500})

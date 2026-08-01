@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.62
+
+- Allow `loomex_workflow_create` descriptions up to 20,000 characters, matching
+  the Backend workflow-builder contract while preserving verbatim forwarding.
+
 ## 0.1.61
 
 - Remove Project from the plugin MCP surface, runner protocol, organization
