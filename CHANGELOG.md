@@ -9,7 +9,7 @@
 
 ## 0.1.59
 
-- Align the Codex marketplace discovery smoke test with the current 39-tool
+- Align the Codex marketplace discovery smoke test with the current 36-tool
   MCP surface so the release package can complete its final validation.
 
 ## 0.1.58
