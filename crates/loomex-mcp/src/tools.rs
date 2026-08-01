@@ -183,7 +183,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
             "loomex_workflow_list",
             "List workflows",
             "List workflows in the selected organization.",
-            list_schema(&[("query", short_string())]),
+            list_schema(&[("query", short_string()), ("systemKey", short_string())]),
             open_ro(),
             list_table_meta(),
         ),
@@ -199,9 +199,17 @@ pub fn definitions() -> Vec<ToolDefinition> {
             open_ro(),
         ),
         tool(
+            "loomex_workflow_validate",
+            "Validate workflow draft",
+            "Validate an unpersisted workflow definition through Loomex. This is the reviewer MCP contract; it never persists or executes the draft.",
+            "workflow.validate",
+            obj(&[("definition", json_object())], &["definition"]),
+            open_ro(),
+        ),
+        tool(
             "loomex_workflow_run",
             "Run workflow",
-            "Start a durable Loomex workflow. Loomex is the only execution surface: if this tool fails, stop and report the exact error; never use shell commands, file edits, direct provider CLIs, or a fallback implementation.",
+            "Start a durable Loomex workflow. workspacePath is required for ordinary runs; when omitted, Loomex allocates a fresh execution-local workspace for internal system workflows such as create-workflow. Loomex is the only execution surface: if this tool fails, stop and report the exact error; never use shell commands, file edits, direct provider CLIs, or a fallback implementation.",
             "workflow.run",
             obj(
                 &[
@@ -212,7 +220,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
                     ("sessionId", identifier()),
                     ("idempotencyKey", idempotency_key()),
                 ],
-                &["workflowId", "workspacePath", "idempotencyKey"],
+                &["workflowId", "idempotencyKey"],
             ),
             mutating(false, true, true),
         ),
@@ -523,6 +531,7 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_org_select" => "org.select",
                 "loomex_workflow_list" => "workflow.list",
                 "loomex_workflow_show" => "workflow.show",
+                "loomex_workflow_validate" => "workflow.validate",
                 "loomex_workflow_run" => "workflow.run",
                 "loomex_workflow_create" => "workflow.create",
                 "loomex_workflow_create_respond" => "workflow.create.respond",
@@ -989,6 +998,14 @@ fn output_data_schema(tool_name: &str) -> Value {
                 "selectedVersion",
             ],
         ),
+        "loomex_workflow_validate" => evolvable_object(
+            &[
+                ("valid", boolean()),
+                ("errors", array_of(string())),
+                ("workflow", json_object()),
+            ],
+            &["valid", "errors", "workflow"],
+        ),
         "loomex_workflow_run" | "loomex_run_get" | "loomex_run_wait" => run_detail_schema(),
         "loomex_workflow_create"
         | "loomex_workflow_create_respond"
@@ -1276,7 +1293,7 @@ fn plugin_agent_response() -> Value {
                 "status",
                 enum_string(&["completed", "failed", "unavailable"]),
             ),
-            ("output", json_object()),
+            ("output", any_value()),
             (
                 "error",
                 evolvable_object(
@@ -1433,6 +1450,9 @@ mod tests {
             "loomex_workflow_show" => {
                 json!({"workflow":{"id":"workflow-1","name":"Review"},"inputSchema":{},"activeVersion":null,"selectedVersion":null})
             }
+            "loomex_workflow_validate" => {
+                json!({"valid":true,"errors":[],"workflow":{"nodes":[],"transitions":[]}})
+            }
             "loomex_workflow_run" | "loomex_run_get" | "loomex_run_wait" => run(),
             "loomex_workflow_create" => json!({
                 "builderSession": {"id":"builder-session-1","status":"awaiting_agent","attemptCount":1},
@@ -1527,7 +1547,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_unique_route_and_strict_top_level_schema() {
         let definitions = definitions();
-        assert_eq!(definitions.len(), 35);
+        assert_eq!(definitions.len(), 36);
         let mut names = HashSet::new();
         for tool in definitions {
             assert!(names.insert(tool.name));

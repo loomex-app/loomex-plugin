@@ -230,8 +230,8 @@ jobs:
           assert by_id[1]["result"]["serverInfo"]["name"] == "loomex"
           tools = by_id[2]["result"]["tools"]
           names = {tool["name"] for tool in tools}
-          assert len(tools) == 35, sorted(names)
-          assert len(names) == 35, "duplicate MCP tool names"
+          assert len(tools) == 36, sorted(names)
+          assert len(names) == 36, "duplicate MCP tool names"
           required = {
               "loomex_setup_status",
               "loomex_workflow_list",

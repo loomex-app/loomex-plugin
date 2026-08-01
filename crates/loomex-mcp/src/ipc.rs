@@ -647,6 +647,12 @@ mod tests {
                 json!({"workflowId": "workflow-1"}),
             ),
             (
+                "loomex_workflow_validate",
+                "workflow.validate",
+                Daemon,
+                json!({"definition": {"nodes": [], "transitions": []}}),
+            ),
+            (
                 "loomex_workflow_run",
                 "workflow.run",
                 Daemon,
@@ -774,7 +780,7 @@ mod tests {
         use std::collections::HashSet;
 
         let contracts = tool_contracts();
-        assert_eq!(contracts.len(), 35);
+        assert_eq!(contracts.len(), 36);
         let advertised = crate::tools::definitions();
         assert_eq!(advertised.len(), contracts.len());
         let expected_names = contracts
@@ -871,7 +877,7 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
             .into_iter()
             .filter(|(_, _, transport, _)| *transport == ExpectedTransport::Daemon)
             .collect::<Vec<_>>();
-        assert_eq!(contracts.len(), 17);
+        assert_eq!(contracts.len(), 18);
 
         let temp = tempfile::tempdir().unwrap();
         let socket_path = temp.path().join("control.sock");

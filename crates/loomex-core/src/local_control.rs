@@ -218,11 +218,20 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                 client.list_runner_workflows_filtered(
                     &self.credential,
                     Some("plugin"),
+                    optional_string(params, "systemKey"),
                     optional_string(params, "query"),
                     optional_string(params, "cursor"),
                     params.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize,
                 )
             }),
+            "workflow.validate" => {
+                let definition = params.get("definition").ok_or_else(|| {
+                    CoreError::new("LOCAL_CONTROL_PARAMETER_REQUIRED", "definition is required")
+                })?;
+                self.with_client(|client| {
+                    client.validate_runner_workflow_definition(&self.credential, definition)
+                })
+            }
             "workflow.show" | "workflow.schema" => {
                 let workflow_id = required_string(params, "workflowId")?;
                 let version = optional_string(params, "version");
@@ -239,8 +248,10 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
             "workflow.run" => {
                 let workflow_id = required_string(params, "workflowId")?;
                 let inputs = params.get("inputs").cloned().unwrap_or_else(|| json!({}));
-                let workspace_path = required_string(params, "workspacePath")?;
-                let workspace_path = validate_local_control_workspace(workspace_path)?;
+                let workspace_path = match optional_string(params, "workspacePath") {
+                    Some(path) => validate_local_control_workspace(path)?,
+                    None => temporary_workflow_builder_workspace()?,
+                };
                 let workspace_path = workspace_path.to_string_lossy().to_string();
                 let session_id = optional_string(params, "sessionId");
                 let version = optional_string(params, "version");

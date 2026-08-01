@@ -10,7 +10,7 @@ const tools = [
   "loomex_setup_status", "loomex_setup_plan", "loomex_setup_apply", "loomex_setup_rollback",
   "loomex_auth_status", "loomex_auth_start", "loomex_auth_wait", "loomex_auth_register", "loomex_auth_register_verify", "loomex_auth_logout",
   "loomex_org_list", "loomex_org_create", "loomex_org_select",
-  "loomex_workflow_list", "loomex_workflow_show", "loomex_workflow_run",
+  "loomex_workflow_list", "loomex_workflow_show", "loomex_workflow_validate", "loomex_workflow_run",
   "loomex_workflow_create", "loomex_workflow_create_respond", "loomex_workflow_create_finalize",
   "loomex_run_list", "loomex_run_get", "loomex_run_wait", "loomex_run_cancel",
   "loomex_human_list", "loomex_human_open", "loomex_human_respond",
@@ -21,7 +21,7 @@ const tools = [
 
 test("skill exposes the settled MCP tool contract exactly", async () => {
   const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
-  assert.equal(tools.length, 35);
+  assert.equal(tools.length, 36);
   for (const name of tools) assert.match(skill, new RegExp(`\\b${name}\\b`), name);
   assert.doesNotMatch(skill, /loomex_organization_|loomex_human_request_/);
 });
@@ -213,7 +213,7 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const installer = await readFile(path.join(root, "scripts", "install-codex.sh"), "utf8");
 
-  assert.equal(manifest.version, "0.1.64");
+  assert.equal(manifest.version, "0.1.65");
   assert.match(manifest.interface.longDescription, /automatically checks first-use readiness/);
   assert.match(manifest.interface.defaultPrompt.join("\n"), /setup should start automatically/);
   assert.match(skill, /For every natural-language Loomex request/);

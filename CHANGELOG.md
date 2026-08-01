@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.65
+
+- Run AI workflow creation through the hidden system workflow using the normal
+  workflow execution contract, including clarification, review, and repair.
+- Add the reviewer workflow-validation MCP tool and accept valid JSON-string
+  agent outputs before Backend schema validation.
+
 ## 0.1.64
 
 - Run AI workflow creation through the hidden, editable Loomex system workflow.
