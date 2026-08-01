@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.63
+
+- Harden AI workflow-builder dispatch so repair attempts resume the exact
+  sub-agent session and never create a replacement.
+
 ## 0.1.62
 
 - Allow `loomex_workflow_create` descriptions up to 20,000 characters, matching
