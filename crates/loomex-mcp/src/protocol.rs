@@ -854,6 +854,18 @@ mod tests {
         assert_eq!(response["error"]["code"], -32602);
     }
 
+    #[test]
+    fn workflow_create_accepts_prompt_longer_than_generic_string_limit() {
+        let definition = tools::definition("loomex_workflow_create").unwrap();
+        let prompt = "x".repeat(1025);
+        let arguments = json!({
+            "prompt": prompt,
+            "idempotencyKey": "workflow-builder-test"
+        });
+
+        assert!(tools::validate_arguments(&definition.input_schema, &arguments).is_ok());
+    }
+
     #[tokio::test]
     async fn tool_requests_accept_reserved_metadata_but_reject_unknown_parameters() {
         let metadata = json!({
