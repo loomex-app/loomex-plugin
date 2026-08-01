@@ -159,7 +159,7 @@ pub fn validate_cross_platform_relative_path(path: &str) -> CoreResult<()> {
     if normalized.starts_with("//") || looks_like_windows_drive_path(path) {
         return Err(CoreError::new(
             "WORKSPACE_PATH_ESCAPE",
-            "workspace path escapes the binding root",
+            "workspace path escapes the execution root",
         ));
     }
     if normalized.starts_with('/') {
@@ -175,7 +175,7 @@ pub fn validate_cross_platform_relative_path(path: &str) -> CoreResult<()> {
     {
         return Err(CoreError::new(
             "WORKSPACE_PATH_OUTSIDE_ROOT",
-            "workspace path escapes the binding root",
+            "workspace path escapes the execution root",
         ));
     }
     Ok(())

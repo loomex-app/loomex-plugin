@@ -36,8 +36,8 @@ Loomex is the only execution surface for Loomex work. This is fail-closed:
   execution is allowed only while handling a server-issued plugin agent task.
 - Setup, upgrade, repair, or uninstall/rollback: read
   [setup-and-auth.md](references/setup-and-auth.md).
-- Organization, project, or project binding: read
-  [workspace-binding.md](references/workspace-binding.md).
+- Organization or project selection: use the selected organization/project
+  context; projects are metadata only and never own execution roots.
 - Browse workflows, start a run, wait, cancel, or resume after reconnect: read
   [workflows-and-runs.md](references/workflows-and-runs.md).
 - Human input or approval: read
@@ -64,7 +64,7 @@ Read every reference needed for the user's request before calling its tools.
    required organization/project scope, then resume the user's original request
    in the same conversation. A registered service that is deferred or
    inactive pending authentication is not a reason to repair setup. Project
-   binding and the local workspace path are execution-scoped; they are not
+   execution root and the local workspace path are execution-scoped; they are not
    prerequisites for the durable Runner service.
    If authentication succeeds and `loomex_org_list` returns an empty `items`
    array, invoke the `organization-create` child skill and ask for the
@@ -155,8 +155,6 @@ Read every reference needed for the user's request before calling its tools.
 - Scope: `loomex_org_list`, `loomex_org_create`, `loomex_org_select`,
   `loomex_project_list`,
   `loomex_project_select`
-- Bindings: `loomex_binding_list`, `loomex_binding_create`,
-  `loomex_binding_revoke`
 - Workflows: `loomex_workflow_list`, `loomex_workflow_show`,
   `loomex_workflow_run`, `loomex_workflow_create`,
   `loomex_workflow_create_respond`

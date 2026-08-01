@@ -2,13 +2,11 @@
 
 pub mod approval;
 pub mod auth;
-pub mod binding;
 pub mod capability;
 pub mod config;
 pub mod device;
 pub mod enterprise_acceptance;
 pub mod execution;
-pub mod grpc;
 pub mod lifecycle;
 pub mod local_capabilities;
 pub mod local_control;
@@ -24,8 +22,6 @@ pub mod runtime_guard;
 pub mod runtime_install;
 pub mod security;
 pub mod service;
-pub mod stream;
-pub mod transport;
 
 pub use loomex_protocol::{
     check_protocol_compatibility, ProtocolCompatibility, RunnerIdentity, RunnerPlatform,
@@ -38,14 +34,8 @@ pub use approval::{
     ApprovalPromptProvider, ApprovalRegistry, ApprovalRequest, ApprovalRequestKind, ApprovalStatus,
     CreateApprovalRequestInput,
 };
-pub use binding::{
-    BindingRegistry, BindingStatus, BindingValidationContext, CreateBindingInput,
-    CreateRunnerSessionInput, ProjectRunnerBinding, RunnerCapabilityGrant, RunnerSession,
-    RunnerSessionActivation, RunnerSessionRegistry, RunnerSessionReplacementPolicy,
-    RunnerSessionStatus, WorkspacePath,
-};
 pub use capability::{CapabilityExecutor, CapabilityRequest, CapabilityResult};
-pub use config::{CliConfig, CliConfigOverrides, CliProfile, ResolvedCliSettings, RunnerConfig};
+pub use config::{CliConfig, CliConfigOverrides, CliProfile, ResolvedCliSettings};
 pub use device::{RunnerDeviceMetadata, RunnerDeviceRecord, TokenScope};
 pub use enterprise_acceptance::{
     evaluate_enterprise_acceptance_report, official_acceptance_checks, official_compliance_package,
@@ -84,14 +74,12 @@ pub use management::{
     CredentialStorageBackend, CredentialStorageOutcome, CredentialStore, DeviceLoginChallenge,
     HttpManagementApiClient, HumanRequestExecution, HumanRequestResolveResponse,
     HumanRequestSummary, LocalCredentialStore, ManagementApiClient, ManagementCredential,
-    ManagementProjectRunnerBinding, Organization, Project, ProjectRunnerBindingCreateRequest,
-    Runner, RunnerHumanRequestListQuery, RunnerHumanRequestListResponse,
+    Organization, Project, Runner, RunnerHumanRequestListQuery, RunnerHumanRequestListResponse,
     RunnerJobEventCreateResponse, RunnerJobResponse, RunnerSessionResponse, RunnerUpsertRequest,
     RunnerWorkflowExecutionListResponse, RunnerWorkflowExecutionResponse,
     RunnerWorkflowExecutionStartOptions, RunnerWorkflowInputSchemaResponse, RunnerWorkflowSummary,
-    StreamCredentialRequest, StreamCredentialResponse, SystemCredentialStore,
-    WorkflowBuilderStartRequest, WorkflowRunStartRequest, WorkflowRunStartResponse,
-    WorkspaceLoginResult, WorkspaceRegistrationChallenge,
+    SystemCredentialStore, WorkflowBuilderStartRequest, WorkflowRunStartRequest,
+    WorkflowRunStartResponse, WorkspaceLoginResult, WorkspaceRegistrationChallenge,
 };
 pub use operational_readiness::{
     capacity_plan_for_runner_connections, evaluate_operational_alerts, evaluate_release_gate,
@@ -106,9 +94,9 @@ pub use operational_readiness::{
 pub use policy::{
     enforce_managed_policy_version, enforce_policy_decision, managed_policy_engine,
     policy_applies_to_runner, rollback_managed_policy, validate_managed_policy_document,
-    CapabilitySupport, ManagedPolicyDocument, ManagedPolicySnapshot, ManagedPolicyVersionState,
-    PolicyDecision, PolicyEngine, PolicyEvaluation, PolicyEvaluationInput, PolicyLayer, PolicyRule,
-    PolicySet, PolicySource,
+    CapabilitySupport, ExecutionRoot, ManagedPolicyDocument, ManagedPolicySnapshot,
+    ManagedPolicyVersionState, PolicyDecision, PolicyEngine, PolicyEvaluation,
+    PolicyEvaluationInput, PolicyLayer, PolicyRule, PolicySet, PolicySource,
 };
 pub use release_distribution::{
     official_compatibility_matrix, official_distribution_installers,
@@ -141,14 +129,6 @@ pub use security::{
 pub use service::{
     validate_cross_platform_relative_path, RunnerServiceManifest, RunnerServicePlatform,
     RunnerServiceSpec,
-};
-pub use stream::{StreamSupervisor, StreamSupervisorConfig};
-pub use transport::{
-    decode_websocket_frame, encode_websocket_frame, negotiate_transport, websocket_request,
-    FlowControlPermit, FlowControlWindow, RunnerTransport, RunnerTransportRuntime,
-    RunnerTransportSession, RuntimeStep, TransportClientConfig, TransportConnector,
-    TransportMetrics, TransportNegotiationPolicy, TransportProbe, TransportSelection,
-    WebSocketClientConfig, WebSocketFrame, WebSocketProxyConfig, WebSocketRunnerClient,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

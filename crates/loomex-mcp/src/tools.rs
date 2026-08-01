@@ -95,7 +95,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_auth_status",
             "Authentication status",
-            "Show the current Loomex authentication and device-binding status.",
+            "Show the current Loomex authentication and organization-scoped Runner status.",
             "auth.status",
             obj(&[], &[]),
             ro(),
@@ -158,7 +158,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         tool(
             "loomex_org_create",
             "Create organization",
-            "Create and select an organization for the authenticated account, then bootstrap the local Runner without creating a project or binding.",
+            "Create and select an organization for the authenticated account, then bootstrap the organization-scoped local Runner without creating a project.",
             "org.create",
             obj(&[("name", string()), ("slug", string())], &["name"]),
             mutating(false, true, true),
@@ -195,43 +195,6 @@ pub fn definitions() -> Vec<ToolDefinition> {
             obj(&[("projectId", identifier())], &["projectId"]),
             mutating(false, true, true),
         ),
-        tool(
-            "loomex_binding_list",
-            "List project bindings",
-            "List project bindings visible to this runner. Binding records do not own a local path.",
-            "binding.list",
-            obj(
-                &[
-                    ("projectId", identifier()),
-                    ("status", enum_string(&["active", "revoked", "all"])),
-                ],
-                &[],
-            ),
-            open_ro(),
-        ),
-        tool(
-            "loomex_binding_create",
-            "Bind project",
-            "Create a pathless project binding. Supply the execution workspace separately when starting a workflow.",
-            "binding.create",
-            obj(&[("projectId", identifier())], &["projectId"]),
-            mutating(false, false, true),
-        ),
-        tool(
-            "loomex_binding_revoke",
-            "Revoke workspace binding",
-            "Revoke a local-workspace binding. Existing workflow audit data is retained.",
-            "binding.revoke",
-            obj(
-                &[
-                    ("projectId", identifier()),
-                    ("bindingId", identifier()),
-                    ("confirm", const_true()),
-                ],
-                &["projectId", "bindingId", "confirm"],
-            ),
-            mutating(true, true, true),
-        ),
         tool_with_meta(
             "loomex_workflow_list",
             "List workflows",
@@ -259,14 +222,13 @@ pub fn definitions() -> Vec<ToolDefinition> {
             obj(
                 &[
                     ("workflowId", identifier()),
-                    ("bindingId", identifier()),
                     ("workspacePath", path_string()),
                     ("inputs", json_object()),
                     ("version", string()),
                     ("sessionId", identifier()),
                     ("idempotencyKey", idempotency_key()),
                 ],
-                &["workflowId", "bindingId", "workspacePath", "idempotencyKey"],
+                &["workflowId", "workspacePath", "idempotencyKey"],
             ),
             mutating(false, true, true),
         ),
@@ -563,9 +525,6 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_org_select" => "org.select",
                 "loomex_project_list" => "project.list",
                 "loomex_project_select" => "project.select",
-                "loomex_binding_list" => "binding.list",
-                "loomex_binding_create" => "binding.create",
-                "loomex_binding_revoke" => "binding.revoke",
                 "loomex_workflow_list" => "workflow.list",
                 "loomex_workflow_show" => "workflow.show",
                 "loomex_workflow_run" => "workflow.run",
@@ -849,7 +808,7 @@ fn output_data_schema(tool_name: &str) -> Value {
                     enum_string(&[
                         "setup.plan",
                         "auth.status",
-                        "binding.create",
+                        "project.select",
                         "package.error",
                         "unsupported",
                     ]),
@@ -1027,48 +986,6 @@ fn output_data_schema(tool_name: &str) -> Value {
             ],
             &["profile", "project", "changed"],
         ),
-        "loomex_binding_list" => evolvable_object(
-            &[
-                ("bindings", array_of(binding_schema())),
-                ("projectId", identifier()),
-                ("notBootstrapped", boolean()),
-            ],
-            &["bindings", "projectId", "notBootstrapped"],
-        ),
-        "loomex_binding_create" => evolvable_object(
-            &[
-                ("profile", identifier()),
-                ("projectId", identifier()),
-                ("organizationId", identifier()),
-                ("runnerId", identifier()),
-                ("binding", binding_schema()),
-                ("bootstrapped", boolean()),
-                ("reused", boolean()),
-            ],
-            &[
-                "profile",
-                "projectId",
-                "organizationId",
-                "runnerId",
-                "binding",
-                "bootstrapped",
-                "reused",
-            ],
-        ),
-        "loomex_binding_revoke" => evolvable_object(
-            &[
-                ("revoked", json!({"const":true})),
-                ("bindingId", identifier()),
-                ("projectId", identifier()),
-                ("selectedBindingCleared", boolean()),
-            ],
-            &[
-                "revoked",
-                "bindingId",
-                "projectId",
-                "selectedBindingCleared",
-            ],
-        ),
         "loomex_workflow_list" => evolvable_object(
             &[
                 ("workflows", array_of(workflow_schema())),
@@ -1236,19 +1153,6 @@ fn project_schema() -> Value {
             ("status", string()),
         ],
         &["id", "organizationId", "name", "status"],
-    )
-}
-
-fn binding_schema() -> Value {
-    evolvable_object(
-        &[
-            ("id", identifier()),
-            ("organizationId", identifier()),
-            ("projectId", identifier()),
-            ("runnerId", identifier()),
-            ("status", string()),
-        ],
-        &["id", "organizationId", "projectId", "runnerId", "status"],
     )
 }
 
@@ -1487,10 +1391,6 @@ mod tests {
         let organization = json!({"id":"org-1","name":"Loomex"});
         let project =
             json!({"id":"project-1","organizationId":"org-1","name":"Demo","status":"active"});
-        let binding = json!({
-            "id":"binding-1", "organizationId":"org-1", "projectId":"project-1",
-            "runnerId":"runner-1", "status":"active"
-        });
         let run = || {
             json!({
                 "execution":{"id":"run-1","status":"running"},
@@ -1554,17 +1454,6 @@ mod tests {
             "loomex_project_list" => json!({"items":[project],"organizationId":"org-1"}),
             "loomex_project_select" => {
                 json!({"profile":"default","project":project,"changed":true})
-            }
-            "loomex_binding_list" => {
-                json!({"bindings":[binding],"projectId":"project-1","notBootstrapped":false})
-            }
-            "loomex_binding_create" => json!({
-                "profile":"default","projectId":"project-1","organizationId":"org-1","runnerId":"runner-1",
-                "binding":binding,
-                "bootstrapped":true,"reused":false
-            }),
-            "loomex_binding_revoke" => {
-                json!({"revoked":true,"bindingId":"binding-1","projectId":"project-1","selectedBindingCleared":true})
             }
             "loomex_workflow_list" => {
                 json!({"workflows":[{"id":"workflow-1","name":"Review"}],"nextCursor":null})
@@ -1660,7 +1549,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_unique_route_and_strict_top_level_schema() {
         let definitions = definitions();
-        assert_eq!(definitions.len(), 39);
+        assert_eq!(definitions.len(), 36);
         let mut names = HashSet::new();
         for tool in definitions {
             assert!(names.insert(tool.name));
@@ -1790,7 +1679,7 @@ mod tests {
         .unwrap();
 
         additive["setupRequired"] = json!(false);
-        additive["recommendedNextAction"] = json!("binding.create");
+        additive["recommendedNextAction"] = json!("project.select");
         additive["recommendationReason"] = json!("runner_identity_mismatch");
         validate_output(
             &definition.output_schema,
@@ -1905,16 +1794,11 @@ mod tests {
         let run_definition = definition("loomex_workflow_run").unwrap();
         assert!(run_definition.annotations.idempotent_hint);
         let run = run_definition.input_schema;
-        assert!(validate_arguments(
-            &run,
-            &json!({"workflowId":"workflow-1","bindingId":"binding-1"})
-        )
-        .is_err());
+        assert!(validate_arguments(&run, &json!({"workflowId":"workflow-1"})).is_err());
         assert!(validate_arguments(
             &run,
             &json!({
                 "workflowId":"workflow-1",
-                "bindingId":"binding-1",
                 "workspacePath":"/repo",
                 "idempotencyKey":"run-attempt-1"
             })
@@ -1946,7 +1830,6 @@ mod tests {
         let input = |key: String| {
             json!({
                 "workflowId":"workflow-1",
-                "bindingId":"binding-1",
                 "workspacePath":"/repo",
                 "idempotencyKey":key
             })

@@ -12,8 +12,8 @@ Ask for an organization name if it was not provided. The slug is optional and
 must be passed only when the user supplied one. Call `loomex_org_create` with
 the exact name and optional slug.
 
-The tool creates and selects the organization, clears project/execution scope,
-and bootstraps the organization-scoped local Runner. It does not create a
-project, binding, or workspace path. After success, call `loomex_project_list`
+The tool creates and selects the organization, clears project/execution
+context, and bootstraps the organization-scoped local Runner. It does not
+create a project or workspace path. After success, call `loomex_project_list`
 and continue the original request only when its required project scope is
 available. If the tool fails, stop and report its exact structured error.

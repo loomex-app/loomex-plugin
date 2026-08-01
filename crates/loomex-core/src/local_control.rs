@@ -19,8 +19,7 @@ use serde_json::{json, Value};
 
 use crate::{
     read_recent_log_entries, redact_log_entry_for_local_output, CoreError, CoreResult,
-    ManagementApiClient, ManagementCredential, ProjectRunnerBindingCreateRequest,
-    WorkflowBuilderStartRequest,
+    ManagementApiClient, ManagementCredential, WorkflowBuilderStartRequest,
 };
 
 pub const LOCAL_CONTROL_PROTOCOL_VERSION: &str = "loomex.local-control/v1";
@@ -173,8 +172,6 @@ pub struct LocalControlDispatcher<C> {
     credential: ManagementCredential,
     project_id: Option<String>,
     runner_id: Option<String>,
-    binding_id: Option<String>,
-    workspace_path: Option<String>,
     log_path: Option<PathBuf>,
     started_at: Instant,
 }
@@ -186,8 +183,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
             credential,
             project_id: None,
             runner_id: None,
-            binding_id: None,
-            workspace_path: None,
             log_path: None,
             started_at: Instant::now(),
         }
@@ -197,14 +192,10 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
         mut self,
         project_id: Option<String>,
         runner_id: Option<String>,
-        binding_id: Option<String>,
-        workspace_path: Option<String>,
         log_path: Option<PathBuf>,
     ) -> Self {
         self.project_id = project_id;
         self.runner_id = runner_id;
-        self.binding_id = binding_id;
-        self.workspace_path = workspace_path;
         self.log_path = log_path;
         self
     }
@@ -220,10 +211,7 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                     "organizationId": self.credential.organization_id,
                     "projectId": self.project_id,
                     "runnerId": self.runner_id,
-                    "bindingId": self.binding_id,
-                    "workspacePath": self.workspace_path,
                     "self": client.get_runner_self_status(&self.credential)?,
-                    "bindings": client.list_runner_binding_statuses(&self.credential)?,
                     "uptimeSeconds": self.started_at.elapsed().as_secs(),
                     "protocolVersion": LOCAL_CONTROL_PROTOCOL_VERSION,
                     "runtimeVersion": env!("CARGO_PKG_VERSION"),
@@ -261,7 +249,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
             "workflow.run" => {
                 let workflow_id = required_string(params, "workflowId")?;
                 let inputs = params.get("inputs").cloned().unwrap_or_else(|| json!({}));
-                let binding_id = required_string(params, "bindingId")?;
                 let workspace_path = required_string(params, "workspacePath")?;
                 let workspace_path = validate_local_control_workspace(workspace_path)?;
                 let workspace_path = workspace_path.to_string_lossy().to_string();
@@ -273,7 +260,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                         &self.credential,
                         crate::RunnerWorkflowExecutionStartOptions {
                             workflow_id,
-                            binding_id,
                             inputs,
                             workspace_path: Some(&workspace_path),
                             session_id,
@@ -428,38 +414,6 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                         .map_err(json_error)
                 })
             }
-            "binding.list" => {
-                self.with_client(|client| client.list_runner_binding_statuses_filtered(
-                    &self.credential,
-                    optional_string(params, "projectId"),
-                    optional_string(params, "status"),
-                ))
-            }
-            "binding.create" => {
-                let project_id = required_string(params, "projectId")?;
-                let runner_id = optional_string(params, "runnerId")
-                    .or(self.runner_id.as_deref())
-                    .ok_or_else(|| CoreError::new("RUNNER_ID_REQUIRED", "runnerId is required"))?;
-                let request = ProjectRunnerBindingCreateRequest {
-                    organization_id: optional_string(params, "organizationId")
-                        .unwrap_or(&self.credential.organization_id).to_string(),
-                    runner_id: runner_id.to_string(),
-                };
-                let key = format!("local-control-binding-{}-{}", project_id, runner_id);
-                self.with_client(|client| {
-                    serde_json::to_value(client.create_project_runner_binding(&self.credential, project_id, &request, &key)?)
-                        .map_err(json_error)
-                })
-            }
-            "binding.revoke" => {
-                let project_id = required_string(params, "projectId")?;
-                let binding_id = required_string(params, "bindingId")?;
-                let key = format!("local-control-revoke-{binding_id}");
-                self.with_client(|client| {
-                    client.revoke_project_runner_binding(&self.credential, project_id, binding_id, &key)?;
-                    Ok(json!({"revoked": true, "bindingId": binding_id}))
-                })
-            }
             "logs.tail" => {
                 let log_path = self.log_path.as_deref().ok_or_else(|| CoreError::new("LOG_PATH_NOT_CONFIGURED", "runner log path is not configured"))?;
                 let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(100).clamp(1, 200) as usize;
@@ -589,23 +543,18 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                 "backend check skipped because authentication is invalid",
             ));
         }
-        checks.push(workspace_local_control_doctor_check(
-            self.workspace_path.as_deref(),
-        ));
+        checks.push(workspace_local_control_doctor_check());
         if params
             .get("verbose")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            let context_ready = self.project_id.is_some()
-                && self.runner_id.is_some()
-                && self.binding_id.is_some()
-                && self.workspace_path.is_some();
+            let context_ready = self.runner_id.is_some();
             checks.push(doctor_check(
                 "context",
                 if context_ready { "ok" } else { "warning" },
                 if context_ready {
-                    "project, runner, binding, and workspace context is complete"
+                    "organization and runner context is complete; execution roots are supplied per run"
                 } else {
                     "runner context is incomplete"
                 },
@@ -753,22 +702,12 @@ fn doctor_check(name: &str, status: &str, message: impl Into<String>) -> Value {
     json!({"name": name, "status": status, "message": message.into()})
 }
 
-fn workspace_local_control_doctor_check(workspace_path: Option<&str>) -> Value {
-    let Some(workspace_path) = workspace_path else {
-        return doctor_check("workspace", "warning", "no workspace binding is selected");
-    };
-    match validate_local_control_workspace(workspace_path) {
-        Ok(path) => doctor_check(
-            "workspace",
-            "ok",
-            format!("read/write check succeeded for {}", path.display()),
-        ),
-        Err(error) => doctor_check(
-            "workspace",
-            "failed",
-            format!("{}: {}", error.code, error.message),
-        ),
-    }
+fn workspace_local_control_doctor_check() -> Value {
+    doctor_check(
+        "workspace",
+        "ok",
+        "execution root is validated and supplied separately for each run",
+    )
 }
 
 fn validate_local_control_workspace(workspace_path: &str) -> CoreResult<PathBuf> {
@@ -1212,10 +1151,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            for body in [
-                r#"{"data":{"status":"online"}}"#,
-                r#"{"data":{"bindings":[]}}"#,
-            ] {
+            for body in [r#"{"data":{"runner":{"id":"runner-test"}}}"#] {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut buffer = [0_u8; 4096];
                 let _ = stream.read(&mut buffer).unwrap();
@@ -1483,16 +1419,10 @@ mod tests {
 
     #[test]
     fn doctor_reports_real_backend_failure_and_workspace_success() {
-        let workspace =
-            std::env::temp_dir().join(format!("loomex-doctor-workspace-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&workspace);
-        fs::create_dir_all(&workspace).unwrap();
         let client = crate::HttpManagementApiClient::new("http://127.0.0.1:1", None).unwrap();
         let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
             Some("project-test".to_string()),
             Some("runner-test".to_string()),
-            Some("binding-test".to_string()),
-            Some(workspace.display().to_string()),
             None,
         );
 
@@ -1515,7 +1445,6 @@ mod tests {
             .find(|check| check["name"] == "workspace")
             .unwrap();
         assert_eq!(workspace_check["status"], "ok");
-        let _ = fs::remove_dir_all(workspace);
     }
 
     #[test]
@@ -1539,8 +1468,6 @@ mod tests {
         let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
             Some("project-test".to_string()),
             Some("runner-configured".to_string()),
-            Some("binding-test".to_string()),
-            Some(std::env::temp_dir().display().to_string()),
             None,
         );
 
@@ -1573,8 +1500,6 @@ mod tests {
         let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
             Some("project-test".to_string()),
             Some("runner-test".to_string()),
-            Some("binding-test".to_string()),
-            Some(std::env::temp_dir().display().to_string()),
             Some(log_path.clone()),
         );
 
@@ -1601,25 +1526,6 @@ mod tests {
         let _ = fs::remove_file(log_path);
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn workspace_doctor_detects_read_only_directory_without_creating_a_probe() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let workspace =
-            std::env::temp_dir().join(format!("loomex-doctor-readonly-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&workspace);
-        fs::create_dir_all(&workspace).unwrap();
-        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o500)).unwrap();
-
-        let check = workspace_local_control_doctor_check(Some(&workspace.display().to_string()));
-
-        assert_eq!(check["status"], "failed");
-        assert_eq!(fs::read_dir(&workspace).unwrap().count(), 0);
-        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o700)).unwrap();
-        let _ = fs::remove_dir_all(workspace);
-    }
-
     #[test]
     fn logs_tail_redacts_tampered_structured_log_at_read_time() {
         let log_path = std::env::temp_dir().join(format!(
@@ -1644,8 +1550,6 @@ mod tests {
         .unwrap();
         let client = crate::HttpManagementApiClient::new("http://127.0.0.1:1", None).unwrap();
         let dispatcher = LocalControlDispatcher::new(client, test_credential()).with_context(
-            None,
-            None,
             None,
             None,
             Some(log_path.clone()),

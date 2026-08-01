@@ -47,7 +47,6 @@ pub struct ApiKeyExchangeResult {
     pub organization_id: Option<String>,
     pub project_id: Option<String>,
     pub runner_id: Option<String>,
-    pub binding_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +79,6 @@ impl ApiKeyExchangeResult {
             organization_id: None,
             project_id: None,
             runner_id: None,
-            binding_id: None,
         }
     }
 }
@@ -122,22 +120,6 @@ pub struct RunnerUpsertRequest {
     pub capabilities: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectRunnerBindingCreateRequest {
-    pub organization_id: String,
-    pub runner_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ManagementProjectRunnerBinding {
-    pub id: String,
-    pub organization_id: String,
-    pub project_id: String,
-    pub runner_id: String,
-    pub status: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowRunStartRequest {
     pub organization_id: String,
@@ -146,8 +128,6 @@ pub struct WorkflowRunStartRequest {
     pub inputs: Value,
     #[serde(skip_serializing_if = "Option::is_none", rename = "workspacePath")]
     pub workspace_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_runner_binding_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "idempotencyKey")]
     pub idempotency_key: Option<String>,
 }
@@ -166,28 +146,6 @@ pub struct WorkflowBuilderStartRequest {
     pub prompt: String,
     pub model: Option<String>,
     pub idempotency_key: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StreamCredentialRequest {
-    pub organization_id: String,
-    pub project_id: String,
-    pub runner_id: String,
-    pub project_runner_binding_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runner_session_id: Option<String>,
-    pub protocol_version: String,
-    pub runner_version: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StreamCredentialResponse {
-    pub stream_token: String,
-    pub token_type: String,
-    pub audience: String,
-    pub runner_session_id: String,
-    pub expires_at: String,
-    pub grpc_endpoint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -252,7 +210,6 @@ pub struct RunnerWorkflowExecutionListResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunnerWorkflowExecutionStartOptions<'a> {
     pub workflow_id: &'a str,
-    pub binding_id: &'a str,
     pub inputs: Value,
     pub workspace_path: Option<&'a str>,
     pub session_id: Option<&'a str>,
@@ -365,8 +322,6 @@ struct RunnerWorkflowExecutionStartRequest {
     session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "bindingId")]
-    binding_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "executionMode")]
     execution_mode: Option<String>,
 }
@@ -988,7 +943,6 @@ pub trait ManagementApiClient {
         &mut self,
         workspace_token: &str,
         organization_id: &str,
-        project_id: Option<&str>,
     ) -> CoreResult<ApiKeyExchangeResult>;
     fn list_organizations(
         &mut self,
@@ -1024,59 +978,12 @@ pub trait ManagementApiClient {
             "management client does not support runner token revocation",
         ))
     }
-    fn list_runner_binding_statuses(
-        &mut self,
-        _credential: &ManagementCredential,
-    ) -> CoreResult<Value> {
-        Err(CoreError::new(
-            "RUNNER_BINDING_STATUS_UNSUPPORTED",
-            "management client does not support runner binding status",
-        ))
-    }
-    fn list_runner_binding_statuses_filtered(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: Option<&str>,
-        status: Option<&str>,
-    ) -> CoreResult<Value> {
-        let mut value = self.list_runner_binding_statuses(credential)?;
-        if let Some(bindings) = value.get_mut("bindings").and_then(Value::as_array_mut) {
-            bindings.retain(|binding| {
-                project_id.is_none_or(|expected| {
-                    binding.get("projectId").and_then(Value::as_str) == Some(expected)
-                }) && status.is_none_or(|expected| {
-                    expected == "all"
-                        || binding.get("status").and_then(Value::as_str) == Some(expected)
-                })
-            });
-        }
-        Ok(value)
-    }
     fn upsert_current_runner(
         &mut self,
         credential: &ManagementCredential,
         request: &RunnerUpsertRequest,
         idempotency_key: &str,
     ) -> CoreResult<Runner>;
-    fn create_project_runner_binding(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-        request: &ProjectRunnerBindingCreateRequest,
-        idempotency_key: &str,
-    ) -> CoreResult<ManagementProjectRunnerBinding>;
-    fn list_project_runner_bindings(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-    ) -> CoreResult<Vec<ManagementProjectRunnerBinding>>;
-    fn revoke_project_runner_binding(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-        binding_id: &str,
-        idempotency_key: &str,
-    ) -> CoreResult<()>;
     fn start_workflow_run(
         &mut self,
         credential: &ManagementCredential,
@@ -1157,12 +1064,6 @@ pub trait ManagementApiClient {
         credential: &ManagementCredential,
         options: RunnerWorkflowExecutionStartOptions<'_>,
     ) -> CoreResult<RunnerWorkflowExecutionResponse> {
-        if options.binding_id.trim().is_empty() {
-            return Err(CoreError::new(
-                "RUNNER_BINDING_REQUIRED",
-                "bindingId is required for local workflow execution",
-            ));
-        }
         if let Some(mode) = options
             .execution_mode
             .filter(|value| !value.trim().is_empty())
@@ -1551,12 +1452,6 @@ pub trait ManagementApiClient {
     ) -> CoreResult<RunnerJobResponse> {
         self.fail_runner_job(credential, session_id, job_id, error)
     }
-    fn issue_stream_credential(
-        &mut self,
-        credential: &ManagementCredential,
-        request: &StreamCredentialRequest,
-        idempotency_key: &str,
-    ) -> CoreResult<StreamCredentialResponse>;
 }
 
 #[derive(Debug, Clone)]
@@ -1672,7 +1567,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             organization_id: Some(envelope.data.organization_id),
             project_id: project_id.clone(),
             runner_id: Some(envelope.data.runner.id.clone()),
-            binding_id: project_id.map(|_| envelope.data.runner.id),
         })
     }
 
@@ -1797,7 +1691,6 @@ impl ManagementApiClient for HttpManagementApiClient {
         &mut self,
         workspace_token: &str,
         organization_id: &str,
-        project_id: Option<&str>,
     ) -> CoreResult<ApiKeyExchangeResult> {
         let response = self
             .apply_common_headers(
@@ -1807,7 +1700,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             )
             .json(&serde_json::json!({
                 "organizationId": organization_id,
-                "projectId": project_id,
                 "runnerName": "Local runner",
             }))
             .send()
@@ -1824,7 +1716,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             organization_id: Some(envelope.data.organization_id),
             project_id: project_id.clone(),
             runner_id: Some(envelope.data.runner.id.clone()),
-            binding_id: project_id.map(|_| envelope.data.runner.id),
         })
     }
 
@@ -1931,77 +1822,6 @@ impl ManagementApiClient for HttpManagementApiClient {
         self.get_current_runner(credential, &request.organization_id)
     }
 
-    fn create_project_runner_binding(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-        request: &ProjectRunnerBindingCreateRequest,
-        idempotency_key: &str,
-    ) -> CoreResult<ManagementProjectRunnerBinding> {
-        let response = self
-            .post_with_auth("/runner-control/runner/v1/bindings/", credential)
-            .header("Idempotency-Key", idempotency_key)
-            .json(&serde_json::json!({
-                "projectId": project_id,
-                "organizationId": request.organization_id,
-                "runnerId": request.runner_id,
-            }))
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let envelope: ClientEnvelope<ManagementProjectRunnerBinding> =
-            parse_json_response(response)?;
-        Ok(envelope.data)
-    }
-
-    fn list_project_runner_bindings(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-    ) -> CoreResult<Vec<ManagementProjectRunnerBinding>> {
-        let response = self
-            .get_with_auth(
-                &format!(
-                    "/runner-control/runner/v1/bindings/?projectId={}",
-                    encode_query(project_id)
-                ),
-                credential,
-            )
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
-        serde_json::from_value(
-            envelope
-                .data
-                .get("bindings")
-                .cloned()
-                .unwrap_or_else(|| Value::Array(Vec::new())),
-        )
-        .map_err(|err| CoreError::new("MANAGEMENT_RESPONSE_INVALID", err.to_string()))
-    }
-
-    fn revoke_project_runner_binding(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: &str,
-        binding_id: &str,
-        idempotency_key: &str,
-    ) -> CoreResult<()> {
-        let response = self
-            .post_with_auth(
-                &format!(
-                    "/runner-control/runner/v1/bindings/{}/revoke/",
-                    encode_path(binding_id)
-                ),
-                credential,
-            )
-            .header("Idempotency-Key", idempotency_key)
-            .json(&serde_json::json!({"projectId": project_id}))
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let _: ClientEnvelope<Value> = parse_json_response(response)?;
-        Ok(())
-    }
-
     fn start_workflow_run(
         &mut self,
         credential: &ManagementCredential,
@@ -2017,19 +1837,10 @@ impl ManagementApiClient for HttpManagementApiClient {
                 "workflow execution requires workspacePath",
             ));
         }
-        if request.project_runner_binding_id.is_none() {
-            return Err(CoreError::new(
-                "PROJECT_RUNNER_BINDING_REQUIRED",
-                "workflow execution requires bindingId",
-            ));
-        }
-        let idempotency_key = request.idempotency_key.clone().unwrap_or_else(|| {
-            default_runner_operation_idempotency_key(
-                "workflow.run",
-                &serde_json::json!({"workflowId": request.workflow_id, "request": request}),
-            )
-            .unwrap_or_else(|_| "workflow-run".to_string())
-        });
+        let idempotency_key = request
+            .idempotency_key
+            .clone()
+            .unwrap_or_else(|| format!("workflow-run:{}", request.workflow_id));
         let response = self
             .post_with_auth(
                 &format!(
@@ -2044,7 +1855,6 @@ impl ManagementApiClient for HttpManagementApiClient {
                 workspace_path: request.workspace_path.clone(),
                 session_id: None,
                 version: None,
-                binding_id: request.project_runner_binding_id.clone(),
                 execution_mode: Some("plugin".to_string()),
             })
             .send()
@@ -2195,35 +2005,6 @@ impl ManagementApiClient for HttpManagementApiClient {
         Ok(envelope.data)
     }
 
-    fn list_runner_binding_statuses_filtered(
-        &mut self,
-        credential: &ManagementCredential,
-        project_id: Option<&str>,
-        status: Option<&str>,
-    ) -> CoreResult<Value> {
-        let mut query = Vec::new();
-        if let Some(project_id) = project_id.filter(|value| !value.trim().is_empty()) {
-            query.push(format!("projectId={}", encode_query(project_id)));
-        }
-        if let Some(status) = status.filter(|value| !value.trim().is_empty()) {
-            query.push(format!("status={}", encode_query(status)));
-        }
-        let suffix = if query.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", query.join("&"))
-        };
-        let response = self
-            .get_with_auth(
-                &format!("/runner-control/runner/v1/bindings/{suffix}"),
-                credential,
-            )
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
-        Ok(envelope.data)
-    }
-
     fn get_runner_self_status(&mut self, credential: &ManagementCredential) -> CoreResult<Value> {
         let response = self
             .get_with_auth("/runner-control/runner/v1/self/", credential)
@@ -2240,18 +2021,6 @@ impl ManagementApiClient for HttpManagementApiClient {
         let response = self
             .post_with_auth("/runner-control/runner/v1/auth/logout/", credential)
             .json(&serde_json::json!({}))
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
-        Ok(envelope.data)
-    }
-
-    fn list_runner_binding_statuses(
-        &mut self,
-        credential: &ManagementCredential,
-    ) -> CoreResult<Value> {
-        let response = self
-            .get_with_auth("/runner-control/runner/v1/bindings/status/", credential)
             .send()
             .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
         let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
@@ -2316,7 +2085,6 @@ impl ManagementApiClient for HttpManagementApiClient {
             workspace_path: None,
             session_id: session_id.map(str::to_string),
             version: version.map(str::to_string),
-            binding_id: None,
             execution_mode: None,
         };
         let idempotency_key = default_runner_operation_idempotency_key(
@@ -2360,7 +2128,6 @@ impl ManagementApiClient for HttpManagementApiClient {
                 workspace_path: options.workspace_path.map(str::to_string),
                 session_id: options.session_id.map(str::to_string),
                 version: options.version.map(str::to_string),
-                binding_id: Some(options.binding_id.to_string()),
                 execution_mode: options.execution_mode.map(str::to_string),
             })
             .send()
@@ -3132,21 +2899,6 @@ impl ManagementApiClient for HttpManagementApiClient {
         let envelope: ClientEnvelope<RunnerJobResponse> = parse_json_response(response)?;
         Ok(envelope.data)
     }
-
-    fn issue_stream_credential(
-        &mut self,
-        credential: &ManagementCredential,
-        request: &StreamCredentialRequest,
-        idempotency_key: &str,
-    ) -> CoreResult<StreamCredentialResponse> {
-        let response = self
-            .post_with_auth("/runners/current/stream-credential", credential)
-            .header("Idempotency-Key", idempotency_key)
-            .json(request)
-            .send()
-            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
-        parse_json_response(response)
-    }
 }
 
 fn parse_json_response<T: for<'de> Deserialize<'de>>(
@@ -3444,7 +3196,7 @@ mod tests {
     }
 
     #[test]
-    fn user_project_and_runner_bootstrap_http_contracts_are_exact() {
+    fn user_project_and_org_scoped_runner_bootstrap_http_contracts_are_exact() {
         let (server_url, request, server) = serve_one_http_response(
             r#"{"data":[{"id":"project-1","organizationId":"org-1","name":"Demo","status":"active"}]}"#,
         );
@@ -3462,11 +3214,11 @@ mod tests {
             .contains("authorization: bearer user.jwt\r\n"));
 
         let (server_url, request, server) = serve_one_http_response(
-            r#"{"data":{"runner":{"id":"runner-1","projectId":"project-1"},"runnerToken":"runner.jwt","tokenType":"Bearer","organizationId":"org-1","projectId":"project-1"}}"#,
+            r#"{"data":{"runner":{"id":"runner-1"},"runnerToken":"runner.jwt","tokenType":"Bearer","organizationId":"org-1"}}"#,
         );
         let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
         let exchange = client
-            .bootstrap_runner_with_workspace_token("user.jwt", "org-1", Some("project-1"))
+            .bootstrap_runner_with_workspace_token("user.jwt", "org-1")
             .unwrap();
         let raw = captured_request(request, server);
         assert_eq!(exchange.runner_id.as_deref(), Some("runner-1"));
@@ -3476,47 +3228,8 @@ mod tests {
         assert!(raw
             .to_ascii_lowercase()
             .contains("authorization: bearer user.jwt\r\n"));
-        for body in [r#""organizationId":"org-1""#, r#""projectId":"project-1""#] {
-            assert!(raw.contains(body), "missing {body}: {raw}");
-        }
-    }
-
-    #[test]
-    fn binding_list_and_revoke_http_contracts_are_exact() {
-        let (server_url, request, server) = serve_one_http_response(
-            r#"{"data":{"bindings":[{"id":"binding-1","organizationId":"org-1","projectId":"project-1","runnerId":"runner-1","status":"active"}]}}"#,
-        );
-        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
-        let bindings = client
-            .list_project_runner_bindings(&test_credential("runner.jwt"), "project / one")
-            .unwrap();
-        let raw = captured_request(request, server);
-        assert_eq!(bindings[0].id, "binding-1");
-        assert!(raw.starts_with(
-            "GET /api/v1/runner-control/runner/v1/bindings/?projectId=project%20%2F%20one HTTP/1.1\r\n"
-        ));
-        assert!(raw
-            .to_ascii_lowercase()
-            .contains("authorization: bearer runner.jwt\r\n"));
-
-        let (server_url, request, server) = serve_one_http_response(r#"{"data":{"revoked":true}}"#);
-        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
-        client
-            .revoke_project_runner_binding(
-                &test_credential("runner.jwt"),
-                "project-1",
-                "binding / one",
-                "binding-revoke-1",
-            )
-            .unwrap();
-        let raw = captured_request(request, server);
-        assert!(raw.starts_with(
-            "POST /api/v1/runner-control/runner/v1/bindings/binding%20%2F%20one/revoke/ HTTP/1.1\r\n"
-        ));
-        let lowered = raw.to_ascii_lowercase();
-        assert!(lowered.contains("authorization: bearer runner.jwt\r\n"));
-        assert!(lowered.contains("idempotency-key: binding-revoke-1\r\n"));
-        assert!(raw.contains(r#"{"projectId":"project-1"}"#));
+        assert!(raw.contains(r#""organizationId":"org-1""#));
+        assert!(!raw.contains("projectId"));
     }
 
     #[test]
@@ -3653,49 +3366,6 @@ mod tests {
         assert!(lowered.contains("authorization: bearer runner.jwt\r\n"));
         assert!(lowered.contains("idempotency-key: human-response-1\r\n"));
         assert!(raw.contains(r#"{"decision":"approve","reason":"looks good"}"#));
-
-        let cases = [
-            ("self", "/api/v1/runner-control/runner/v1/self/", None, None),
-            (
-                "bindings-status",
-                "/api/v1/runner-control/runner/v1/bindings/status/",
-                None,
-                None,
-            ),
-            (
-                "bindings-filtered",
-                "/api/v1/runner-control/runner/v1/bindings/?projectId=project-1&status=all",
-                Some("project-1"),
-                Some("all"),
-            ),
-        ];
-        for (operation, path, project_id, status) in cases {
-            let (server_url, request, server) =
-                serve_one_http_response(r#"{"data":{"bindings":[]}}"#);
-            let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
-            match operation {
-                "self" => {
-                    client.get_runner_self_status(&credential).unwrap();
-                }
-                "bindings-status" => {
-                    client.list_runner_binding_statuses(&credential).unwrap();
-                }
-                "bindings-filtered" => {
-                    client
-                        .list_runner_binding_statuses_filtered(&credential, project_id, status)
-                        .unwrap();
-                }
-                _ => unreachable!(),
-            }
-            let raw = captured_request(request, server);
-            assert!(
-                raw.starts_with(&format!("GET {path} HTTP/1.1\r\n")),
-                "unexpected {operation} request: {raw}"
-            );
-            assert!(raw
-                .to_ascii_lowercase()
-                .contains("authorization: bearer runner.jwt\r\n"));
-        }
     }
 
     #[test]
@@ -3842,38 +3512,6 @@ mod tests {
     }
 
     #[test]
-    fn binding_create_uses_runner_token_contract_and_unwraps_envelope() {
-        let (server_url, request_receiver, server) = serve_one_http_response(
-            r#"{"data":{"id":"11111111-1111-1111-1111-111111111111","organizationId":"22222222-2222-2222-2222-222222222222","projectId":"33333333-3333-3333-3333-333333333333","runnerId":"11111111-1111-1111-1111-111111111111","status":"active"},"meta":{"version":"v1"}}"#,
-        );
-        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
-        let request = ProjectRunnerBindingCreateRequest {
-            organization_id: "22222222-2222-2222-2222-222222222222".to_string(),
-            runner_id: "11111111-1111-1111-1111-111111111111".to_string(),
-        };
-
-        let binding = client
-            .create_project_runner_binding(
-                &test_credential("runner.secret"),
-                "33333333-3333-3333-3333-333333333333",
-                &request,
-                "binding-key",
-            )
-            .unwrap();
-        let raw_request = request_receiver.recv().unwrap();
-        server.join().unwrap();
-
-        assert_eq!(binding.runner_id, request.runner_id);
-        assert!(
-            raw_request.starts_with("POST /api/v1/runner-control/runner/v1/bindings/ HTTP/1.1\r\n")
-        );
-        let lowered = raw_request.to_ascii_lowercase();
-        assert!(lowered.contains("authorization: bearer runner.secret\r\n"));
-        assert!(lowered.contains("idempotency-key: binding-key\r\n"));
-        assert!(raw_request.contains("\"projectId\":\"33333333-3333-3333-3333-333333333333\""));
-    }
-
-    #[test]
     fn human_request_page_forwards_cursor_and_preserves_next_cursor() {
         let (server_url, request_receiver, server) = serve_one_http_response(
             r#"{"data":{"humanRequests":[{"id":"human-1","status":"resolved","title":"Review","answer":{"decision":"approve"}}],"nextCursor":"cursor-3"},"meta":{"version":"v1"}}"#,
@@ -3915,7 +3553,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_run_sends_required_idempotency_key_and_bound_payload() {
+    fn workflow_run_sends_required_idempotency_key_and_execution_root_payload() {
         let (server_url, request_receiver, server) = serve_one_http_response(
             r#"{"data":{"execution":{"id":"run-1","status":"queued"},"events":[],"latestSequence":0,"timedOut":false},"meta":{"version":"v1"}}"#,
         );
@@ -3926,7 +3564,6 @@ mod tests {
                 &test_credential("runner.secret"),
                 RunnerWorkflowExecutionStartOptions {
                     workflow_id: "workflow-1",
-                    binding_id: "binding-1",
                     inputs: json!({"prompt":"hello"}),
                     workspace_path: Some("/repo"),
                     session_id: Some("session-1"),
@@ -3943,7 +3580,6 @@ mod tests {
         assert!(raw_request
             .to_ascii_lowercase()
             .contains("idempotency-key: run-attempt-1\r\n"));
-        assert!(raw_request.contains("\"bindingId\":\"binding-1\""));
         assert!(raw_request.contains("\"workspacePath\":\"/repo\""));
         assert!(raw_request.contains("\"sessionId\":\"session-1\""));
         assert!(raw_request.contains("\"version\":\"3\""));

@@ -13,6 +13,6 @@ selected `organizationId`.
 
 Organization selection clears the project and execution scope and reboots the
 organization-scoped Runner authentication when needed. It does not create a
-project, binding, or workspace path. After success, call
+project or workspace path. After success, call
 `loomex_project_list`. Never change scope through config files or shell
 commands; if the list is empty, route to `organization-create` instead.
