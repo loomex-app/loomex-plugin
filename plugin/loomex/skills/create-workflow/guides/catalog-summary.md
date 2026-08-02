@@ -35,8 +35,13 @@ an invented default.
 
 ## Input contract
 
-Ask questions only about decisions that affect catalog-valid node types,
-schemas, mappings, Human Input behavior, sessions, tools, or branches.
+For Clarifier, ask only about user-visible behavior: desired outcome, inputs,
+audience, content, interaction, choices, approvals, and failure behavior.
+Questions must be in the user's language, plain and answerable without knowing
+Loomex. Never ask the user to choose node types, node ids, mappings, schemas,
+field names, transitions, model names, session policies, tool policies, JSON,
+or configuration parameters. The catalog is internal context for Clarifier and
+the implementation authority for Designer and Reviewer.
 
 For a batch radio/checkbox Human Input, the effective output schema must expose
 `answers` as an array. A downstream mapping is valid only in this exact form:
