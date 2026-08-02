@@ -4,6 +4,8 @@
 
 - Harden workflow builder guide contracts for Human Input batch answers and
   condition branch identifiers.
+- Align the release metadata and validation fixtures with the 0.1.70 plugin
+  package.
 
 ## 0.1.69
 
