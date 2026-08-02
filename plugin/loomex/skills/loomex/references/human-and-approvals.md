@@ -10,8 +10,11 @@ known; optional `status` is `pending`, `resolved`, or `all`, and `limit` bounds
 the result. Preserve returned `nextCursor` and pass it as `cursor` to fetch the
 next page. A request with `inputSpec.schemaVersion` uses one of the four typed
 contracts: `multi_select`/`checkbox`, `single_select`/`radio`, `text`, or
-`boolean`. For `text`, ask the user for the answer in the Codex chat and submit
-it with `loomex_human_respond`; do not call `loomex_human_open`. For
+`boolean`. For ordinary `text`, ask the user for the answer in the Codex chat
+and submit it with `loomex_human_respond`; do not call `loomex_human_open`. A
+request with `inputSpec.sensitivity: "sensitive"` is the exception: open the
+host secure side-panel form and submit from that UI, never through chat or a
+model-visible tool call. For
 `multi_select`/`checkbox`, `single_select`/`radio`, and `boolean`, call `loomex_human_open` with
 that exact returned request and tell the user to complete the rendered
 side-panel form. This is a live continuation surface: do not stop the chat with
@@ -24,6 +27,13 @@ use the request-level input type consistently, without collecting any value
 twice. Preserve the question order in the submitted `answers[]`. The app
 submits the exact request ID through
 `loomex_human_respond`.
+
+Secure answers are one-shot and memory-only. The side panel must not persist
+their values in `localStorage`, `window.openai.widgetState`, prompts,
+transcripts, or tool-result text. Clear the in-memory value after submit,
+cancel, logout, timeout, or rejection; a reload must show an empty form. The
+secure UI may retain only a non-sensitive request identifier and expiry
+metadata needed to reject stale submissions.
 
 For a legacy request without `inputSpec`, present the exact prompt, allowed
 response shape or choices, request ID, run/workflow context, and deadline if

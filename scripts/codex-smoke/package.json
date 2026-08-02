@@ -1,0 +1,11 @@
+{
+  "name": "loomex-codex-release-smoke",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@openai/codex": "0.144.6"
+  }
+}

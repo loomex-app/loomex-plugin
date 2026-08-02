@@ -24,12 +24,13 @@ pub mod security;
 pub mod service;
 
 pub use loomex_protocol::{
-    check_protocol_compatibility, ProtocolCompatibility, RunnerIdentity, RunnerPlatform,
-    RunnerSurface, MINIMUM_SUPPORTED_PROTOCOL_VERSION,
+    check_protocol_compatibility, negotiate_protocol_version, ProtocolCompatibility,
+    ProtocolNegotiationError, RunnerIdentity, RunnerPlatform, RunnerSurface,
+    MINIMUM_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS,
 };
 
 pub use approval::{
-    ApprovalAuditEvent, ApprovalChannel, ApprovalDecision, ApprovalDecisionInput,
+    ApprovalAuditEvent, ApprovalBinding, ApprovalChannel, ApprovalDecision, ApprovalDecisionInput,
     ApprovalDecisionOutcome, ApprovalPayload, ApprovalPolicySnapshot, ApprovalPrompt,
     ApprovalPromptProvider, ApprovalRegistry, ApprovalRequest, ApprovalRequestKind, ApprovalStatus,
     CreateApprovalRequestInput,
@@ -61,9 +62,10 @@ pub use local_capabilities::{
 #[cfg(unix)]
 pub use local_control::UnixLocalControlServer;
 pub use local_control::{
-    handle_local_control_request, prepare_local_control_paths, read_local_control_token,
-    LocalControlDispatcher, LocalControlError, LocalControlPaths, LocalControlRequest,
-    LocalControlResponse, LOCAL_CONTROL_PROTOCOL_VERSION,
+    handle_local_control_request, prepare_local_control_paths, read_bounded_line,
+    read_local_control_token, BoundedLine, LocalControlDispatcher, LocalControlError,
+    LocalControlPaths, LocalControlRequest, LocalControlResponse, LOCAL_CONTROL_MAX_LINE_BYTES,
+    LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 pub use logs::{
     read_recent_log_entries, redact_log_entry_for_local_output, FileLogSink, LogEntry, LogSink,

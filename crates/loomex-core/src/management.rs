@@ -1,6 +1,10 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::blocking::Client;
@@ -14,6 +18,47 @@ use crate::{CoreError, CoreResult};
 const RUNNER_AUTH_EXCHANGE_PATH: &str = "/runner-control/runner/v1/auth/exchange/";
 const RUNNER_AUTH_BOOTSTRAP_PATH: &str = "/runner-control/runner/v1/auth/bootstrap/";
 const RUNNER_TOKEN_NON_EXPIRING_EXPIRES_AT: &str = "9999-12-31T23:59:59Z";
+
+const MANAGEMENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const MANAGEMENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MANAGEMENT_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+const MANAGEMENT_MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+const MANAGEMENT_RETRY_BUDGET: u8 = 2;
+const MANAGEMENT_BREAKER_FAILURE_THRESHOLD: u32 = 3;
+const MANAGEMENT_BREAKER_COOLDOWN: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Default)]
+struct ManagementMetrics {
+    timeout: AtomicU64,
+    oversize: AtomicU64,
+    breaker_open: AtomicU64,
+    breaker_rejected: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ManagementClientMetricsSnapshot {
+    pub timeout: u64,
+    pub oversize: u64,
+    pub breaker_open: u64,
+    pub breaker_rejected: u64,
+}
+
+static MANAGEMENT_METRICS: OnceLock<ManagementMetrics> = OnceLock::new();
+static MANAGEMENT_BREAKER: OnceLock<Mutex<(u32, Option<Instant>)>> = OnceLock::new();
+
+fn management_metrics() -> &'static ManagementMetrics {
+    MANAGEMENT_METRICS.get_or_init(ManagementMetrics::default)
+}
+
+pub fn management_client_metrics() -> ManagementClientMetricsSnapshot {
+    let metrics = management_metrics();
+    ManagementClientMetricsSnapshot {
+        timeout: metrics.timeout.load(Ordering::Relaxed),
+        oversize: metrics.oversize.load(Ordering::Relaxed),
+        breaker_open: metrics.breaker_open.load(Ordering::Relaxed),
+        breaker_rejected: metrics.breaker_rejected.load(Ordering::Relaxed),
+    }
+}
 
 pub fn user_credential_profile(profile: &str) -> String {
     format!("{profile}.user")
@@ -1465,6 +1510,9 @@ impl HttpManagementApiClient {
             base_url,
             host_header,
             client: Client::builder()
+                .connect_timeout(MANAGEMENT_CONNECT_TIMEOUT)
+                .timeout(MANAGEMENT_REQUEST_TIMEOUT)
+                .pool_idle_timeout(MANAGEMENT_IDLE_TIMEOUT)
                 .build()
                 .map_err(|err| CoreError::new("MANAGEMENT_HTTP_CLIENT_FAILED", err.to_string()))?,
         })
@@ -2868,19 +2916,140 @@ impl ManagementApiClient for HttpManagementApiClient {
 }
 
 fn parse_json_response<T: for<'de> Deserialize<'de>>(
-    response: reqwest::blocking::Response,
+    mut response: reqwest::blocking::Response,
 ) -> CoreResult<T> {
+    if management_breaker_is_open() {
+        management_metrics()
+            .breaker_rejected
+            .fetch_add(1, Ordering::Relaxed);
+        return Err(CoreError::new(
+            "MANAGEMENT_CIRCUIT_OPEN",
+            "management API circuit breaker is open",
+        ));
+    }
     let status = response.status();
+    let body = read_bounded_response(&mut response)?;
     if !status.is_success() {
-        let body = response.text().unwrap_or_default();
+        if status == StatusCode::REQUEST_TIMEOUT
+            || status == StatusCode::TOO_MANY_REQUESTS
+            || status.is_server_error()
+        {
+            record_management_failure();
+        }
+        let body = String::from_utf8_lossy(&body);
         return Err(management_error_from_status_and_body(
             status.as_u16(),
             &body,
         ));
     }
-    response
-        .json::<T>()
+    record_management_success();
+    serde_json::from_slice::<T>(&body)
         .map_err(|err| CoreError::new("MANAGEMENT_RESPONSE_INVALID", err.to_string()))
+}
+
+fn read_bounded_response(response: &mut reqwest::blocking::Response) -> CoreResult<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MANAGEMENT_MAX_RESPONSE_BYTES)
+    {
+        management_metrics()
+            .oversize
+            .fetch_add(1, Ordering::Relaxed);
+        record_management_failure();
+        return Err(CoreError::new(
+            "MANAGEMENT_RESPONSE_TOO_LARGE",
+            format!(
+                "management API response exceeds {} bytes",
+                MANAGEMENT_MAX_RESPONSE_BYTES
+            ),
+        ));
+    }
+
+    let capacity = response
+        .content_length()
+        .unwrap_or(0)
+        .min(MANAGEMENT_MAX_RESPONSE_BYTES) as usize;
+    let mut body = Vec::with_capacity(capacity);
+    response
+        .take(MANAGEMENT_MAX_RESPONSE_BYTES.saturating_add(1))
+        .read_to_end(&mut body)
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::TimedOut {
+                management_metrics().timeout.fetch_add(1, Ordering::Relaxed);
+            }
+            record_management_failure();
+            CoreError::new(
+                if err.kind() == std::io::ErrorKind::TimedOut {
+                    "MANAGEMENT_HTTP_TIMEOUT"
+                } else {
+                    "MANAGEMENT_HTTP_FAILED"
+                },
+                err.to_string(),
+            )
+        })?;
+    if body.len() as u64 > MANAGEMENT_MAX_RESPONSE_BYTES {
+        management_metrics()
+            .oversize
+            .fetch_add(1, Ordering::Relaxed);
+        record_management_failure();
+        return Err(CoreError::new(
+            "MANAGEMENT_RESPONSE_TOO_LARGE",
+            format!(
+                "management API response exceeds {} bytes",
+                MANAGEMENT_MAX_RESPONSE_BYTES
+            ),
+        ));
+    }
+    Ok(body)
+}
+
+fn management_breaker() -> &'static Mutex<(u32, Option<Instant>)> {
+    MANAGEMENT_BREAKER.get_or_init(|| Mutex::new((0, None)))
+}
+
+fn management_breaker_is_open() -> bool {
+    let Ok(mut breaker) = management_breaker().lock() else {
+        return false;
+    };
+    let Some(reopens_at) = breaker.1 else {
+        return false;
+    };
+    if Instant::now() >= reopens_at {
+        breaker.0 = 0;
+        breaker.1 = None;
+        return false;
+    }
+    true
+}
+
+fn record_management_failure() {
+    let Ok(mut breaker) = management_breaker().lock() else {
+        return;
+    };
+    breaker.0 = breaker.0.saturating_add(1);
+    if breaker.0 >= MANAGEMENT_BREAKER_FAILURE_THRESHOLD && breaker.1.is_none() {
+        breaker.1 = Some(Instant::now() + MANAGEMENT_BREAKER_COOLDOWN);
+        management_metrics()
+            .breaker_open
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn record_management_success() {
+    if let Ok(mut breaker) = management_breaker().lock() {
+        breaker.0 = 0;
+        breaker.1 = None;
+    }
+}
+
+#[allow(dead_code)]
+fn management_retry_delay(attempt: u8) -> Duration {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64)
+        .unwrap_or_default();
+    let jitter = nanos % 100;
+    Duration::from_millis((50_u64 << attempt.min(MANAGEMENT_RETRY_BUDGET)) + jitter)
 }
 
 #[derive(Debug, Deserialize)]

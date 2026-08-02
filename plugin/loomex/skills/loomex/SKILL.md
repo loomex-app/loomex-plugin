@@ -123,7 +123,10 @@ Read every reference needed for the user's request before calling its tools.
    unless the server schema explicitly requires them; never invent a file
    manifest that can trigger a Runner file-write operation.
 10. When a wait returns a typed human request, route by `inputSpec.inputType`:
-   collect `text` in the Codex chat and submit it with `loomex_human_respond`;
+   collect ordinary `text` in the Codex chat and submit it with
+   `loomex_human_respond`; when `inputSpec.sensitivity` is `sensitive`, open
+   the secure side-panel form instead and keep the answer outside model
+   context;
    call `loomex_human_open` for `boolean`, `single_select`/`radio`, and
    `multi_select`/`checkbox`, using the exact returned request. Do not collect
    the same value in both places. Opening a non-text form must not stop the
@@ -134,6 +137,9 @@ Read every reference needed for the user's request before calling its tools.
    waits for a conversational answer. For legacy human requests and policy
    approvals, present the exact prompt, choices, consequences, and run
    context. Submit only the user's decision.
+   Sensitive form state is one-shot and memory-only: do not put it in a prompt,
+   transcript, tool result, localStorage, or persistent widget state. Clear it
+   immediately after submit, cancel, logout, timeout, or rejection.
 11. A closed Codex app cannot surface new prompts. The durable Runner keeps the
    run alive and the backend retains pending work. On reconnect, query the run
    and pending inboxes, and explain this boundary honestly. A healthy
