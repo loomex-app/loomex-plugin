@@ -14,7 +14,8 @@ validator remain authoritative.
 Every node is a flat object with `key`, `type`, `name`, `position`, `config`,
 `inputs`, `inputSchema`, and `outputSchema` as supported by its catalog entry.
 The graph contains `nodes` and `transitions`. Use exactly one `start` and one
-`end` node.
+`end` node. The generated draft must contain the schemas, not only the config:
+the draft is validated before Backend normalization.
 
 ## Valid enum values
 
@@ -38,6 +39,46 @@ start input field; static values use `{ "source": "static", "value": ... }`.
 
 Each node declares the fields it emits in `outputSchema`. The `end` node maps
 the public workflow result from upstream node outputs.
+
+For a dynamic Human Input node configured with `inputType: "radio"` or
+`inputType: "checkbox"` and `collectionMode: "batch"`, declare the canonical
+batch output in the node itself. It must expose an `answers` array, and every
+consumer must map that exact field:
+
+```json
+{
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "schemaVersion": {"type": "string"},
+      "inputType": {"type": "string"},
+      "collectionMode": {"type": "string", "const": "batch"},
+      "answers": {"type": "array"}
+    },
+    "required": ["schemaVersion", "inputType", "collectionMode", "answers"]
+  },
+  "inputs": {
+    "questions": {"source": "node_output", "nodeId": "question_generator", "field": "questions"}
+  }
+}
+```
+
+Do not map `answers` from a Human node unless `answers` is present in that
+source node's `outputSchema`. Do not replace it with `value`, `label`,
+`selected`, or another invented field.
+
+Every condition in both `trueBranch.conditions` and
+`falseBranch.conditions` must include a stable, non-empty, unique `id` in
+addition to its operand, operator, and right-hand value. For example:
+
+```json
+{
+  "id": "review_valid_true",
+  "left": {"source": "node_output", "nodeId": "reviewer", "field": "valid"},
+  "operator": "==",
+  "right": {"source": "static", "value": true}
+}
+```
 
 ## Data mapping examples
 
@@ -75,6 +116,8 @@ branch reaches `end`.
 
 - Leaving `inputs` empty while `inputSchema.required` is non-empty.
 - Referencing a node id or field that does not exist.
+- Mapping `answers` without declaring `answers` in the Human source output schema.
+- Omitting `id` from either side of a condition branch.
 - Using UI/React Flow objects instead of flat canonical nodes.
 - Adding a second start or end node.
 
@@ -89,4 +132,3 @@ should be mapped structurally.
 The Backend catalog and canonical validator are the final authority. A guide
 is explanatory reference context only. If this guide and the catalog differ,
 follow the catalog and the validation response.
-
