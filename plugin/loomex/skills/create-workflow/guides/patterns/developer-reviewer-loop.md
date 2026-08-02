@@ -34,8 +34,12 @@ Condition routes `valid=true` to success and `valid=false` to repair.
 ## Data mapping examples
 
 ```json
-"reviewerFeedback": {"source":"node_output","nodeId":"reviewer","field":"warnings"}
+"reviewerFeedback": {"source":"node_output","nodeId":"reviewer","field":"errors"}
 ```
+
+The review condition must use explicit stable ids on both branches, for
+example `review_valid_true` and `review_valid_false`; condition ids are
+required by the workflow validator.
 
 ## Session policy examples
 
@@ -67,4 +71,3 @@ Do not let subjective reviewer preference override Backend validation.
 ## Backend validation notes
 
 The Backend owns the validation result and bounded repair state.
-

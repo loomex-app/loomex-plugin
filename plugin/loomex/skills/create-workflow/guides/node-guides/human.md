@@ -22,8 +22,10 @@ selection enums.
 
 ## Defaults
 
-Backend derives canonical `inputSchema` and `outputSchema` from the Human Input
-config and mappings. Do not hand-author competing schemas.
+The live catalog default is single/text. Backend normalization remains the
+authority, but the AI-generated draft is validated before normalization and
+must include the effective canonical `inputSchema` and `outputSchema`.
+Do not omit them and do not invent a competing schema.
 
 ## Input contract
 
@@ -32,14 +34,31 @@ canonical question/value contract defined by the Backend.
 
 ## Output contract
 
-Radio output uses `value` and `label`. Checkbox output uses `values` and
-`labels`. Batch forms may also expose canonical `answers[]` according to the
-Backend-generated schema. Typed Human Input must not invent other output keys.
+Text and boolean use canonical `value`. A single radio response may expose
+`value` and `label`; a single checkbox response may expose `values` and
+`labels`. A dynamic radio/checkbox node with `collectionMode: "batch"` must
+declare `answers` as an array in its `outputSchema`, because downstream nodes
+map the complete response through that field. The effective batch schema must
+also identify the canonical schema version, input type, and collection mode.
+Typed Human Input must not invent `selected`, `answer`, `approval`, or other
+output keys.
 
 ## Data mapping examples
 
 `questions` maps from an upstream agent's structured questions output. A text
-correction form maps its question from static config or an upstream field.
+correction form maps its question from static config or an upstream field. For
+batch responses, consumers must map the exact output field:
+
+```json
+"answers": {
+  "source": "node_output",
+  "nodeId": "clarification_input",
+  "field": "answers"
+}
+```
+
+This mapping is invalid unless `clarification_input.outputSchema.properties`
+contains `answers`.
 
 ## Session policy examples
 
@@ -61,8 +80,9 @@ and the original task separately.
 
 ## Common mistakes
 
-Using fewer or more than four options, missing the questions mapping, or
-expecting a radio response as free-form text.
+Using fewer or more than four options, missing the questions mapping, omitting
+the effective batch output schema, mapping `answers` from a source that does
+not declare it, or expecting a radio response as free-form text.
 
 ## Anti-patterns
 
@@ -72,4 +92,3 @@ Do not add a hand-written schema that conflicts with Backend normalization.
 ## Backend validation notes
 
 Backend Human Input normalization and validation are authoritative.
-

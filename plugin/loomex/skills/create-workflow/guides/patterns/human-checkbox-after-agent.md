@@ -19,12 +19,14 @@ Checkbox is a valid Human Input type.
 
 ## Defaults
 
-Backend derives schemas and canonical output fields.
+The live Human catalog defaults to single/text. For this pattern explicitly
+use batch checkbox configuration and include the effective canonical schemas;
+do not rely on normalization to add a missing output field.
 
 ## Input contract
 
-Map upstream `questions` into the Human node and map canonical selections into
-the consumer node.
+Map upstream `questions` into the Human node and map the Human node's canonical
+batch `answers` output into the consumer node.
 
 ## Output contract
 
@@ -33,7 +35,8 @@ the Backend schema.
 
 ## Data mapping examples
 
-Map `node_output.questions` into the Human node's `questions` input.
+Map `node_output.questions` into the Human node's `questions` input and map
+`node_output.<human-key>.answers` into the consumer's `answers` input.
 
 ## Session policy examples
 
@@ -55,7 +58,9 @@ paths.
 
 ## Common mistakes
 
-Using a single-value output or fewer/more than four options.
+Using a single-value output, omitting the `answers` field from the Human
+outputSchema, mapping from an undeclared source field, or using fewer/more than
+four options.
 
 ## Anti-patterns
 
@@ -64,4 +69,3 @@ Do not substitute radio semantics or invent UI selection keys.
 ## Backend validation notes
 
 Backend canonical Human Input schemas and mapping validation are authoritative.
-
