@@ -25,19 +25,38 @@ serverUrl = "https://loomex.app"
 
 ## Install from the Loomex marketplace
 
-The normal installation is one command on macOS and Linux:
+The normal installation uses the explicitly resolved `0.1.71` release on macOS
+and Linux. Download the bootstrap and its signature as separate files:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/latest/download/install-codex.sh | sh
+version=0.1.71
+base="https://github.com/loomex-app/loomex-plugin/releases/download/v$version"
+curl --fail --location --proto '=https' --tlsv1.2 \
+  "$base/install-codex.sh" -o install-codex.sh
+curl --fail --location --proto '=https' --tlsv1.2 \
+  "$base/install-codex.sh.sigstore.json" -o install-codex.sh.sigstore.json
+cosign verify-blob \
+  --bundle install-codex.sh.sigstore.json \
+  --certificate-identity "https://github.com/loomex-app/loomex-plugin/.github/workflows/codex-plugin-release.yml@refs/tags/v$version" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  install-codex.sh
+sh install-codex.sh
 ```
 
 To install or upgrade to an exact plugin version:
 
 ```bash
-curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v0.1.60/install-codex.sh | sh
+version=0.1.71
+base="https://github.com/loomex-app/loomex-plugin/releases/download/v$version"
+curl --fail --location --proto '=https' --tlsv1.2 "$base/install-codex.sh" -o install-codex.sh
+curl --fail --location --proto '=https' --tlsv1.2 "$base/install-codex.sh.sigstore.json" -o install-codex.sh.sigstore.json
+cosign verify-blob --bundle install-codex.sh.sigstore.json \
+  --certificate-identity "https://github.com/loomex-app/loomex-plugin/.github/workflows/codex-plugin-release.yml@refs/tags/v$version" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" install-codex.sh
+sh install-codex.sh
 ```
 
-The `0.1.60` release removes persistent execution workspace binding from the
+The `0.1.71` release removes persistent execution workspace binding from the
 Runner contract. Workflows are organization-scoped; every execution
 supplies its own local workspace root. It also includes the guided account
 registration, logout, organization
@@ -54,9 +73,10 @@ releases and upgrades come from `loomex-app/loomex-plugin`; running the command
 again is sufficient and preserves the existing Codex marketplace state on
 failure.
 
-GitHub selects the latest stable, non-prerelease release. That release's version
-is embedded in the downloaded script, which then uses version-specific asset
-URLs authenticated by Sigstore. It obtains a temporary pinned Cosign binary and
+The documented release version is resolved and recorded explicitly rather than
+following a mutable release alias. Its version is embedded in the downloaded
+script, which then uses version-specific asset URLs authenticated by Sigstore.
+It obtains a temporary pinned Cosign binary and
 verifies its pinned SHA-256, downloads an official Sigstore trusted-root
 snapshot from a pinned commit and verifies its SHA-256, and verifies the
 versioned installer, marketplace provenance, and marketplace ZIP before any
@@ -70,11 +90,9 @@ immutable-release and tag-protection controls are enabled. Installation trust
 therefore comes from verification of the exact workflow/tag Sigstore identity,
 not from treating a GitHub tag or asset name as inherently immutable.
 
-The `curl | sh` convenience path necessarily trusts GitHub TLS for the bootstrap
-script itself. For high-assurance installation, download `install-codex.sh` and
-`install-codex.sh.sigstore.json` from the same release, verify the script with
-Cosign against the exact workflow/tag identity below, and then run the verified
-file. Each release also publishes a complete Codex marketplace snapshot,
+The bootstrap is downloaded to a file and verified before the shell parses or
+executes it; do not pass downloaded bytes directly to a shell. Each release publishes a
+complete Codex marketplace snapshot,
 provenance, and `loomex-install-marketplace-<version>.sh`, each with a keyless
 Sigstore bundle. The normal installer installs the verified ZIP as a local,
 versioned marketplace snapshot, so it does not depend on Codex cloning GitHub

@@ -9,6 +9,12 @@
 - Do not pass credentials, API keys, tokens, or unrelated environment variables
   as workflow inputs. Use Loomex's credential facilities when the schema calls
   for a secret reference.
+- Passwords, password confirmations, verification codes, and human answers
+  marked sensitive must be entered through the host secure UI, outside model
+  context. They must never appear in prompts, transcripts, tool results, or
+  persistent widget/localStorage state. Secure UI state is one-shot,
+  memory-only, expiry-bound, and cleared after submit, cancel, logout,
+  timeout, or rejection.
 - Preserve run, request, approval, setup transaction, organization, organization, and
   execution-root IDs from tool output. Do not manufacture or substitute IDs.
 - Distinguish accepted, queued, waiting, cancellation requested, rolled back,

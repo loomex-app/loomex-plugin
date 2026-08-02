@@ -1,7 +1,10 @@
 use crate::{CoreError, CoreResult};
 
-pub const PROTOCOL_VERSION: &str = "runner.v1";
-pub const MINIMUM_SUPPORTED_VERSION: &str = "runner.v1";
+pub use loomex_protocol::{
+    check_protocol_compatibility, negotiate_protocol_version, ProtocolCompatibility,
+    ProtocolNegotiationError, RunnerIdentity, RunnerPlatform, RunnerSurface,
+    MINIMUM_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS,
+};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SequenceTracker {

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use reqwest::Url;
 
@@ -25,8 +25,8 @@ impl Default for NetworkSecurityPolicy {
         Self {
             allowed_domains: Vec::new(),
             denied_ip_ranges: Vec::new(),
-            allow_localhost: true,
-            allow_private_network: true,
+            allow_localhost: false,
+            allow_private_network: false,
         }
     }
 }
@@ -42,22 +42,31 @@ impl NetworkSecurityPolicy {
     }
 
     pub fn validate_url(&self, url: &Url) -> CoreResult<()> {
+        self.validated_socket_addrs(url)?;
+        Ok(())
+    }
+
+    pub fn validated_socket_addrs(&self, url: &Url) -> CoreResult<Vec<SocketAddr>> {
         let host = url
             .host_str()
             .ok_or_else(|| CoreError::new("NETWORK_HOST_MISSING", "network host is required"))?;
-        if !self.allowed_domains.is_empty() && !domain_is_allowed(host, &self.allowed_domains) {
+        if self.allowed_domains.is_empty() || !domain_is_allowed(host, &self.allowed_domains) {
             return Err(CoreError::new(
                 "NETWORK_DOMAIN_NOT_ALLOWED",
                 "network destination is not in the egress allowlist",
             ));
         }
+        let port = url.port_or_known_default().unwrap_or(80);
+        let mut addresses = Vec::new();
         for ip in resolve_url_ips(url)? {
             self.validate_ip(ip)?;
+            addresses.push(SocketAddr::new(ip, port));
         }
-        Ok(())
+        Ok(addresses)
     }
 
     pub fn validate_ip(&self, ip: IpAddr) -> CoreResult<()> {
+        let ip = unmapped_ip(ip);
         if self.denied_ip_ranges.iter().any(|range| range.contains(ip)) {
             return Err(CoreError::new(
                 "NETWORK_RANGE_DENIED",
@@ -77,6 +86,16 @@ impl NetworkSecurityPolicy {
             ));
         }
         Ok(())
+    }
+}
+
+fn unmapped_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(value) => value
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(value)),
+        IpAddr::V4(_) => ip,
     }
 }
 
@@ -304,9 +323,17 @@ fn is_private_network_ip(ip: IpAddr) -> bool {
         IpAddr::V4(ip) => {
             ip.is_private()
                 || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                || ip.is_multicast()
                 || ip.octets()[0] == 100 && (ip.octets()[1] & 0b1100_0000) == 64
         }
-        IpAddr::V6(ip) => (ip.segments()[0] & 0xfe00) == 0xfc00 || is_ipv6_link_local(ip),
+        IpAddr::V6(ip) => {
+            ip.is_unspecified()
+                || ip.is_multicast()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || is_ipv6_link_local(ip)
+        }
     }
 }
 
@@ -445,6 +472,35 @@ mod tests {
                 .unwrap_err()
                 .code
         );
+    }
+
+    #[test]
+    fn default_network_policy_is_deny_by_default() {
+        let policy = NetworkSecurityPolicy::default();
+
+        assert_eq!(
+            "NETWORK_DOMAIN_NOT_ALLOWED",
+            policy
+                .validate_url(&Url::parse("https://example.com/").unwrap())
+                .unwrap_err()
+                .code
+        );
+    }
+
+    #[test]
+    fn mapped_ipv4_ipv6_is_checked_as_ipv4() {
+        let policy = NetworkSecurityPolicy {
+            allowed_domains: vec!["example.com".to_string()],
+            allow_localhost: false,
+            allow_private_network: false,
+            ..NetworkSecurityPolicy::default()
+        };
+
+        let error = policy
+            .validate_ip("::ffff:127.0.0.1".parse().unwrap())
+            .unwrap_err();
+
+        assert_eq!("NETWORK_LOCALHOST_DENIED", error.code);
     }
 
     #[test]

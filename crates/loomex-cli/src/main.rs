@@ -5,13 +5,18 @@ use std::{
     env, fs,
     fs::OpenOptions,
     hash::{Hash, Hasher},
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{self, Command},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, TryRecvError},
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use loomex_core::policy::{AuthorizationEnvelope, CapabilityAuthorizationGateway};
 use loomex_core::release_security::sha256_hex;
 #[cfg(unix)]
 use loomex_core::UnixLocalControlServer;
@@ -23,16 +28,16 @@ use loomex_core::{
         RemoteRunnerJobSnapshot, RemoteRunnerJobStatus, RunnerJobRecoveryJournal,
     },
     protocol::PROTOCOL_VERSION,
-    read_local_control_token, read_recent_log_entries, release_runner_runtime_guard_for_surface,
-    runner_runtime_guard_path, user_credential_profile, AuthTokenResponse, BundledRuntimeInstall,
-    CapabilityExecutor, CapabilityRequest, CliConfig, CliConfigOverrides, CredentialKind,
-    CredentialStorageBackend, CredentialStore, DeviceLoginChallenge, FileLogSink, FsListInput,
-    FsReadInput, FsWriteInput, HttpManagementApiClient, HumanRequestSummary,
+    read_bounded_line, read_local_control_token, read_recent_log_entries,
+    release_runner_runtime_guard_for_surface, runner_runtime_guard_path, user_credential_profile,
+    AuthTokenResponse, BoundedLine, BundledRuntimeInstall, CliConfig, CliConfigOverrides,
+    CredentialKind, CredentialStorageBackend, CredentialStore, DeviceLoginChallenge, FileLogSink,
+    FsListInput, FsReadInput, FsWriteInput, HttpManagementApiClient, HumanRequestSummary,
     LocalCapabilityExecutor, LocalControlDispatcher, LocalControlPaths, LocalControlRequest,
     LocalControlResponse, LogEntry, ManagementApiClient, ManagementCredential, Organization,
     Runner, RunnerServiceManifest, RunnerServicePlatform, RunnerServiceSpec, RuntimeInstaller,
-    SbomPackage, ShellCancellationToken, ShellExecInput, SystemCredentialStore,
-    WorkflowRunStartRequest, LOCAL_CONTROL_PROTOCOL_VERSION,
+    SbomPackage, ShellCancellationToken, SystemCredentialStore, WorkflowRunStartRequest,
+    LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use setup_transaction::{
@@ -49,6 +54,32 @@ const DEFAULT_DEVICE_LOGIN_TIMEOUT_SECONDS: u64 = 600;
 const MANAGEMENT_TOKEN_CLOCK_SKEW_SECONDS: u64 = 300;
 const DEFAULT_FOLLOW_POLL_INTERVAL_MS: u64 = 500;
 const DEFAULT_FOLLOW_MAX_POLLS: usize = 1_200;
+const RUNNER_WORKER_CLEANUP_GRACE: Duration = Duration::from_secs(2);
+
+static RUNNER_SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn runner_shutdown_signal_handler(_: libc::c_int) {
+    RUNNER_SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+fn install_runner_shutdown_handler() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(
+            libc::SIGTERM,
+            runner_shutdown_signal_handler as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            runner_shutdown_signal_handler as libc::sighandler_t,
+        );
+    }
+}
+
+fn runner_shutdown_requested() -> bool {
+    RUNNER_SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
+}
 
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -4224,10 +4255,20 @@ fn plugin_local_control_ping_once_at(paths: &LocalControlPaths) -> Result<Value,
         .write_all(b"\n")
         .and_then(|_| stream.flush())
         .map_err(|error| format!("LOCAL_CONTROL_REQUEST_FAILED: {error}"))?;
-    let mut line = String::new();
-    BufReader::new(stream)
-        .read_line(&mut line)
-        .map_err(|error| format!("LOCAL_CONTROL_RESPONSE_FAILED: {error}"))?;
+    let mut reader = BufReader::new(stream);
+    let line = match read_bounded_line(&mut reader, loomex_core::LOCAL_CONTROL_MAX_LINE_BYTES)
+        .map_err(|error| format!("LOCAL_CONTROL_RESPONSE_FAILED: {error}"))?
+    {
+        BoundedLine::Complete(line) => line,
+        BoundedLine::Eof => {
+            return Err("LOCAL_CONTROL_RESPONSE_FAILED: server closed the stream".to_string())
+        }
+        BoundedLine::TooLarge { .. } => {
+            return Err(
+                "LOCAL_CONTROL_RESPONSE_TOO_LARGE: response exceeds protocol limit".to_string(),
+            )
+        }
+    };
     let response: LocalControlResponse = serde_json::from_str(&line)
         .map_err(|error| format!("LOCAL_CONTROL_RESPONSE_INVALID: {error}"))?;
     if response.protocol_version != LOCAL_CONTROL_PROTOCOL_VERSION
@@ -5302,6 +5343,7 @@ fn run_runner_service_run_parsed<C: ManagementApiClient>(
     store: &dyn CredentialStore,
     client: &mut C,
 ) -> Result<String, String> {
+    install_runner_shutdown_handler();
     let log_path = service_options
         .log_path
         .clone()
@@ -5393,6 +5435,9 @@ fn run_runner_control_service_loop<C: ManagementApiClient>(
 ) -> Result<(), String> {
     let mut backoff = RunnerControlReconnectBackoff::new();
     loop {
+        if runner_shutdown_requested() {
+            return Ok(());
+        }
         let mut session_healthy = false;
         let result = run_runner_control_session(
             client,
@@ -5489,6 +5534,9 @@ fn run_runner_control_session<C: ManagementApiClient>(
     let mut idle_ticks = 0usize;
     let mut session_health_confirmed = false;
     loop {
+        if runner_shutdown_requested() {
+            return Ok(());
+        }
         let processed =
             process_one_runner_control_job(client, credential, &scoped, &session_id, recovery)?;
         if !session_health_confirmed {
@@ -5933,6 +5981,105 @@ fn execute_and_finalize_runner_job<C: ManagementApiClient>(
     recovery: &mut RunnerJobRecoveryJournal,
 ) -> Result<(), String> {
     let job_id = job_id(job)?;
+    let result = execute_and_finalize_runner_job_inner(
+        client, credential, resolved, session_id, job, recovery,
+    );
+    if let Err(error) = result {
+        let cleanup = finalize_runner_job_on_error(
+            client,
+            credential,
+            session_id,
+            &job_id,
+            recovery,
+            error.clone(),
+        );
+        return cleanup
+            .map_err(|cleanup_error| format!("{error}; cleanup failed: {cleanup_error}"));
+    }
+    Ok(())
+}
+
+fn finalize_runner_job_on_error<C: ManagementApiClient>(
+    client: &mut C,
+    credential: &ManagementCredential,
+    session_id: &str,
+    job_id: &str,
+    recovery: &mut RunnerJobRecoveryJournal,
+    error: String,
+) -> Result<(), String> {
+    let phase = recovery
+        .job(job_id)
+        .map(|record| record.phase)
+        .ok_or_else(|| {
+            "RUNNER_JOB_RECOVERY_INVALID: lease record missing during cleanup".to_string()
+        })?;
+    let record = match phase {
+        RecoverableJobPhase::SucceededPendingAck | RecoverableJobPhase::FailedPendingAck => {
+            recovery.job(job_id).cloned().ok_or_else(|| {
+                "RUNNER_JOB_RECOVERY_INVALID: terminal record missing during cleanup".to_string()
+            })?
+        }
+        RecoverableJobPhase::Leased | RecoverableJobPhase::Running => {
+            let payload = json!({
+                "code": "RUNNER_JOB_CONTROLLER_EXITED",
+                "message": error,
+                "retryable": true
+            });
+            recovery
+                .record_failed(job_id, session_id, payload, current_epoch_ms()?)
+                .map_err(format_core_error)?;
+            recovery.job(job_id).cloned().ok_or_else(|| {
+                "RUNNER_JOB_RECOVERY_INVALID: failed record missing during cleanup".to_string()
+            })?
+        }
+    };
+
+    if record.phase == RecoverableJobPhase::SucceededPendingAck {
+        client
+            .complete_runner_job_idempotent(
+                credential,
+                session_id,
+                job_id,
+                record.lease_version,
+                &record.idempotency_key,
+                record.terminal_payload.clone().ok_or_else(|| {
+                    "RUNNER_JOB_RECOVERY_INVALID: success payload missing during cleanup"
+                        .to_string()
+                })?,
+            )
+            .map_err(format_core_error)?;
+    } else {
+        client
+            .fail_runner_job_idempotent(
+                credential,
+                session_id,
+                job_id,
+                record.lease_version,
+                &record.idempotency_key,
+                record.terminal_payload.clone().unwrap_or_else(|| {
+                    json!({
+                        "code": "RUNNER_JOB_CONTROLLER_EXITED",
+                        "message": "runner controller exited before terminal submission",
+                        "retryable": true
+                    })
+                }),
+            )
+            .map_err(format_core_error)?;
+    }
+    recovery
+        .acknowledge_terminal(job_id)
+        .map_err(format_core_error)
+}
+
+fn execute_and_finalize_runner_job_inner<C: ManagementApiClient>(
+    client: &mut C,
+    credential: &ManagementCredential,
+    resolved: &loomex_core::ResolvedCliSettings,
+    session_id: &str,
+    job: &Value,
+    recovery: &mut RunnerJobRecoveryJournal,
+) -> Result<(), String> {
+    let job_id = job_id(job)?;
     let lease_version = required_job_u64(job, "leaseVersion")?;
     required_job_string(job, "idempotencyKey")?;
     if job.get("status").and_then(Value::as_str) == Some("leased") {
@@ -6044,8 +6191,8 @@ fn execute_cancellable_runner_job<C: ManagementApiClient>(
     let worker_resolved = resolved.clone();
     let worker_session_id = session_id.to_string();
     let worker_job = job.clone();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    let worker = thread::Builder::new()
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let handle = thread::Builder::new()
         .name(format!("loomex-job-{job_id}"))
         .spawn(move || {
             let result = execute_runner_control_job_with_cancel(
@@ -6057,6 +6204,7 @@ fn execute_cancellable_runner_job<C: ManagementApiClient>(
             let _ = sender.send(result);
         })
         .map_err(|err| format!("RUNNER_JOB_THREAD_FAILED: {err}"))?;
+    let mut worker = RunnerWorker::new(cancellation.clone(), receiver, handle);
     let mut lease_version = initial_lease_version;
     let mut next_renewal_epoch_ms = current_epoch_ms()?.saturating_add(10_000);
     // `run_runner_control_session` heartbeats only while idle. A provider
@@ -6067,24 +6215,25 @@ fn execute_cancellable_runner_job<C: ManagementApiClient>(
     let mut next_session_heartbeat_epoch_ms =
         current_epoch_ms()?.saturating_add(SESSION_HEARTBEAT_INTERVAL_MS);
     loop {
-        match receiver.try_recv() {
+        match worker.try_recv() {
             Ok(result) => {
-                let _ = worker.join();
+                worker.join();
                 return result;
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                let _ = worker.join();
+            Err(TryRecvError::Disconnected) => {
+                worker.join();
                 return Err("RUNNER_JOB_THREAD_FAILED: worker disconnected".to_string());
             }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(TryRecvError::Empty) => {}
         }
-        if client
-            .list_runner_job_cancellations(credential, session_id)
-            .map(|jobs| {
-                jobs.iter()
-                    .any(|item| job_id_from_value(item) == Some(job_id))
-            })
-            .unwrap_or(false)
+        if runner_shutdown_requested()
+            || client
+                .list_runner_job_cancellations(credential, session_id)
+                .map(|jobs| {
+                    jobs.iter()
+                        .any(|item| job_id_from_value(item) == Some(job_id))
+                })
+                .unwrap_or(false)
         {
             cancellation.cancel();
         }
@@ -6129,6 +6278,46 @@ fn execute_cancellable_runner_job<C: ManagementApiClient>(
     }
 }
 
+struct RunnerWorker {
+    cancellation: ShellCancellationToken,
+    receiver: Receiver<Result<Value, String>>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl RunnerWorker {
+    fn new(
+        cancellation: ShellCancellationToken,
+        receiver: Receiver<Result<Value, String>>,
+        handle: thread::JoinHandle<()>,
+    ) -> Self {
+        Self {
+            cancellation,
+            receiver,
+            handle: Some(handle),
+        }
+    }
+
+    fn try_recv(&self) -> Result<Result<Value, String>, TryRecvError> {
+        self.receiver.try_recv()
+    }
+
+    fn join(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for RunnerWorker {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        match self.receiver.recv_timeout(RUNNER_WORKER_CLEANUP_GRACE) {
+            Ok(_) | Err(RecvTimeoutError::Disconnected) | Err(RecvTimeoutError::Timeout) => {}
+        }
+        self.join();
+    }
+}
+
 fn job_id_from_value(value: &Value) -> Option<&str> {
     value
         .get("id")
@@ -6158,6 +6347,8 @@ fn execute_runner_control_job_with_cancel(
     job: &Value,
     cancellation: Option<&ShellCancellationToken>,
 ) -> Result<Value, String> {
+    let mut authorization = CapabilityAuthorizationGateway::default();
+    let authorized = authorize_runner_capability(&mut authorization, resolved, session_id, job)?;
     let kind = job.get("kind").and_then(Value::as_str).unwrap_or_default();
     match kind {
         "file.list" => execute_file_list_job(resolved, session_id, job),
@@ -6165,11 +6356,16 @@ fn execute_runner_control_job_with_cancel(
         "file.write_many" => execute_file_write_many_job(resolved, session_id, job),
         "fs.list" | "fs.read" | "fs.write" | "fs.apply_patch" | "shell.exec" | "git.status"
         | "git.diff" | "git.log" | "http.request" => {
-            execute_local_capability_job(resolved, session_id, kind, job, cancellation)
+            execute_local_capability_job(resolved, session_id, kind, job, authorized, cancellation)
         }
-        "command.run" => {
-            execute_local_capability_job(resolved, session_id, "shell.exec", job, cancellation)
-        }
+        "command.run" => execute_local_capability_job(
+            resolved,
+            session_id,
+            "shell.exec",
+            job,
+            authorized,
+            cancellation,
+        ),
         other => Err(format!("unsupported runner job kind {other}")),
     }
 }
@@ -6179,6 +6375,7 @@ fn execute_local_capability_job(
     session_id: &str,
     capability: &str,
     job: &Value,
+    authorized: loomex_core::local_capabilities::AuthorizedCapabilityRequest,
     supplied_cancellation: Option<&ShellCancellationToken>,
 ) -> Result<Value, String> {
     let payload = job.get("payload").cloned().unwrap_or_else(|| json!({}));
@@ -6201,17 +6398,6 @@ fn execute_local_capability_job(
     )?;
     let executor = LocalCapabilityExecutor::new(&workspace_root).map_err(format_core_error)?;
     if capability == "shell.exec" {
-        let mut shell_payload = payload;
-        shell_payload
-            .as_object_mut()
-            .ok_or_else(|| "RUNNER_JOB_PAYLOAD_INVALID: payload must be an object".to_string())?
-            .remove("cwd");
-        shell_payload
-            .as_object_mut()
-            .ok_or_else(|| "RUNNER_JOB_PAYLOAD_INVALID: payload must be an object".to_string())?
-            .remove("workspacePath");
-        let input: ShellExecInput = serde_json::from_value(shell_payload)
-            .map_err(|err| format!("RUNNER_JOB_PAYLOAD_INVALID: {err}"))?;
         let cancellation = supplied_cancellation.cloned().unwrap_or_default();
         if job.get("status").and_then(Value::as_str) == Some("canceling")
             || job
@@ -6222,7 +6408,11 @@ fn execute_local_capability_job(
             cancellation.cancel();
         }
         let output = executor
-            .shell_exec_with_working_directory(input, &working_directory, &cancellation)
+            .execute_authorized_with_working_directory(
+                authorized,
+                &working_directory,
+                &cancellation,
+            )
             .map_err(format_core_error)?;
         return Ok(json!({
             "cwd": working_directory,
@@ -6238,13 +6428,65 @@ fn execute_local_capability_job(
         }));
     }
     let result = executor
-        .execute(CapabilityRequest {
-            capability: capability.to_string(),
-            input: serde_json::to_string(&payload)
-                .map_err(|err| format!("RUNNER_JOB_PAYLOAD_INVALID: {err}"))?,
-        })
+        .execute_authorized(authorized)
         .map_err(format_core_error)?;
     serde_json::from_str(&result.output).map_err(|err| format!("RUNNER_JOB_RESULT_INVALID: {err}"))
+}
+
+fn authorize_runner_capability(
+    gateway: &mut CapabilityAuthorizationGateway,
+    _resolved: &loomex_core::ResolvedCliSettings,
+    session_id: &str,
+    job: &Value,
+) -> Result<loomex_core::local_capabilities::AuthorizedCapabilityRequest, String> {
+    let payload = job
+        .get("payload")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "RUNNER_JOB_PAYLOAD_INVALID: payload must be an object".to_string())?;
+    let envelope_value = payload.get("authorizationEnvelope").ok_or_else(|| {
+        "AUTHORIZATION_ENVELOPE_REQUIRED: leased capability jobs require authorizationEnvelope"
+            .to_string()
+    })?;
+    let envelope: AuthorizationEnvelope = serde_json::from_value(envelope_value.clone())
+        .map_err(|err| format!("AUTHORIZATION_ENVELOPE_INVALID: {err}"))?;
+    let kind = job.get("kind").and_then(Value::as_str).unwrap_or_default();
+    let expected_capability = match kind {
+        "file.list" => "fs.list",
+        "file.read_many" => "fs.read",
+        "file.write_many" => "fs.write",
+        "command.run" => "shell.exec",
+        capability => capability,
+    };
+    if envelope.capability != expected_capability {
+        return Err(format!(
+            "AUTHORIZATION_CAPABILITY_MISMATCH: envelope authorizes {}, job requires {expected_capability}",
+            envelope.capability
+        ));
+    }
+    let workspace_root = runner_job_workspace_root(job)?;
+    let mut input = Value::Object(payload.clone());
+    input
+        .as_object_mut()
+        .expect("payload object was constructed from an object")
+        .remove("authorizationEnvelope");
+    let actor = job
+        .get("actor")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(session_id);
+    let execution_root = loomex_core::ExecutionRoot::new(workspace_root.to_string_lossy())
+        .map_err(format_core_error)?;
+    LocalCapabilityExecutor::authorize_request(
+        gateway,
+        &envelope,
+        expected_capability,
+        input,
+        &execution_root,
+        actor,
+        required_job_u64(job, "leaseVersion")?,
+        current_epoch_ms()?,
+    )
+    .map_err(format_core_error)
 }
 
 fn runner_job_working_directory(payload: &Value) -> Result<String, String> {
@@ -8669,3 +8911,55 @@ usage:
   loomex policy test --capability NAME --workspace PATH
   loomex policy explain --capability NAME --workspace PATH [--path REL_PATH]";
 const TRACE_HELP: &str = "usage:\n  loomex trace export RUN_ID [--path LOG_PATH] [--output PATH]";
+
+#[cfg(test)]
+mod worker_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn worker_drop_cancels_and_joins_before_controller_returns() {
+        let cancellation = ShellCancellationToken::default();
+        let worker_cancellation = cancellation.clone();
+        let joined = Arc::new(AtomicBool::new(false));
+        let worker_joined = joined.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let handle = thread::spawn(move || {
+            while !worker_cancellation.is_cancelled() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            worker_joined.store(true, Ordering::SeqCst);
+            let _ = sender.send(Err("cancelled".to_string()));
+        });
+
+        {
+            let _worker = RunnerWorker::new(cancellation, receiver, handle);
+        }
+
+        assert!(joined.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn worker_success_is_joined_before_result_is_returned() {
+        let cancellation = ShellCancellationToken::default();
+        let joined = Arc::new(AtomicBool::new(false));
+        let worker_joined = joined.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let handle = thread::spawn(move || {
+            worker_joined.store(true, Ordering::SeqCst);
+            let _ = sender.send(Ok(json!({"status": "ok"})));
+        });
+        let mut worker = RunnerWorker::new(cancellation, receiver, handle);
+        let result = loop {
+            match worker.try_recv() {
+                Ok(result) => break result,
+                Err(TryRecvError::Empty) => thread::yield_now(),
+                Err(TryRecvError::Disconnected) => panic!("worker disconnected"),
+            }
+        };
+        worker.join();
+
+        assert_eq!(result.unwrap()["status"], "ok");
+        assert!(joined.load(Ordering::SeqCst));
+    }
+}

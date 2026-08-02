@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{
@@ -19,9 +19,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
 use crate::capability::{CapabilityExecutor, CapabilityRequest, CapabilityResult};
+use crate::policy::{AuthorizationEnvelope, CapabilityAuthorizationGateway, ExecutionRoot};
 use crate::redaction::Redactor;
 use crate::security::{
     ChildEnvironmentPolicy, LocalSecurityPolicy, NetworkSecurityPolicy, SandboxProfile,
@@ -29,6 +32,9 @@ use crate::security::{
 use crate::{CoreError, CoreResult};
 
 const DEFAULT_MAX_READ_BYTES: usize = 262_144;
+const DEFAULT_FS_READ_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+const DEFAULT_FS_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const FS_READ_BUFFER_BYTES: usize = 64 * 1024;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1_048_576;
 const DEFAULT_MAX_GIT_DIFF_BYTES: usize = 262_144;
 const DEFAULT_MAX_HTTP_RESPONSE_BYTES: usize = 1_048_576;
@@ -49,6 +55,21 @@ pub struct LocalCapabilityExecutor {
     docker_allowed_containers: Vec<String>,
     security: LocalSecurityPolicy,
 }
+
+/// A capability request that has crossed the authorization boundary.
+///
+/// The fields and proof marker are private so callers cannot manufacture a
+/// request for `execute_authorized`; they must obtain one from
+/// `authorize_request`, which consumes the policy gateway nonce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedCapabilityRequest {
+    capability: String,
+    input: String,
+    _authorization: AuthorizationProof,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AuthorizationProof;
 
 impl LocalCapabilityExecutor {
     pub fn new(workspace_root: impl Into<PathBuf>) -> CoreResult<Self> {
@@ -109,6 +130,67 @@ impl LocalCapabilityExecutor {
         self
     }
 
+    pub fn authorize_request(
+        gateway: &mut CapabilityAuthorizationGateway,
+        envelope: &AuthorizationEnvelope,
+        capability: impl Into<String>,
+        input: serde_json::Value,
+        execution_root: &ExecutionRoot,
+        actor: &str,
+        lease_version: u64,
+        now_epoch_ms: u64,
+    ) -> CoreResult<AuthorizedCapabilityRequest> {
+        let capability = capability.into();
+        if envelope.capability != capability {
+            return Err(CoreError::new(
+                "AUTHORIZATION_CAPABILITY_MISMATCH",
+                format!(
+                    "envelope authorizes {}, request requires {capability}",
+                    envelope.capability
+                ),
+            ));
+        }
+        gateway.authorize(
+            envelope,
+            &input,
+            execution_root,
+            actor,
+            lease_version,
+            now_epoch_ms,
+        )?;
+        let input = serde_json::to_string(&input)
+            .map_err(json_error("CAPABILITY_INPUT_SERIALIZE_FAILED"))?;
+        Ok(AuthorizedCapabilityRequest {
+            capability,
+            input,
+            _authorization: AuthorizationProof,
+        })
+    }
+
+    pub fn execute_authorized(
+        &self,
+        request: AuthorizedCapabilityRequest,
+    ) -> CoreResult<CapabilityResult> {
+        self.execute_request(request.capability, request.input)
+    }
+
+    pub fn execute_authorized_with_working_directory(
+        &self,
+        request: AuthorizedCapabilityRequest,
+        working_directory: &str,
+        cancellation: &ShellCancellationToken,
+    ) -> CoreResult<ShellExecOutput> {
+        if request.capability != "shell.exec" {
+            return Err(CoreError::new(
+                "UNSUPPORTED_CAPABILITY",
+                "working-directory execution requires shell.exec",
+            ));
+        }
+        let input: ShellExecInput =
+            serde_json::from_str(&request.input).map_err(json_error("CAPABILITY_INPUT_INVALID"))?;
+        self.shell_exec_with_working_directory(input, working_directory, cancellation)
+    }
+
     pub fn fs_list(&self, input: FsListInput) -> CoreResult<FsListOutput> {
         let base =
             self.resolve_workspace_path(&input.path, input.follow_symlinks.unwrap_or(false))?;
@@ -121,6 +203,14 @@ impl LocalCapabilityExecutor {
     }
 
     pub fn fs_read(&self, input: FsReadInput) -> CoreResult<FsReadOutput> {
+        self.fs_read_with_cancel(input, &ShellCancellationToken::default())
+    }
+
+    pub fn fs_read_with_cancel(
+        &self,
+        input: FsReadInput,
+        cancel: &ShellCancellationToken,
+    ) -> CoreResult<FsReadOutput> {
         let path = self.resolve_workspace_path(&input.path, true)?;
         let metadata = fs::metadata(&path).map_err(fs_error("FS_READ_FAILED"))?;
         if !metadata.is_file() {
@@ -129,17 +219,78 @@ impl LocalCapabilityExecutor {
                 "fs.read requires a file path",
             ));
         }
-        let all_bytes = fs::read(&path).map_err(fs_error("FS_READ_FAILED"))?;
-        let offset = input.offset.unwrap_or(0) as usize;
+
         let max_bytes = input.max_bytes.unwrap_or(DEFAULT_MAX_READ_BYTES).max(1);
-        let size_bytes = all_bytes.len();
-        let slice = if offset >= all_bytes.len() {
-            &[][..]
-        } else {
-            let end = all_bytes.len().min(offset + max_bytes);
-            &all_bytes[offset..end]
-        };
-        let binary = std::str::from_utf8(slice).is_err();
+        let offset = input.offset.unwrap_or(0);
+        let initial_identity = file_identity(&metadata);
+        if metadata.len() > DEFAULT_FS_READ_TOTAL_BYTES {
+            return Err(CoreError::new(
+                "FS_READ_TOO_LARGE",
+                format!(
+                    "fs.read file exceeds the {} byte work budget",
+                    DEFAULT_FS_READ_TOTAL_BYTES
+                ),
+            ));
+        }
+
+        let mut file = File::open(&path).map_err(fs_error("FS_READ_FAILED"))?;
+        let opened_metadata = file.metadata().map_err(fs_error("FS_READ_FAILED"))?;
+        if file_identity(&opened_metadata) != initial_identity {
+            return Err(CoreError::new(
+                "FS_READ_MUTATED",
+                "file changed while fs.read was opening it",
+            ));
+        }
+
+        let started = Instant::now();
+        let mut hasher = Sha256::new();
+        let mut preview = Vec::with_capacity(max_bytes.min(FS_READ_BUFFER_BYTES));
+        let preview_end = offset.saturating_add(max_bytes as u64);
+        let mut buffer = [0u8; FS_READ_BUFFER_BYTES];
+        let mut total_read = 0u64;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(CoreError::new("FS_READ_CANCELLED", "fs.read was cancelled"));
+            }
+            if started.elapsed() >= DEFAULT_FS_READ_TIMEOUT {
+                return Err(CoreError::new(
+                    "FS_READ_TIMEOUT",
+                    "fs.read exceeded its time budget",
+                ));
+            }
+            let count = file.read(&mut buffer).map_err(fs_error("FS_READ_FAILED"))?;
+            if count == 0 {
+                break;
+            }
+            let chunk_start = total_read;
+            total_read = total_read.saturating_add(count as u64);
+            if total_read > DEFAULT_FS_READ_TOTAL_BYTES {
+                return Err(CoreError::new(
+                    "FS_READ_TOO_LARGE",
+                    "fs.read exceeded its byte work budget",
+                ));
+            }
+            hasher.update(&buffer[..count]);
+
+            let preview_start = offset.max(chunk_start);
+            let preview_stop = preview_end.min(total_read);
+            if preview_start < preview_stop {
+                let start = (preview_start - chunk_start) as usize;
+                let stop = (preview_stop - chunk_start) as usize;
+                preview.extend_from_slice(&buffer[start..stop]);
+            }
+        }
+
+        let final_metadata = fs::metadata(&path).map_err(fs_error("FS_READ_FAILED"))?;
+        if file_identity(&final_metadata) != initial_identity || total_read != opened_metadata.len()
+        {
+            return Err(CoreError::new(
+                "FS_READ_MUTATED",
+                "file changed while fs.read was reading it",
+            ));
+        }
+
+        let binary = std::str::from_utf8(&preview).is_err();
         let requested_encoding = input.encoding.unwrap_or_else(|| "utf-8".to_string());
         let encoding = if binary || requested_encoding == "base64" {
             "base64".to_string()
@@ -147,9 +298,9 @@ impl LocalCapabilityExecutor {
             "utf-8".to_string()
         };
         let content = if encoding == "base64" {
-            BASE64_STANDARD.encode(slice)
+            BASE64_STANDARD.encode(&preview)
         } else {
-            String::from_utf8(slice.to_vec()).map_err(|_| {
+            String::from_utf8(preview).map_err(|_| {
                 CoreError::new(
                     "FS_READ_BINARY_REQUIRES_BASE64",
                     "binary file reads must use base64 encoding",
@@ -160,17 +311,31 @@ impl LocalCapabilityExecutor {
             path: self.relative_path(&path)?,
             encoding,
             content,
-            sha256: sha256_hex(&all_bytes),
-            size_bytes,
-            truncated: offset + slice.len() < all_bytes.len(),
+            sha256: format!("{:x}", hasher.finalize()),
+            size_bytes: total_read as usize,
+            truncated: preview_end < total_read,
             binary,
         })
     }
 
     pub fn fs_write(&self, input: FsWriteInput) -> CoreResult<FsWriteOutput> {
         let path = self.resolve_workspace_path_for_write(&input.path)?;
-        let created = !path.exists();
-        let before = if path.exists() {
+        if !matches!(input.mode.as_str(), "create" | "overwrite" | "append") {
+            return Err(CoreError::new(
+                "FS_WRITE_MODE_INVALID",
+                "fs.write mode must be create, overwrite, or append",
+            ));
+        }
+        let bytes = decode_content(&input.content, &input.encoding)?;
+        if input.create_parent_directories.unwrap_or(false) {
+            if let Some(parent) = path.parent() {
+                validate_write_parent_chain(parent)?;
+                fs::create_dir_all(parent).map_err(fs_error("FS_WRITE_CREATE_PARENT_FAILED"))?;
+            }
+        }
+        let snapshot = write_snapshot(&path, input.mode == "create")?;
+        let created = snapshot.target.is_none();
+        let before = if snapshot.target.is_some() {
             Some(fs::read(&path).map_err(fs_error("FS_WRITE_READ_BEFORE_FAILED"))?)
         } else {
             None
@@ -179,7 +344,7 @@ impl LocalCapabilityExecutor {
             let actual = before
                 .as_ref()
                 .map(|bytes| sha256_hex(bytes))
-                .unwrap_or_else(|| "".to_string());
+                .unwrap_or_default();
             if &actual != expected {
                 return Err(CoreError::new(
                     "FS_WRITE_SHA256_MISMATCH",
@@ -188,28 +353,31 @@ impl LocalCapabilityExecutor {
             }
         }
         if let Some(parent) = path.parent() {
-            if input.create_parent_directories.unwrap_or(false) {
-                fs::create_dir_all(parent).map_err(fs_error("FS_WRITE_CREATE_PARENT_FAILED"))?;
-            }
             self.ensure_inside_root(parent, true)?;
         }
-        let bytes = decode_content(&input.content, &input.encoding)?;
         match input.mode.as_str() {
-            "create" if path.exists() => {
+            "create" if snapshot.target.is_some() => {
                 return Err(CoreError::new("FS_WRITE_EXISTS", "file already exists"));
             }
-            "create" | "overwrite" => atomic_write(&path, &bytes, "FS_WRITE_FAILED")?,
+            "create" | "overwrite" => atomic_write_checked(
+                &path,
+                &bytes,
+                snapshot.target.as_ref(),
+                &snapshot.parent,
+                "FS_WRITE_FAILED",
+            )?,
             "append" => {
                 let mut appended = before.clone().unwrap_or_default();
                 appended.extend_from_slice(&bytes);
-                atomic_write(&path, &appended, "FS_WRITE_FAILED")?;
+                atomic_write_checked(
+                    &path,
+                    &appended,
+                    snapshot.target.as_ref(),
+                    &snapshot.parent,
+                    "FS_WRITE_FAILED",
+                )?;
             }
-            _ => {
-                return Err(CoreError::new(
-                    "FS_WRITE_MODE_INVALID",
-                    "fs.write mode must be create, overwrite, or append",
-                ));
-            }
+            _ => unreachable!("fs.write mode was validated above"),
         }
         let after = fs::read(&path).map_err(fs_error("FS_WRITE_VERIFY_FAILED"))?;
         Ok(FsWriteOutput {
@@ -233,6 +401,7 @@ impl LocalCapabilityExecutor {
         }
         for change in &changes {
             let path = self.resolve_workspace_path_for_write(&change.path)?;
+            let snapshot = write_snapshot(&path, false)?;
             let before = fs::read_to_string(&path).map_err(fs_error("PATCH_READ_FAILED"))?;
             if let Some(expected) = input.base_sha256_by_path.get(&change.path) {
                 if sha256_hex(before.as_bytes()) != *expected {
@@ -249,6 +418,8 @@ impl LocalCapabilityExecutor {
                 relative_path: change.path.clone(),
                 before,
                 after,
+                target: snapshot.target,
+                parent: snapshot.parent,
             });
         }
         if !conflicts.is_empty() {
@@ -525,6 +696,7 @@ impl LocalCapabilityExecutor {
             ));
         }
         self.validate_browser_network_preflight(&url, timeout_seconds)?;
+        let browser_proxy = ControlledBrowserProxy::start(self.security.network.clone())?;
         let screenshot_path = if let Some(path) = &input.screenshot_path {
             let resolved = self.resolve_workspace_path_for_write(path)?;
             if let Some(parent) = resolved.parent() {
@@ -535,15 +707,16 @@ impl LocalCapabilityExecutor {
         } else {
             None
         };
+        let (playwright_launcher, browser_env) = resolve_bundled_browser_runtime(&browser)?;
         let mut command = vec![
-            "npx".to_string(),
-            "-y".to_string(),
-            "playwright".to_string(),
+            playwright_launcher.to_string_lossy().into_owned(),
             "screenshot".to_string(),
             "--browser".to_string(),
             browser.clone(),
             "--timeout".to_string(),
             (timeout_seconds * 1000).to_string(),
+            "--proxy-server".to_string(),
+            browser_proxy.address().to_string(),
         ];
         command.push(input.url.clone());
         if let Some((_, absolute_path)) = &screenshot_path {
@@ -555,7 +728,7 @@ impl LocalCapabilityExecutor {
         let shell_output = self.shell_exec(ShellExecInput {
             command,
             workspace_scope: ShellWorkspaceScope::Unrestricted,
-            env: command_env_with_path(),
+            env: command_env_with_path_and(browser_env),
             timeout_seconds: Some(timeout_seconds),
             max_output_bytes: Some(max_output_bytes),
         })?;
@@ -613,8 +786,160 @@ impl LocalCapabilityExecutor {
             },
         })
     }
+}
 
+struct ControlledBrowserProxy {
+    address: SocketAddr,
+    stop: Arc<AtomicBool>,
+}
+
+impl ControlledBrowserProxy {
+    fn start(policy: NetworkSecurityPolicy) -> CoreResult<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|error| CoreError::new("BROWSER_PROXY_START_FAILED", error.to_string()))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| CoreError::new("BROWSER_PROXY_START_FAILED", error.to_string()))?;
+        let address = listener
+            .local_addr()
+            .map_err(|error| CoreError::new("BROWSER_PROXY_START_FAILED", error.to_string()))?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let policy = policy.clone();
+                        thread::spawn(move || handle_browser_proxy_connection(stream, policy));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Ok(Self { address, stop })
+    }
+
+    fn address(&self) -> String {
+        format!("http://{}", self.address)
+    }
+}
+
+impl Drop for ControlledBrowserProxy {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+fn handle_browser_proxy_connection(mut stream: TcpStream, policy: NetworkSecurityPolicy) {
+    let mut request = Vec::with_capacity(8192);
+    let mut buffer = [0u8; 4096];
+    while request.len() < 64 * 1024 {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => return,
+            Ok(count) => {
+                request.extend_from_slice(&buffer[..count]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+        }
+    }
+    let header_end = match request.windows(4).position(|part| part == b"\r\n\r\n") {
+        Some(position) => position + 4,
+        None => return,
+    };
+    let header = String::from_utf8_lossy(&request[..header_end]);
+    let mut lines = header.lines();
+    let Some(first_line) = lines.next() else {
+        return;
+    };
+    let mut parts = first_line.split_whitespace();
+    let Some(method) = parts.next() else { return };
+    let Some(target) = parts.next() else { return };
+    let (url, connect) = if method.eq_ignore_ascii_case("CONNECT") {
+        let authority = target;
+        let url = Url::parse(&format!("https://{authority}/"));
+        (url, true)
+    } else {
+        (Url::parse(target), false)
+    };
+    let Ok(url) = url else {
+        let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n");
+        return;
+    };
+    let Ok(addresses) = policy.validated_socket_addrs(&url) else {
+        let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        return;
+    };
+    let Some(address) = addresses.first() else {
+        return;
+    };
+    let Ok(mut upstream) = TcpStream::connect(*address) else {
+        let _ = stream.write_all(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+        return;
+    };
+    if connect {
+        if stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .is_err()
+        {
+            return;
+        }
+        relay_proxy_streams(stream, upstream);
+    } else {
+        let request_target = url
+            .path_segments()
+            .map(|segments| format!("/{}", segments.collect::<Vec<_>>().join("/")))
+            .unwrap_or_else(|| "/".to_string());
+        let request_target = if let Some(query) = url.query() {
+            format!("{request_target}?{query}")
+        } else {
+            request_target
+        };
+        let mut forwarded = format!("{method} {request_target} HTTP/1.1\r\n");
+        for line in lines {
+            if !line.to_ascii_lowercase().starts_with("proxy-connection:") {
+                forwarded.push_str(line);
+                forwarded.push_str("\r\n");
+            }
+        }
+        forwarded.push_str("\r\n");
+        if upstream.write_all(forwarded.as_bytes()).is_err() {
+            return;
+        }
+        let _ = std::io::copy(&mut upstream, &mut stream);
+    }
+}
+
+fn relay_proxy_streams(mut client: TcpStream, mut upstream: TcpStream) {
+    let mut client_reader = match client.try_clone() {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let mut upstream_writer = match upstream.try_clone() {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let upload = thread::spawn(move || {
+        let _ = std::io::copy(&mut client_reader, &mut upstream_writer);
+    });
+    let _ = std::io::copy(&mut upstream, &mut client);
+    let _ = upload.join();
+}
+
+impl LocalCapabilityExecutor {
     pub fn db_query(&self, input: DbQueryInput) -> CoreResult<DbQueryOutput> {
+        self.db_query_with_cancel(input, &ShellCancellationToken::default())
+    }
+
+    pub fn db_query_with_cancel(
+        &self,
+        input: DbQueryInput,
+        cancel: &ShellCancellationToken,
+    ) -> CoreResult<DbQueryOutput> {
         let started = Instant::now();
         if input.read_only == Some(false) {
             return Err(CoreError::new(
@@ -634,8 +959,12 @@ impl LocalCapabilityExecutor {
         let max_output_bytes = expanded_output_limit(input.max_output_bytes)?;
         let max_rows = input.max_rows.unwrap_or(100).clamp(1, 10_000);
         let output = match input.driver.as_str() {
-            "sqlite" => self.db_query_sqlite(&input, timeout_seconds, max_output_bytes)?,
-            "postgres" => self.db_query_postgres(&input, timeout_seconds, max_output_bytes)?,
+            "sqlite" => {
+                self.db_query_sqlite(&input, timeout_seconds, max_output_bytes, max_rows, cancel)?
+            }
+            "postgres" => {
+                self.db_query_postgres(&input, timeout_seconds, max_output_bytes, max_rows, cancel)?
+            }
             _ => {
                 return Err(CoreError::new(
                     "DB_DRIVER_UNSUPPORTED",
@@ -802,8 +1131,15 @@ impl LocalCapabilityExecutor {
         self.security.network.validate_url(&url)?;
         let timeout = Duration::from_secs(http_timeout_seconds(input.timeout_seconds)?);
         let max_response_bytes = http_response_limit(input.max_response_bytes)?;
+        let validated_addresses = self.security.network.validated_socket_addrs(&url)?;
         let client = Client::builder()
             .timeout(timeout)
+            .resolve_to_addrs(
+                url.host_str().ok_or_else(|| {
+                    CoreError::new("NETWORK_HOST_MISSING", "network host is required")
+                })?,
+                &validated_addresses,
+            )
             .redirect(http_redirect_policy(
                 follow_redirects,
                 self.security.network.clone(),
@@ -855,24 +1191,40 @@ impl LocalCapabilityExecutor {
         input: &DbQueryInput,
         timeout_seconds: u64,
         max_output_bytes: usize,
+        max_rows: usize,
+        cancel: &ShellCancellationToken,
     ) -> CoreResult<DbRawOutput> {
         let database_path = sqlite_database_path(&input.connection_string)?;
         let resolved = self.resolve_workspace_path(&database_path, true)?;
-        let output = self.shell_exec(ShellExecInput {
-            command: vec![
-                "sqlite3".to_string(),
-                "-json".to_string(),
-                resolved.to_string_lossy().to_string(),
-                input.query.clone(),
-            ],
-            workspace_scope: ShellWorkspaceScope::Unrestricted,
-            env: command_env_with_path(),
-            timeout_seconds: Some(timeout_seconds),
-            max_output_bytes: Some(max_output_bytes),
-        })?;
+        let output = self.shell_exec_with_cancel(
+            ShellExecInput {
+                command: vec![
+                    "sqlite3".to_string(),
+                    "-readonly".to_string(),
+                    "-bail".to_string(),
+                    "-json".to_string(),
+                    resolved.to_string_lossy().to_string(),
+                    format!(
+                        "PRAGMA query_only=ON; BEGIN; {}; COMMIT;",
+                        sqlite_limit_query(&input.query, max_rows)
+                    ),
+                ],
+                workspace_scope: ShellWorkspaceScope::Unrestricted,
+                env: command_env_with_path(),
+                timeout_seconds: Some(timeout_seconds),
+                max_output_bytes: Some(max_output_bytes),
+            },
+            cancel,
+        )?;
         if output.exit_code != 0 {
             return Err(CoreError::new(
-                "DB_QUERY_FAILED",
+                if output.artifacts.cancelled {
+                    "DB_QUERY_CANCELLED"
+                } else if output.artifacts.timed_out {
+                    "DB_QUERY_TIMEOUT"
+                } else {
+                    "DB_QUERY_FAILED"
+                },
                 non_empty_message(&output.artifacts.stderr, "sqlite query failed"),
             ));
         }
@@ -889,26 +1241,42 @@ impl LocalCapabilityExecutor {
         input: &DbQueryInput,
         timeout_seconds: u64,
         max_output_bytes: usize,
+        max_rows: usize,
+        cancel: &ShellCancellationToken,
     ) -> CoreResult<DbRawOutput> {
-        let output = self.shell_exec(ShellExecInput {
+        let role = postgres_read_only_role()?;
+        let timeout_ms = timeout_seconds.saturating_mul(1000);
+        let output = self.shell_exec_with_cancel(ShellExecInput {
             command: vec![
                 "psql".to_string(),
                 input.connection_string.clone(),
+                "--username".to_string(),
+                role,
                 "--no-psqlrc".to_string(),
                 "--set".to_string(),
                 "ON_ERROR_STOP=1".to_string(),
                 "--csv".to_string(),
                 "--command".to_string(),
-                input.query.clone(),
+                format!(
+                    "BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = '{}ms'; {}; COMMIT;",
+                    timeout_ms,
+                    postgres_limit_query(&input.query, max_rows)
+                ),
             ],
             workspace_scope: ShellWorkspaceScope::Unrestricted,
             env: command_env_with_path(),
             timeout_seconds: Some(timeout_seconds),
             max_output_bytes: Some(max_output_bytes),
-        })?;
+        }, cancel)?;
         if output.exit_code != 0 {
             return Err(CoreError::new(
-                "DB_QUERY_FAILED",
+                if output.artifacts.cancelled {
+                    "DB_QUERY_CANCELLED"
+                } else if output.artifacts.timed_out {
+                    "DB_QUERY_TIMEOUT"
+                } else {
+                    "DB_QUERY_FAILED"
+                },
                 non_empty_message(&output.artifacts.stderr, "postgres query failed"),
             ));
         }
@@ -1214,6 +1582,17 @@ impl CapabilityExecutor for LocalCapabilityExecutor {
     }
 
     fn execute(&self, request: CapabilityRequest) -> CoreResult<CapabilityResult> {
+        let _ = request;
+        Err(CoreError::new(
+            "AUTHORIZED_REQUEST_REQUIRED",
+            "local capability execution requires an authorized request",
+        ))
+    }
+}
+
+impl LocalCapabilityExecutor {
+    fn execute_request(&self, capability: String, input: String) -> CoreResult<CapabilityResult> {
+        let request = CapabilityRequest { capability, input };
         let output = match request.capability.as_str() {
             "fs.list" => serde_json::to_string(&self.fs_list(parse_input(&request)?)?),
             "fs.read" => serde_json::to_string(&self.fs_read(parse_input(&request)?)?),
@@ -1244,6 +1623,11 @@ impl CapabilityExecutor for LocalCapabilityExecutor {
             capability: request.capability,
             output,
         })
+    }
+
+    #[cfg(test)]
+    fn execute_unchecked(&self, request: CapabilityRequest) -> CoreResult<CapabilityResult> {
+        self.execute_request(request.capability, request.input)
     }
 }
 
@@ -1693,15 +2077,26 @@ struct ParsedFileChange {
     relative_path: String,
     before: String,
     after: String,
+    target: Option<FileIdentity>,
+    parent: FileIdentity,
 }
 
 #[derive(Debug)]
 struct PreparedPatchChange {
     path: PathBuf,
     temp_path: PathBuf,
+    rollback_path: Option<PathBuf>,
     relative_path: String,
     before: Vec<u8>,
     after: Vec<u8>,
+    target: Option<FileIdentity>,
+    parent: FileIdentity,
+}
+
+#[derive(Debug)]
+struct WriteSnapshot {
+    target: Option<FileIdentity>,
+    parent: FileIdentity,
 }
 
 #[derive(Debug)]
@@ -2121,23 +2516,47 @@ fn commit_patch_changes(changes: Vec<ParsedFileChange>) -> CoreResult<Vec<FileCh
         seen_paths.push(change.path.clone());
     }
 
-    let mut prepared = Vec::new();
+    let mut prepared: Vec<PreparedPatchChange> = Vec::new();
     for change in changes {
         match prepare_atomic_write(
             &change.path,
             change.after.as_bytes(),
             "PATCH_PREPARE_FAILED",
         ) {
-            Ok(temp_path) => prepared.push(PreparedPatchChange {
-                path: change.path,
-                temp_path,
-                relative_path: change.relative_path,
-                before: change.before.into_bytes(),
-                after: change.after.into_bytes(),
-            }),
+            Ok(temp_path) => {
+                let before = change.before.into_bytes();
+                let rollback_path =
+                    prepare_atomic_write(&change.path, &before, "PATCH_PREPARE_FAILED").ok();
+                if rollback_path.is_none() {
+                    let _ = fs::remove_file(temp_path);
+                    for item in &prepared {
+                        let _ = fs::remove_file(&item.temp_path);
+                        if let Some(path) = &item.rollback_path {
+                            let _ = fs::remove_file(path);
+                        }
+                    }
+                    return Err(CoreError::new(
+                        "PATCH_PREPARE_FAILED",
+                        "could not create patch rollback journal",
+                    ));
+                }
+                prepared.push(PreparedPatchChange {
+                    path: change.path,
+                    temp_path,
+                    rollback_path,
+                    relative_path: change.relative_path,
+                    before,
+                    after: change.after.into_bytes(),
+                    target: change.target,
+                    parent: change.parent,
+                });
+            }
             Err(error) => {
                 for item in &prepared {
                     let _ = fs::remove_file(&item.temp_path);
+                    if let Some(path) = &item.rollback_path {
+                        let _ = fs::remove_file(path);
+                    }
                 }
                 return Err(error);
             }
@@ -2146,14 +2565,21 @@ fn commit_patch_changes(changes: Vec<ParsedFileChange>) -> CoreResult<Vec<FileCh
 
     let mut committed_indices: Vec<usize> = Vec::new();
     for (index, change) in prepared.iter().enumerate() {
+        if let Err(error) = validate_snapshot(&change.path, change.target.as_ref(), &change.parent)
+        {
+            cleanup_patch_temps(&prepared);
+            if let Err(rollback) = rollback_patch_changes(&prepared, &committed_indices) {
+                return Err(rollback);
+            }
+            cleanup_patch_journal(&prepared);
+            return Err(error);
+        }
         if let Err(error) = fs::rename(&change.temp_path, &change.path) {
-            for item in prepared.iter().filter(|item| item.temp_path.exists()) {
-                let _ = fs::remove_file(&item.temp_path);
+            cleanup_patch_temps(&prepared);
+            if let Err(rollback) = rollback_patch_changes(&prepared, &committed_indices) {
+                return Err(rollback);
             }
-            for committed_index in committed_indices.into_iter().rev() {
-                let item = &prepared[committed_index];
-                let _ = atomic_write(&item.path, &item.before, "PATCH_ROLLBACK_FAILED");
-            }
+            cleanup_patch_journal(&prepared);
             return Err(CoreError::new("PATCH_COMMIT_FAILED", error.to_string()));
         }
         fsync_parent(&change.path);
@@ -2162,13 +2588,203 @@ fn commit_patch_changes(changes: Vec<ParsedFileChange>) -> CoreResult<Vec<FileCh
 
     Ok(prepared
         .into_iter()
-        .map(|change| FileChange {
-            path: change.relative_path,
-            change_type: "modified".to_string(),
-            before_sha256: Some(sha256_hex(&change.before)),
-            after_sha256: Some(sha256_hex(&change.after)),
+        .map(|change| {
+            if let Some(path) = change.rollback_path {
+                let _ = fs::remove_file(path);
+            }
+            FileChange {
+                path: change.relative_path,
+                change_type: "modified".to_string(),
+                before_sha256: Some(sha256_hex(&change.before)),
+                after_sha256: Some(sha256_hex(&change.after)),
+            }
         })
         .collect())
+}
+
+fn cleanup_patch_journal(changes: &[PreparedPatchChange]) {
+    for item in changes {
+        let _ = fs::remove_file(&item.temp_path);
+        if let Some(path) = &item.rollback_path {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn cleanup_patch_temps(changes: &[PreparedPatchChange]) {
+    for item in changes {
+        let _ = fs::remove_file(&item.temp_path);
+    }
+}
+
+fn rollback_patch_changes(changes: &[PreparedPatchChange], committed: &[usize]) -> CoreResult<()> {
+    for index in committed.iter().rev() {
+        let item = &changes[*index];
+        let current =
+            fs::symlink_metadata(&item.path).map_err(fs_error("PATCH_ROLLBACK_FAILED"))?;
+        if current.file_type().is_symlink() || !current.is_file() {
+            return Err(CoreError::new(
+                "PATCH_ROLLBACK_FAILED",
+                "target changed to a symlink or non-file while rolling back",
+            ));
+        }
+        let Some(rollback_path) = &item.rollback_path else {
+            return Err(CoreError::new(
+                "PATCH_ROLLBACK_FAILED",
+                "rollback journal missing",
+            ));
+        };
+        fs::rename(rollback_path, &item.path).map_err(fs_error("PATCH_ROLLBACK_FAILED"))?;
+        fsync_parent(&item.path);
+    }
+    Ok(())
+}
+
+fn write_snapshot(path: &Path, allow_missing: bool) -> CoreResult<WriteSnapshot> {
+    let parent = snapshot_parent(path)?;
+    let target = match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(CoreError::new(
+                    "FS_WRITE_SYMLINK_OR_NOT_FILE",
+                    "write targets must be regular, non-symlink files",
+                ));
+            }
+            #[cfg(unix)]
+            if metadata.permissions().mode() & 0o222 == 0 {
+                return Err(CoreError::new(
+                    "FS_WRITE_PERMISSION_DENIED",
+                    "write target is not writable",
+                ));
+            }
+            Some(file_identity(&metadata))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && allow_missing => None,
+        Err(error) => return Err(fs_error("FS_WRITE_TARGET_FAILED")(error)),
+    };
+    Ok(WriteSnapshot { target, parent })
+}
+
+fn snapshot_parent(path: &Path) -> CoreResult<FileIdentity> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::new("FS_WRITE_PARENT_FAILED", "target path parent is invalid"))?;
+    let mut current = Some(parent);
+    while let Some(directory) = current {
+        let metadata =
+            fs::symlink_metadata(directory).map_err(fs_error("FS_WRITE_PARENT_FAILED"))?;
+        if metadata.file_type().is_symlink() {
+            return Err(CoreError::new(
+                "FS_WRITE_SYMLINK_OR_NOT_FILE",
+                "write target parents must not contain symlinks",
+            ));
+        }
+        current = directory.parent();
+    }
+    let metadata = fs::symlink_metadata(parent).map_err(fs_error("FS_WRITE_PARENT_FAILED"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CoreError::new(
+            "FS_WRITE_PARENT_CHANGED",
+            "write target parent must be a non-symlink directory",
+        ));
+    }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o222 == 0 {
+        return Err(CoreError::new(
+            "FS_WRITE_PERMISSION_DENIED",
+            "write target parent is not writable",
+        ));
+    }
+    Ok(file_identity(&metadata))
+}
+
+fn validate_write_parent_chain(path: &Path) -> CoreResult<()> {
+    let mut current = Some(path);
+    while let Some(directory) = current {
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(CoreError::new(
+                    "FS_WRITE_SYMLINK_OR_NOT_FILE",
+                    "write target parents must not contain symlinks",
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(CoreError::new(
+                    "FS_WRITE_PARENT_CHANGED",
+                    "write target parent must be a directory",
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(fs_error("FS_WRITE_PARENT_FAILED")(error)),
+        }
+        current = directory.parent();
+    }
+    Ok(())
+}
+
+fn validate_snapshot(
+    path: &Path,
+    expected_target: Option<&FileIdentity>,
+    expected_parent: &FileIdentity,
+) -> CoreResult<()> {
+    if &snapshot_parent(path)? != expected_parent {
+        return Err(CoreError::new(
+            "FS_WRITE_PATH_CHANGED",
+            "write target parent changed during commit",
+        ));
+    }
+    let current = fs::symlink_metadata(path).map_err(fs_error("FS_WRITE_PATH_CHANGED"))?;
+    if current.file_type().is_symlink() || !current.is_file() {
+        return Err(CoreError::new(
+            "FS_WRITE_PATH_CHANGED",
+            "write target changed to a symlink or non-file",
+        ));
+    }
+    if expected_target != Some(&file_identity(&current)) {
+        return Err(CoreError::new(
+            "FS_WRITE_CONFLICT",
+            "write target changed since it was read",
+        ));
+    }
+    Ok(())
+}
+
+fn atomic_write_checked(
+    path: &Path,
+    bytes: &[u8],
+    expected_target: Option<&FileIdentity>,
+    expected_parent: &FileIdentity,
+    code: &'static str,
+) -> CoreResult<()> {
+    let temp_path = prepare_atomic_write(path, bytes, code)?;
+    let validation = if expected_target.is_some() {
+        validate_snapshot(path, expected_target, expected_parent)
+    } else if &snapshot_parent(path)? != expected_parent {
+        Err(CoreError::new(
+            "FS_WRITE_CONFLICT",
+            "create target parent changed",
+        ))
+    } else {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Err(CoreError::new(
+                "FS_WRITE_CONFLICT",
+                "create target appeared or changed",
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(fs_error("FS_WRITE_CONFLICT")(error)),
+        }
+    };
+    if let Err(error) = validation {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(CoreError::new(code, error.to_string()));
+    }
+    fsync_parent(path);
+    Ok(())
 }
 
 fn atomic_write(path: &Path, bytes: &[u8], code: &'static str) -> CoreResult<()> {
@@ -2506,6 +3122,177 @@ fn default_child_environment() -> BTreeMap<String, String> {
     env
 }
 
+#[derive(Debug, Deserialize)]
+struct BrowserRuntimeManifest {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    #[serde(rename = "playwrightVersion")]
+    playwright_version: String,
+    artifacts: BTreeMap<String, BrowserRuntimeTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserRuntimeTarget {
+    launcher: BrowserRuntimeArtifact,
+    browsers: BTreeMap<String, BrowserRuntimeArtifact>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserRuntimeArtifact {
+    path: String,
+    sha256: String,
+    size: u64,
+}
+
+fn resolve_bundled_browser_runtime(
+    browser: &str,
+) -> CoreResult<(PathBuf, BTreeMap<String, String>)> {
+    let plugin_root = std::env::var_os("LOOMEX_PLUGIN_ROOT")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            CoreError::new(
+                "BROWSER_RUNTIME_NOT_CONFIGURED",
+                "browser.playwright requires a packaged browser runtime",
+            )
+        })?;
+    let manifest_path = plugin_root.join("packaging/browser-runtime.json");
+    let manifest_bytes = fs::read(&manifest_path).map_err(|error| {
+        CoreError::new(
+            "BROWSER_RUNTIME_MANIFEST_MISSING",
+            format!("cannot read packaged browser runtime manifest: {error}"),
+        )
+    })?;
+    let manifest: BrowserRuntimeManifest =
+        serde_json::from_slice(&manifest_bytes).map_err(|error| {
+            CoreError::new(
+                "BROWSER_RUNTIME_MANIFEST_INVALID",
+                format!("cannot parse packaged browser runtime manifest: {error}"),
+            )
+        })?;
+    if manifest.schema_version != 1 || manifest.playwright_version.trim().is_empty() {
+        return Err(CoreError::new(
+            "BROWSER_RUNTIME_MANIFEST_INVALID",
+            "packaged browser runtime manifest has an unsupported schema or version",
+        ));
+    }
+    let target = browser_runtime_target_key();
+    let target_manifest = manifest.artifacts.get(&target).ok_or_else(|| {
+        CoreError::new(
+            "BROWSER_RUNTIME_UNSUPPORTED_PLATFORM",
+            format!("no packaged browser runtime exists for {target}"),
+        )
+    })?;
+    let browser_manifest = target_manifest.browsers.get(browser).ok_or_else(|| {
+        CoreError::new(
+            "BROWSER_RUNTIME_BROWSER_UNAVAILABLE",
+            format!("no packaged {browser} browser exists for {target}"),
+        )
+    })?;
+    let launcher =
+        verify_browser_runtime_artifact(&plugin_root, &target_manifest.launcher, "launcher")?;
+    let browser_binary = verify_browser_runtime_artifact(&plugin_root, browser_manifest, browser)?;
+    let mut env = BTreeMap::new();
+    env.insert(
+        "LOOMEX_BROWSER_BINARY".to_string(),
+        browser_binary.to_string_lossy().into_owned(),
+    );
+    env.insert(
+        "LOOMEX_PLAYWRIGHT_VERSION".to_string(),
+        manifest.playwright_version,
+    );
+    Ok((launcher, env))
+}
+
+fn verify_browser_runtime_artifact(
+    plugin_root: &Path,
+    artifact: &BrowserRuntimeArtifact,
+    label: &str,
+) -> CoreResult<PathBuf> {
+    if artifact.path.is_empty()
+        || !is_sha256_hex(&artifact.sha256)
+        || artifact.size == 0
+        || Path::new(&artifact.path).is_absolute()
+    {
+        return Err(CoreError::new(
+            "BROWSER_RUNTIME_MANIFEST_INVALID",
+            format!("packaged browser {label} artifact metadata is invalid"),
+        ));
+    }
+    let candidate = plugin_root.join(&artifact.path);
+    let info = fs::symlink_metadata(&candidate).map_err(|error| {
+        CoreError::new(
+            "BROWSER_RUNTIME_ARTIFACT_MISSING",
+            format!("packaged browser {label} artifact is unavailable: {error}"),
+        )
+    })?;
+    if !info.file_type().is_file() || info.file_type().is_symlink() || info.len() != artifact.size {
+        return Err(CoreError::new(
+            "BROWSER_RUNTIME_ARTIFACT_INVALID",
+            format!("packaged browser {label} artifact is not the expected regular file"),
+        ));
+    }
+    #[cfg(unix)]
+    if info.permissions().mode() & 0o111 == 0 {
+        return Err(CoreError::new(
+            "BROWSER_RUNTIME_ARTIFACT_INVALID",
+            format!("packaged browser {label} artifact is not executable"),
+        ));
+    }
+    let actual = sha256_file(&candidate).map_err(|error| {
+        CoreError::new(
+            "BROWSER_RUNTIME_ARTIFACT_INVALID",
+            format!("cannot hash packaged browser {label} artifact: {error}"),
+        )
+    })?;
+    if actual != artifact.sha256 {
+        return Err(CoreError::new(
+            "BROWSER_RUNTIME_CHECKSUM_MISMATCH",
+            format!("checksum mismatch for packaged browser {label} artifact"),
+        ));
+    }
+    Ok(candidate)
+}
+
+fn sha256_file(path: &Path) -> std::io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && value == value.to_ascii_lowercase()
+}
+
+fn browser_runtime_target_key() -> String {
+    let platform = if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unsupported"
+    };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x64"
+    } else {
+        "unsupported"
+    };
+    format!("{platform}-{arch}")
+}
+
 fn command_env_with_path() -> BTreeMap<String, String> {
     default_child_environment()
 }
@@ -2575,6 +3362,14 @@ fn validate_read_only_sql(query: &str) -> CoreResult<()> {
         .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
         .find(|part| !part.is_empty())
         .unwrap_or("");
+    if contains_sql_statement_separator(&normalized)
+        || (first == "pragma" && pragma_assigns_value(&normalized))
+    {
+        return Err(CoreError::new(
+            "DB_WRITE_DENIED",
+            "db.query accepts one read-only statement and denies PRAGMA assignments",
+        ));
+    }
     if matches!(
         first,
         "select" | "with" | "show" | "describe" | "explain" | "pragma"
@@ -2587,6 +3382,75 @@ fn validate_read_only_sql(query: &str) -> CoreResult<()> {
             "db.query is read-only by default and denied this statement",
         ))
     }
+}
+
+fn contains_sql_statement_separator(query: &str) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    for ch in query.chars() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == active_quote {
+                quote = None;
+            } else if ch == '\\' && active_quote == '\'' {
+                escaped = true;
+            }
+        } else if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+        } else if ch == ';' {
+            return true;
+        }
+    }
+    false
+}
+
+fn pragma_assigns_value(query: &str) -> bool {
+    let Some(pragma) = query.strip_prefix("pragma") else {
+        return false;
+    };
+    pragma.contains('=')
+}
+
+fn sqlite_limit_query(query: &str, max_rows: usize) -> String {
+    // The parser remains defense-in-depth. SQLite's read-only open and
+    // query_only pragma are the actual side-effect boundary.
+    if query
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("pragma")
+    {
+        query.to_string()
+    } else {
+        format!("SELECT * FROM ({query}) LIMIT {max_rows}")
+    }
+}
+
+fn postgres_limit_query(query: &str, max_rows: usize) -> String {
+    format!("SELECT * FROM ({query}) AS loomex_read_only_query LIMIT {max_rows}")
+}
+
+fn postgres_read_only_role() -> CoreResult<String> {
+    let role = std::env::var("LOOMEX_DB_READ_ONLY_ROLE").map_err(|_| {
+        CoreError::new(
+            "DB_ROLE_NOT_CONFIGURED",
+            "LOOMEX_DB_READ_ONLY_ROLE must name the low-privilege PostgreSQL role",
+        )
+    })?;
+    let valid = role.bytes().enumerate().all(|(index, byte)| {
+        if index == 0 {
+            byte.is_ascii_alphabetic() || byte == b'_'
+        } else {
+            byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+        }
+    });
+    if role.is_empty() || !valid {
+        return Err(CoreError::new(
+            "DB_ROLE_INVALID",
+            "LOOMEX_DB_READ_ONLY_ROLE must be a simple PostgreSQL identifier",
+        ));
+    }
+    Ok(role)
 }
 
 fn contains_sql_mutation_keyword(query: &str) -> bool {
@@ -2866,6 +3730,27 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileIdentity {
+    len: u64,
+    modified: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+fn file_identity(metadata: &fs::Metadata) -> FileIdentity {
+    FileIdentity {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+    }
+}
+
 fn diff_ref(path: &str, before: Option<&[u8]>, after: &[u8]) -> String {
     match before {
         None => format!("created:{path}:{}", sha256_hex(after)),
@@ -2990,6 +3875,68 @@ mod tests {
     }
 
     #[test]
+    fn read_streams_hash_while_bounding_preview() {
+        let root = test_workspace("streamed_read");
+        let bytes = (0..32_768)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        fs::write(root.join("payload.bin"), &bytes).unwrap();
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+
+        let read = executor
+            .fs_read(FsReadInput {
+                path: "payload.bin".to_string(),
+                encoding: Some("base64".to_string()),
+                max_bytes: Some(17),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(BASE64_STANDARD.encode(&bytes[..17]), read.content);
+        assert_eq!(sha256_hex(&bytes), read.sha256);
+        assert_eq!(bytes.len(), read.size_bytes);
+        assert!(read.truncated);
+    }
+
+    #[test]
+    fn read_rejects_file_over_total_work_budget_before_open() {
+        let root = test_workspace("oversized_read");
+        let file = File::create(root.join("large.bin")).unwrap();
+        file.set_len(DEFAULT_FS_READ_TOTAL_BYTES + 1).unwrap();
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+
+        let error = executor
+            .fs_read(FsReadInput {
+                path: "large.bin".to_string(),
+                ..Default::default()
+            })
+            .unwrap_err();
+
+        assert_eq!("FS_READ_TOO_LARGE", error.code);
+    }
+
+    #[test]
+    fn read_honors_cancellation_before_work() {
+        let root = test_workspace("cancelled_read");
+        fs::write(root.join("payload.txt"), "payload").unwrap();
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let cancel = ShellCancellationToken::default();
+        cancel.cancel();
+
+        let error = executor
+            .fs_read_with_cancel(
+                FsReadInput {
+                    path: "payload.txt".to_string(),
+                    ..Default::default()
+                },
+                &cancel,
+            )
+            .unwrap_err();
+
+        assert_eq!("FS_READ_CANCELLED", error.code);
+    }
+
+    #[test]
     fn read_outside_workspace_denied() {
         let root = test_workspace("outside_read");
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
@@ -3106,6 +4053,54 @@ mod tests {
         assert!(!output.applied);
         assert_eq!(vec!["app.txt".to_string()], output.conflicts);
         assert_eq!("old\n", fs::read_to_string(root.join("app.txt")).unwrap());
+    }
+
+    #[test]
+    fn patch_expected_digest_conflict_does_not_overwrite() {
+        let root = test_workspace("patch_digest_conflict");
+        fs::write(root.join("app.txt"), "old\n").unwrap();
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let output = executor
+            .fs_apply_patch(FsApplyPatchInput {
+                patch: "--- a/app.txt\n+++ b/app.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n".to_string(),
+                base_sha256_by_path: [("app.txt".to_string(), sha256_hex(b"stale\n"))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert!(!output.applied);
+        assert_eq!(vec!["app.txt".to_string()], output.conflicts);
+        assert_eq!("old\n", fs::read_to_string(root.join("app.txt")).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_rejects_symlink_target_without_touching_link() {
+        let root = test_workspace("write_symlink_target");
+        let outside = root.with_extension("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("target.txt"), "outside\n").unwrap();
+        std::os::unix::fs::symlink(outside.join("target.txt"), root.join("link.txt")).unwrap();
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+
+        let error = executor
+            .fs_write(FsWriteInput {
+                path: "link.txt".to_string(),
+                content: "inside\n".to_string(),
+                encoding: "utf-8".to_string(),
+                mode: "overwrite".to_string(),
+                expected_sha256: None,
+                create_parent_directories: None,
+            })
+            .unwrap_err();
+
+        assert_eq!("FS_WRITE_SYMLINK_OR_NOT_FILE", error.code);
+        assert_eq!(
+            "outside\n",
+            fs::read_to_string(outside.join("target.txt")).unwrap()
+        );
     }
 
     #[test]
@@ -3510,7 +4505,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
 
         let result = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "fs.read".to_string(),
                 input: r#"{"path":"app.txt"}"#.to_string(),
             })
@@ -3521,12 +4516,27 @@ mod tests {
     }
 
     #[test]
+    fn public_executor_rejects_untyped_requests_without_authorization() {
+        let root = test_workspace("authorization_boundary");
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+
+        let error = executor
+            .execute(CapabilityRequest {
+                capability: "fs.list".to_string(),
+                input: r#"{"path":"."}"#.to_string(),
+            })
+            .unwrap_err();
+
+        assert_eq!("AUTHORIZED_REQUEST_REQUIRED", error.code);
+    }
+
+    #[test]
     fn serialized_shell_result_matches_contract_shape() {
         let root = test_workspace("shell_schema_shape");
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
 
         let result = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "shell.exec".to_string(),
                 input: r#"{"command":["sh","-c","printf ok"],"max_output_bytes":16}"#.to_string(),
             })
@@ -3574,7 +4584,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
 
         let error = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "shell.exec".to_string(),
                 input: r#"{"command":["sh","-c","printf ok"],"cwd":"subdir"}"#.to_string(),
             })
@@ -3790,7 +4800,7 @@ mod tests {
             assert_eq!(
                 "UNSUPPORTED_CAPABILITY",
                 executor
-                    .execute(CapabilityRequest {
+                    .execute_unchecked(CapabilityRequest {
                         capability: capability.to_string(),
                         input: "{}".to_string(),
                     })
@@ -3821,7 +4831,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
 
         let result = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "git.status".to_string(),
                 input: r#"{"porcelain":true,"include_untracked":true}"#.to_string(),
             })
@@ -3854,7 +4864,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
 
         let result = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "git.diff".to_string(),
                 input:
                     r#"{"paths":["tracked.txt"],"cached":false,"context_lines":3,"max_bytes":4096}"#
@@ -3898,7 +4908,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
 
         let result = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "git.log".to_string(),
                 input: r#"{"max_count":1,"paths":["tracked.txt"]}"#.to_string(),
             })
@@ -3930,7 +4940,7 @@ mod tests {
             ("git.log", r#"{"ref_name":"HEAD"}"#),
         ] {
             let error = executor
-                .execute(CapabilityRequest {
+                .execute_unchecked(CapabilityRequest {
                     capability: capability.to_string(),
                     input: input.to_string(),
                 })
@@ -3939,7 +4949,7 @@ mod tests {
         }
 
         let error = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "git.status".to_string(),
                 input: r#"{"repository_path":".","command":"commit"}"#.to_string(),
             })
@@ -4425,12 +5435,6 @@ mod tests {
         });
         let output = match result {
             Ok(output) => output,
-            Err(error)
-                if error.code == "BROWSER_PLAYWRIGHT_FAILED"
-                    && error.message.contains("playwright install") =>
-            {
-                return;
-            }
             Err(error) => panic!("unexpected browser.playwright failure: {error:?}"),
         };
 
@@ -4520,6 +5524,55 @@ mod tests {
     }
 
     #[test]
+    fn db_query_sqlite_pragma_assignment_is_denied_before_execution() {
+        let root = test_workspace("db_pragma_assignment_denied");
+        let db_path = root.join("data.sqlite");
+        run_sqlite_test_command(&db_path, "create table items(id integer);");
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+
+        let error = executor
+            .db_query(DbQueryInput {
+                driver: "sqlite".to_string(),
+                connection_string: "sqlite://data.sqlite".to_string(),
+                query: "pragma user_version = 7".to_string(),
+                read_only: None,
+                max_rows: None,
+                timeout_seconds: Some(5),
+                max_output_bytes: Some(4096),
+            })
+            .unwrap_err();
+
+        assert_eq!("DB_WRITE_DENIED", error.code);
+    }
+
+    #[test]
+    fn db_query_sqlite_enforces_row_limit_at_query_boundary() {
+        let root = test_workspace("db_row_limit");
+        let db_path = root.join("data.sqlite");
+        run_sqlite_test_command(
+            &db_path,
+            "create table items(id integer); insert into items values(1),(2),(3);",
+        );
+        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+
+        let output = executor
+            .db_query(DbQueryInput {
+                driver: "sqlite".to_string(),
+                connection_string: "sqlite://data.sqlite".to_string(),
+                query: "select id from items order by id".to_string(),
+                read_only: None,
+                max_rows: Some(2),
+                timeout_seconds: Some(5),
+                max_output_bytes: Some(4096),
+            })
+            .unwrap();
+
+        assert_eq!(2, output.row_count);
+        assert!(output.truncated);
+        assert!(!output.artifacts.rows_json.contains("3"));
+    }
+
+    #[test]
     fn db_query_artifacts_are_redacted() {
         let root = test_workspace("db_query_redaction");
         let db_path = root.join("data.sqlite");
@@ -4590,7 +5643,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root).unwrap();
 
         let error = executor
-            .execute(CapabilityRequest {
+            .execute_unchecked(CapabilityRequest {
                 capability: "docker.exec".to_string(),
                 input: r#"{"container":"postgres","command":["echo","ok"],"allowed_containers":["postgres"]}"#.to_string(),
             })
@@ -4808,14 +5861,12 @@ mod tests {
     }
 
     fn playwright_available() -> bool {
-        Command::new("npx")
-            .arg("-y")
-            .arg("playwright")
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
+        std::env::var_os("LOOMEX_PLUGIN_ROOT")
+            .map(|root| {
+                PathBuf::from(root)
+                    .join("packaging/browser-runtime.json")
+                    .is_file()
+            })
             .unwrap_or(false)
     }
 }
