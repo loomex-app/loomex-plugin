@@ -14,7 +14,7 @@
       "id": "catalog-summary",
       "path": "catalog-summary.md",
       "nodeTypes": [],
-      "sha256": "f4f535f8ea04add4a7181f66c4b1f88caa92b4d9575483a3621023a801c5a1b3",
+      "sha256": "0b0aea0b56db6950b61e42da3b9931b4db2e2860062925e083cb705fa7346f92",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "contract"
     },
@@ -134,7 +134,7 @@
       "id": "pattern.clarifier-loop",
       "path": "patterns/clarifier-loop.md",
       "nodeTypes": ["ai_agent", "human", "condition"],
-      "sha256": "6a6ef309195a5f9e3ae1ed7ae9cfe2252aded23de49ce038752558f3e52cbb58",
+      "sha256": "f9203f998399768a162ed100242cd34df1922eca20ff62276e18e612b32e0ca8",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "pattern"
     }

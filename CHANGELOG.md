@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.71
+
+- Keep Clarification Agent questions user-facing and non-technical.
+- Prevent clarification from asking users about node types, mappings, schemas,
+  session policies, or other implementation parameters.
+
 ## 0.1.70
 
 - Harden workflow builder guide contracts for Human Input batch answers and
