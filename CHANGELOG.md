@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.69
+
+- Require a real natural-language workflow description before starting the
+  hidden workflow builder; skill invocations and skill references are no
+  longer sent as workflow prompts.
+
 ## 0.1.68
 
 - Add a verified, role-aware workflow builder Guide Pack with read-only
