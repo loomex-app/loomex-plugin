@@ -47,7 +47,7 @@ test("workflow guide pack is complete and hash-pinned", async () => {
   const guidesRoot = path.join(root, "skills", "create-workflow", "guides");
   const index = JSON.parse(await readFile(path.join(guidesRoot, "index.json"), "utf8"));
   assert.equal(index.schemaVersion, "loomex.workflow-guides/v1");
-  assert.equal(index.packVersion, "1");
+  assert.equal(index.packVersion, "2");
   const required = new Set([
     "workflow-contract",
     "catalog-summary",

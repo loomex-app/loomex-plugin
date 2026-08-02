@@ -26,6 +26,10 @@ No invented truthiness or implicit branch default.
 Every condition operand must reference a valid workflow input, node output, or
 catalog-approved static value.
 
+Each condition object in both `trueBranch.conditions` and
+`falseBranch.conditions` must include a stable, non-empty `id`. The id is part
+of the persisted workflow contract; it is not optional UI metadata.
+
 ## Output contract
 
 The condition selects a transition branch; it does not fabricate business data.
@@ -33,7 +37,24 @@ The condition selects a transition branch; it does not fabricate business data.
 ## Data mapping examples
 
 Compare `reviewer.valid` to `true` for the success branch and `false` for the
-repair branch.
+repair branch, with explicit ids:
+
+```json
+{
+  "trueBranch": {"conditions": [{
+    "id": "review_valid_true",
+    "left": {"source": "node_output", "nodeId": "reviewer", "field": "valid"},
+    "operator": "==",
+    "right": {"source": "static", "value": true}
+  }]},
+  "falseBranch": {"conditions": [{
+    "id": "review_valid_false",
+    "left": {"source": "node_output", "nodeId": "reviewer", "field": "valid"},
+    "operator": "==",
+    "right": {"source": "static", "value": false}
+  }]}
+}
+```
 
 ## Session policy examples
 
@@ -54,8 +75,8 @@ maps the reviewer result to end.
 
 ## Common mistakes
 
-Using prompt text as a condition, leaving one branch incomplete, or referencing
-an unknown node field.
+Using prompt text as a condition, omitting a branch or its condition id, or
+referencing an unknown node field.
 
 ## Anti-patterns
 
@@ -64,4 +85,3 @@ Do not use arbitrary JavaScript, provider expressions, or hidden side effects.
 ## Backend validation notes
 
 Backend validates branch shape, mapping references, and reachable transitions.
-

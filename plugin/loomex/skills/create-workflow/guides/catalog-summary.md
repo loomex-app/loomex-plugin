@@ -16,6 +16,13 @@ The real catalog supplies `type`, `capabilities`, `defaults`, `validation`,
 `inputSchema`, `outputSchema`, and supported config sections. Never copy a
 field from this summary when the live catalog says otherwise.
 
+The catalog is the node-type authority, but the generated workflow must still
+materialize the selected node's effective schemas and mappings. In particular,
+the default Human Input catalog entry is single/text; when the design needs
+radio or checkbox questions, explicitly set `config.inputType` and
+`config.collectionMode` to the catalog-supported values and emit the matching
+canonical schemas in the draft.
+
 ## Valid enum values
 
 There is no independent enum list in this guide. Read enum values from the
@@ -30,6 +37,15 @@ an invented default.
 
 Ask questions only about decisions that affect catalog-valid node types,
 schemas, mappings, Human Input behavior, sessions, tools, or branches.
+
+For a batch radio/checkbox Human Input, the effective output schema must expose
+`answers` as an array. A downstream mapping is valid only in this exact form:
+`{"source":"node_output","nodeId":"<human-key>","field":"answers"}`.
+The source Human node must declare that field in its `outputSchema`.
+
+For a condition, every condition object in both branches must include a stable
+non-empty `id`, for example `review_valid_true` and `review_valid_false`, as
+well as `left`, `operator`, and `right`.
 
 ## Output contract
 
@@ -65,6 +81,9 @@ mapping is present in the live catalog and validator.
 - Treating a guide example as an API contract.
 - Assuming a familiar provider or node type is installed.
 - Omitting mapping fields because a prompt mentions the data.
+- Treating the default single/text Human schema as if it were a batch schema.
+- Selecting a source node for `answers` without selecting its `answers` output field.
+- Creating branch conditions without condition ids.
 
 ## Anti-patterns
 
@@ -75,4 +94,3 @@ capabilities from this document.
 
 The live `workflowNodeCatalog` and `loomex_workflow_validate` response outrank
 all guide content. Invalid candidates must be repaired, not rationalized.
-

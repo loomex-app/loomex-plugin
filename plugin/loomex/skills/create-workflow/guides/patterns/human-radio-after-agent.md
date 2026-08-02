@@ -19,12 +19,14 @@ Radio is a valid Human Input type; each question has exactly four options.
 
 ## Defaults
 
-Backend derives the canonical Human Input schemas.
+The live Human catalog defaults to single/text. For this pattern explicitly
+use the catalog-supported batch radio configuration and include its effective
+canonical input/output schemas in the generated draft.
 
 ## Input contract
 
 Map agent `questions` into Human Input `questions`; map the original task and
-canonical human result into Developer inputs.
+the Human node's canonical `answers` output into Developer inputs.
 
 ## Output contract
 
@@ -36,6 +38,16 @@ Backend schema requires them.
 ```json
 "questions": {"source":"node_output","nodeId":"question_generator","field":"questions"}
 ```
+
+The downstream mapping must be explicit and must point to the Human node's
+declared batch output field:
+
+```json
+"answers": {"source":"node_output","nodeId":"clarification_input","field":"answers"}
+```
+
+The `clarification_input.outputSchema.properties` object must contain
+`answers` before this mapping is valid.
 
 ## Session policy examples
 
@@ -57,7 +69,9 @@ task, and the developer produces a structured implementation result.
 
 ## Common mistakes
 
-Missing the `questions` mapping or passing only the selected label to Developer.
+Missing the `questions` mapping, omitting the Human batch output schema, using
+an `answers` mapping whose source does not declare `answers`, or passing only
+the selected label to Developer.
 
 ## Anti-patterns
 
@@ -67,4 +81,3 @@ Do not model radio as text or invent option selection fields.
 
 Backend Human Input normalization and required mapping validation decide whether
 this pattern is executable.
-

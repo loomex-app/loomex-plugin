@@ -1,12 +1,12 @@
 {
   "schemaVersion": "loomex.workflow-guides/v1",
-  "packVersion": "1",
+  "packVersion": "2",
   "guides": [
     {
       "id": "workflow-contract",
       "path": "workflow-contract.md",
       "nodeTypes": [],
-      "sha256": "93c7124e9c3b2d25a0ee9a4d15eb0dcbd11ae68796030e8429673a5dc10756f7",
+      "sha256": "b500ce03db492bc447dad58528bffe85c628238144e6606347a55bc2e292ce9a",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "contract"
     },
@@ -14,7 +14,7 @@
       "id": "catalog-summary",
       "path": "catalog-summary.md",
       "nodeTypes": [],
-      "sha256": "c3d8a3290d4cdcc5c881e0325bf0982a509a9ec46ff80ad78ebb3a20b3434638",
+      "sha256": "f4f535f8ea04add4a7181f66c4b1f88caa92b4d9575483a3621023a801c5a1b3",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "contract"
     },
@@ -54,7 +54,7 @@
       "id": "node.human",
       "path": "node-guides/human.md",
       "nodeTypes": ["human"],
-      "sha256": "fbca31e1db69026a54884977e024bd46e0fb09eb52d595879c6314c7d7409c6c",
+      "sha256": "34bafa6e6535f1811050d2e58ee26b21205dcea7ea394770dcd415bd44a96454",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "node"
     },
@@ -62,7 +62,7 @@
       "id": "node.condition",
       "path": "node-guides/condition.md",
       "nodeTypes": ["condition"],
-      "sha256": "94ad3b88a6f04a7c36a0143d3b578062e2092f9c78863b6ea4d14674c404f79b",
+      "sha256": "397d5af9685687f5f824f9c3e78e35187a0e70f8a2ab6bcf94144305421b0c0e",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "node"
     },
@@ -94,7 +94,7 @@
       "id": "pattern.human-radio-after-agent",
       "path": "patterns/human-radio-after-agent.md",
       "nodeTypes": ["human", "ai_agent"],
-      "sha256": "6cf44f4db7a5378f9c04a09f1fc3a27545d19295279eab07143b09080e573d97",
+      "sha256": "f309af43916478f5c3f5c439ec2edee9bb6d9c109215dcb37f8922734e692165",
       "audience": ["designer", "reviewer"],
       "kind": "pattern"
     },
@@ -102,7 +102,7 @@
       "id": "pattern.human-checkbox-after-agent",
       "path": "patterns/human-checkbox-after-agent.md",
       "nodeTypes": ["human", "ai_agent"],
-      "sha256": "186b2edb3295bdc542a0cf2ad8a4578fa17c5b152e9ca3ddf6fe41b5b7e95dc6",
+      "sha256": "b552f387cc6e779dfba627565a34cf12cf6a1ea87d5d2eab403e90b442744323",
       "audience": ["designer", "reviewer"],
       "kind": "pattern"
     },
@@ -110,7 +110,7 @@
       "id": "pattern.developer-reviewer-loop",
       "path": "patterns/developer-reviewer-loop.md",
       "nodeTypes": ["ai_agent", "person", "condition"],
-      "sha256": "782c692f56f5e6564507136054cff9073137ae184ef7b096944be6fac7ccba4f",
+      "sha256": "7b30fbcdac06f39509c5db27f0f73fdc562eb103ba19c78d1f287091998d197f",
       "audience": ["designer", "reviewer"],
       "kind": "pattern"
     },
@@ -118,7 +118,7 @@
       "id": "pattern.condition-after-review",
       "path": "patterns/condition-after-review.md",
       "nodeTypes": ["condition"],
-      "sha256": "9dbf35d8b75edc28fcb85296f6c03b912bc3f6d79f2a592cdd242557cea7ff3a",
+      "sha256": "1da675425f038a596d47eb715d3189ca3c891aeed2241bcc5eb0a36fe2809bbc",
       "audience": ["designer", "reviewer"],
       "kind": "pattern"
     },
