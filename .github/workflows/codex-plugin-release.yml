@@ -665,9 +665,8 @@ jobs:
             echo "Install this release with the verified local-snapshot installer:"
             echo '```bash'
             echo "version=${{ needs.assemble.outputs.version }}"
-            echo 'base="https://github.com/loomex-app/loomex-plugin/releases/download/v$version"'
-            echo 'curl --fail --location --proto '\''=https'\'' --tlsv1.2 "$base/install-codex.sh" -o install-codex.sh'
-            echo 'curl --fail --location --proto '\''=https'\'' --tlsv1.2 "$base/install-codex.sh.sigstore.json" -o install-codex.sh.sigstore.json'
+            echo 'curl --fail --location --proto '\''=https'\'' --tlsv1.2 "https://github.com/loomex-app/loomex-plugin/releases/download/v${{ needs.assemble.outputs.version }}/install-codex.sh" -o install-codex.sh'
+            echo 'curl --fail --location --proto '\''=https'\'' --tlsv1.2 "https://github.com/loomex-app/loomex-plugin/releases/download/v${{ needs.assemble.outputs.version }}/install-codex.sh.sigstore.json" -o install-codex.sh.sigstore.json'
             echo 'cosign verify-blob --bundle install-codex.sh.sigstore.json --certificate-identity "https://github.com/loomex-app/loomex-plugin/.github/workflows/codex-plugin-release.yml@refs/tags/v$version" --certificate-oidc-issuer "https://token.actions.githubusercontent.com" install-codex.sh'
             echo 'sh install-codex.sh'
             echo '```'
