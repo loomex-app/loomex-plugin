@@ -11,6 +11,12 @@ Loomex Workflow; it is not a separate server-side AI execution path.
 
 ## Rules
 
+- First verify that the user supplied an actual workflow description. A bare
+  skill invocation, a `/create-workflow` command, a plugin/skill reference,
+  or a message that only says “create a workflow” is not a workflow request.
+  In that case ask the user to describe the workflow they want and stop before
+  calling any Loomex tool. Never pass the skill path, skill invocation, or
+  another control message as `inputs.prompt`.
 - Loomex is the only control surface. If setup, authentication, organization
   scope, Runner, execution, agent dispatch, validation, or finalization fails,
   stop and report the exact error. Never use shell commands, file edits,
