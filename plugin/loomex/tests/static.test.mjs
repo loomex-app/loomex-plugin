@@ -43,6 +43,33 @@ test("plugin exposes only the supported focused child skills", async () => {
   for (const name of childSkills) assert.match(router, new RegExp(`\\b${name}\\b`));
 });
 
+test("credential and sensitive human-input handling stays outside model context", async () => {
+  const login = await readFile(path.join(root, "skills", "login", "SKILL.md"), "utf8");
+  const router = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
+  const human = await readFile(
+    path.join(root, "skills", "loomex", "references", "human-and-approvals.md"),
+    "utf8",
+  );
+  const safety = await readFile(
+    path.join(root, "skills", "loomex", "references", "safety.md"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(login, /Ask for the email, first name, last name, password/);
+  assert.match(login, /secure credential-entry UI/);
+  assert.match(login, /outside model context/);
+  assert.match(login, /Never store them in localStorage, widget state/);
+  assert.match(router, /inputSpec\.sensitivity.*sensitive/);
+  assert.match(router, /one-shot and memory-only/);
+  assert.match(router, /after submit, cancel, logout, timeout, or rejection/);
+  assert.match(human, /inputSpec\.sensitivity: "sensitive"/);
+  assert.match(human, /model-visible tool call/);
+  assert.match(human, /a reload must show an empty form/);
+  assert.match(human, /expiry\s+metadata/);
+  assert.match(safety, /Passwords, password confirmations, verification codes/);
+  assert.match(safety, /prompts, transcripts, tool results/);
+});
+
 test("workflow guide pack is complete and hash-pinned", async () => {
   const guidesRoot = path.join(root, "skills", "create-workflow", "guides");
   const index = JSON.parse(await readFile(path.join(guidesRoot, "index.json"), "utf8"));

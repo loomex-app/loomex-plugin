@@ -7,6 +7,7 @@ on:
       - ".github/scripts/**"
       - "codex_plugin_*"
       - "plugin/**"
+      - "scripts/codex-smoke/**"
       - "scripts/codex_mcp_discovery_smoke.py"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -431,14 +432,18 @@ jobs:
       - name: Install pinned Codex CLI for marketplace smoke
         shell: bash
         run: |
-          npm install --global --prefix "$RUNNER_TEMP/codex-smoke" \
-            --no-audit --no-fund "@openai/codex@$CODEX_SMOKE_VERSION"
-          test "$("$RUNNER_TEMP/codex-smoke/bin/codex" --version)" = \
+          test "$CODEX_SMOKE_VERSION" = "0.144.6"
+          mkdir -p "$RUNNER_TEMP/codex-smoke"
+          cp scripts/codex-smoke/package.json scripts/codex-smoke/package-lock.json \
+            "$RUNNER_TEMP/codex-smoke/"
+          npm ci --prefix "$RUNNER_TEMP/codex-smoke" \
+            --ignore-scripts --no-audit --no-fund --include=optional
+          test "$("$RUNNER_TEMP/codex-smoke/node_modules/.bin/codex" --version)" = \
             "codex-cli $CODEX_SMOKE_VERSION"
       - name: Verify assembled marketplace discovery through Codex
         run: >-
           python3 scripts/codex_mcp_discovery_smoke.py
-          --codex "$RUNNER_TEMP/codex-smoke/bin/codex"
+          --codex "$RUNNER_TEMP/codex-smoke/node_modules/.bin/codex"
           --marketplace-root dist/marketplace
           --expected-version "${{ steps.metadata.outputs.version }}"
           --timeout-seconds 60
@@ -659,7 +664,12 @@ jobs:
           {
             echo "Install this release with the verified local-snapshot installer:"
             echo '```bash'
-            echo "curl -fsSL https://github.com/loomex-app/loomex-plugin/releases/download/v${{ needs.assemble.outputs.version }}/install-codex.sh | sh"
+            echo "version=${{ needs.assemble.outputs.version }}"
+            echo 'base="https://github.com/loomex-app/loomex-plugin/releases/download/v$version"'
+            echo 'curl --fail --location --proto '\''=https'\'' --tlsv1.2 "$base/install-codex.sh" -o install-codex.sh'
+            echo 'curl --fail --location --proto '\''=https'\'' --tlsv1.2 "$base/install-codex.sh.sigstore.json" -o install-codex.sh.sigstore.json'
+            echo 'cosign verify-blob --bundle install-codex.sh.sigstore.json --certificate-identity "https://github.com/loomex-app/loomex-plugin/.github/workflows/codex-plugin-release.yml@refs/tags/v$version" --certificate-oidc-issuer "https://token.actions.githubusercontent.com" install-codex.sh'
+            echo 'sh install-codex.sh'
             echo '```'
             echo "Marketplace publication commit for audit: $expected_commit"
           } >> "$GITHUB_STEP_SUMMARY"

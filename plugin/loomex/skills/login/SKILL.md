@@ -19,13 +19,23 @@ backend directly, or ask the user to run a CLI command.
 
 ## New account
 
-1. Ask for the email, first name, last name, password, and password confirmation
-   when they were not provided.
-2. Call `loomex_auth_register` with those exact values.
-3. Show the returned verification state and ask the user for the email code.
-4. Call `loomex_auth_register_verify` with the exact `challengeId`, email, and
-   code. Then use `organization-create` because a new account has no
-   organization yet.
+1. Collect the email, first name, and last name in the conversation only when
+   needed. Never ask for, accept, repeat, or summarize a password or password
+   confirmation in Codex chat.
+2. Open the host's secure credential-entry UI and let that UI call
+   `loomex_auth_register` directly. Keep password fields outside model context,
+   transcript, prompt, and tool-result content; the model receives only the
+   redacted registration state or error code.
+3. Show the returned verification state and ask for the email code. Treat the
+   code as sensitive too: use the secure UI when the host provides it, and never
+   include it in a progress message or tool-result summary.
+4. Call `loomex_auth_register_verify` from the secure UI with the exact
+   `challengeId`, email, and code. Then use `organization-create` because a new
+   account has no organization yet.
 
-Never expose access tokens or passwords. A successful login does not imply that
-an organization, organization, or execution workspace is selected.
+The secure credential UI is one-shot: clear password, confirmation, and
+verification-code fields after submit, cancel, logout, timeout, or failure.
+Never store them in localStorage, widget state, prompt state, or any durable
+credential file owned by the plugin. Never expose access tokens or passwords. A
+successful login does not imply that an organization, organization, or
+execution workspace is selected.

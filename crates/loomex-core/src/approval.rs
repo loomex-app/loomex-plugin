@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{CoreError, CoreResult};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -110,6 +112,81 @@ pub struct ApprovalPrompt {
 pub enum ApprovalDecision {
     AllowOnce,
     Deny,
+}
+
+/// The immutable approval facts carried with an execution authorization.
+/// Keeping these facts in the envelope prevents an approval from being moved
+/// to another input, lease, workspace, or actor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalBinding {
+    pub approval_request_id: String,
+    pub input_digest: String,
+    pub lease_version: u64,
+    pub workspace: String,
+    pub actor: String,
+    pub expires_at_epoch_ms: u64,
+    pub nonce: String,
+    pub approved: bool,
+}
+
+pub fn validate_approval_binding(
+    approval: &ApprovalBinding,
+    capability: &str,
+    input_digest: &str,
+    workspace: &str,
+    actor: &str,
+    lease_version: u64,
+    now_epoch_ms: u64,
+) -> CoreResult<()> {
+    if approval.approval_request_id.trim().is_empty()
+        || approval.input_digest.trim().is_empty()
+        || approval.workspace.trim().is_empty()
+        || approval.actor.trim().is_empty()
+        || approval.nonce.trim().is_empty()
+    {
+        return Err(CoreError::new(
+            "AUTHORIZATION_APPROVAL_INVALID",
+            "approval binding is missing an immutable execution field",
+        ));
+    }
+    if !approval.approved {
+        return Err(CoreError::new(
+            "AUTHORIZATION_APPROVAL_REQUIRED",
+            format!("approval is required for {capability}"),
+        ));
+    }
+    if approval.input_digest != input_digest {
+        return Err(CoreError::new(
+            "AUTHORIZATION_INPUT_CHANGED",
+            "approval does not authorize the exact job input",
+        ));
+    }
+    if approval.workspace != workspace {
+        return Err(CoreError::new(
+            "AUTHORIZATION_WORKSPACE_MISMATCH",
+            "approval is bound to another workspace",
+        ));
+    }
+    if approval.actor != actor {
+        return Err(CoreError::new(
+            "AUTHORIZATION_ACTOR_MISMATCH",
+            "approval is bound to another actor",
+        ));
+    }
+    if approval.lease_version != lease_version {
+        return Err(CoreError::new(
+            "AUTHORIZATION_LEASE_MISMATCH",
+            "approval is bound to another lease",
+        ));
+    }
+    if now_epoch_ms >= approval.expires_at_epoch_ms {
+        return Err(CoreError::new(
+            "AUTHORIZATION_APPROVAL_EXPIRED",
+            "approval has expired",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

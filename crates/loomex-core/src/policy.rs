@@ -1,4 +1,9 @@
-use crate::{CoreError, CoreResult};
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::{approval::validate_approval_binding, ApprovalBinding, CoreError, CoreResult};
 
 pub const MVP_CAPABILITIES: &[&str] = &[
     "fs.list",
@@ -19,6 +24,138 @@ pub const MVP_CAPABILITIES: &[&str] = &[
 pub const CONTRACT_MVP_COMPAT_CAPABILITIES: &[&str] = &[];
 
 pub const RESERVED_CAPABILITIES: &[&str] = &["git.commit", "git.push"];
+pub const AUTHORIZATION_ENVELOPE_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorizationEnvelope {
+    pub version: u32,
+    pub capability: String,
+    pub input_digest: String,
+    pub workspace: String,
+    pub actor: String,
+    pub expires_at_epoch_ms: u64,
+    pub nonce: String,
+    pub approval: ApprovalBinding,
+}
+
+/// Single fail-closed authorization boundary for leased local capability jobs.
+/// The nonce set is intentionally owned by the runner session so a replay in
+/// the same process cannot execute a second time.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CapabilityAuthorizationGateway {
+    used_nonces: BTreeSet<String>,
+}
+
+impl CapabilityAuthorizationGateway {
+    pub fn authorize(
+        &mut self,
+        envelope: &AuthorizationEnvelope,
+        input: &serde_json::Value,
+        execution_root: &ExecutionRoot,
+        actor: &str,
+        lease_version: u64,
+        now_epoch_ms: u64,
+    ) -> CoreResult<()> {
+        if envelope.version != AUTHORIZATION_ENVELOPE_VERSION {
+            return Err(CoreError::new(
+                "AUTHORIZATION_ENVELOPE_VERSION_UNSUPPORTED",
+                "authorization envelope version is unsupported",
+            ));
+        }
+        if envelope.capability.trim().is_empty()
+            || envelope.input_digest.trim().is_empty()
+            || envelope.actor.trim().is_empty()
+            || envelope.nonce.trim().is_empty()
+        {
+            return Err(CoreError::new(
+                "AUTHORIZATION_ENVELOPE_INVALID",
+                "authorization envelope is missing a required field",
+            ));
+        }
+        if envelope.expires_at_epoch_ms <= now_epoch_ms {
+            return Err(CoreError::new(
+                "AUTHORIZATION_ENVELOPE_EXPIRED",
+                "authorization envelope has expired",
+            ));
+        }
+        if envelope.actor != actor {
+            return Err(CoreError::new(
+                "AUTHORIZATION_ACTOR_MISMATCH",
+                "authorization envelope is bound to another actor",
+            ));
+        }
+        if envelope.workspace != execution_root.path {
+            return Err(CoreError::new(
+                "AUTHORIZATION_WORKSPACE_MISMATCH",
+                "authorization envelope is bound to another workspace",
+            ));
+        }
+        let digest = authorization_input_digest(input)?;
+        if envelope.input_digest != digest {
+            return Err(CoreError::new(
+                "AUTHORIZATION_INPUT_CHANGED",
+                "authorization envelope does not authorize the exact job input",
+            ));
+        }
+        let evaluation = PolicyEngine::default().evaluate(
+            &PolicyEvaluationInput::capability(&envelope.capability),
+            execution_root,
+        )?;
+        if evaluation.decision == PolicyDecision::Deny {
+            return Err(CoreError::new(
+                "POLICY_DENIED",
+                "policy denied local execution",
+            ));
+        }
+        validate_approval_binding(
+            &envelope.approval,
+            &envelope.capability,
+            &digest,
+            &envelope.workspace,
+            actor,
+            lease_version,
+            now_epoch_ms,
+        )?;
+        if envelope.approval.nonce != envelope.nonce {
+            return Err(CoreError::new(
+                "AUTHORIZATION_NONCE_MISMATCH",
+                "approval and authorization nonce must match",
+            ));
+        }
+        if !self.used_nonces.insert(envelope.nonce.clone()) {
+            return Err(CoreError::new(
+                "AUTHORIZATION_REPLAYED",
+                "authorization nonce was already consumed",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn authorization_input_digest(input: &serde_json::Value) -> CoreResult<String> {
+    let canonical = canonical_json(input);
+    let bytes = serde_json::to_vec(&canonical)
+        .map_err(|err| CoreError::new("AUTHORIZATION_INPUT_INVALID", err.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), canonical_json(value)))
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonical_json).collect())
+        }
+        value => value.clone(),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionRoot {
@@ -590,6 +727,29 @@ fn apply_shell_risk_floor(
 mod tests {
     use super::*;
 
+    fn authorized_envelope(input: &serde_json::Value, workspace: &str) -> AuthorizationEnvelope {
+        let digest = authorization_input_digest(input).unwrap();
+        AuthorizationEnvelope {
+            version: AUTHORIZATION_ENVELOPE_VERSION,
+            capability: "shell.exec".to_string(),
+            input_digest: digest.clone(),
+            workspace: workspace.to_string(),
+            actor: "session-1".to_string(),
+            expires_at_epoch_ms: 2_000,
+            nonce: "nonce-1".to_string(),
+            approval: ApprovalBinding {
+                approval_request_id: "approval-1".to_string(),
+                input_digest: digest,
+                lease_version: 7,
+                workspace: workspace.to_string(),
+                actor: "session-1".to_string(),
+                expires_at_epoch_ms: 2_000,
+                nonce: "nonce-1".to_string(),
+                approved: true,
+            },
+        }
+    }
+
     fn execution_root() -> ExecutionRoot {
         ExecutionRoot::new("/Users/example/app").unwrap()
     }
@@ -918,5 +1078,55 @@ mod tests {
         assert_eq!(9, rollback.version);
         assert!(rollback.previous_versions.contains(&8));
         assert_eq!("MANAGED_POLICY_ROLLBACK_TARGET_INVALID", err.code);
+    }
+
+    #[test]
+    fn authorization_gateway_requires_exact_approved_input() {
+        let input =
+            serde_json::json!({"command": "echo safe", "workspacePath": "/Users/example/app"});
+        let root = execution_root();
+        let envelope = authorized_envelope(&input, &root.path);
+        let mut gateway = CapabilityAuthorizationGateway::default();
+
+        gateway
+            .authorize(&envelope, &input, &root, "session-1", 7, 1_000)
+            .unwrap();
+
+        let changed =
+            serde_json::json!({"command": "echo changed", "workspacePath": "/Users/example/app"});
+        let error = CapabilityAuthorizationGateway::default()
+            .authorize(&envelope, &changed, &root, "session-1", 7, 1_000)
+            .unwrap_err();
+        assert_eq!("AUTHORIZATION_INPUT_CHANGED", error.code);
+    }
+
+    #[test]
+    fn authorization_gateway_rejects_expired_workspace_mismatch_and_replay() {
+        let input = serde_json::json!({"path": "file.txt"});
+        let root = execution_root();
+        let mut gateway = CapabilityAuthorizationGateway::default();
+        let envelope = authorized_envelope(&input, &root.path);
+
+        gateway
+            .authorize(&envelope, &input, &root, "session-1", 7, 1_000)
+            .unwrap();
+        let replay = gateway
+            .authorize(&envelope, &input, &root, "session-1", 7, 1_000)
+            .unwrap_err();
+        assert_eq!("AUTHORIZATION_REPLAYED", replay.code);
+
+        let mut other_workspace = envelope.clone();
+        other_workspace.workspace = "/Users/example/other".to_string();
+        let mismatch = CapabilityAuthorizationGateway::default()
+            .authorize(&other_workspace, &input, &root, "session-1", 7, 1_000)
+            .unwrap_err();
+        assert_eq!("AUTHORIZATION_WORKSPACE_MISMATCH", mismatch.code);
+
+        let mut expired = envelope;
+        expired.expires_at_epoch_ms = 1_000;
+        let expired_error = CapabilityAuthorizationGateway::default()
+            .authorize(&expired, &input, &root, "session-1", 7, 1_000)
+            .unwrap_err();
+        assert_eq!("AUTHORIZATION_ENVELOPE_EXPIRED", expired_error.code);
     }
 }

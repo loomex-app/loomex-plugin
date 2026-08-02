@@ -6,7 +6,7 @@
 
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
@@ -26,6 +26,56 @@ pub const LOCAL_CONTROL_PROTOCOL_VERSION: &str = "loomex.local-control/v1";
 pub const LOCAL_CONTROL_SOCKET_NAME: &str = "control.sock";
 pub const LOCAL_CONTROL_TOKEN_NAME: &str = "control.token";
 pub const LOCAL_CONTROL_MAX_LINE_BYTES: usize = 1024 * 1024;
+pub const LOCAL_CONTROL_MAX_CONCURRENT_REQUESTS: usize = 32;
+pub const LOCAL_CONTROL_MAX_REQUESTS_PER_CONNECTION: usize = 8;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BoundedLine {
+    Eof,
+    Complete(String),
+    TooLarge { bytes: usize },
+}
+
+/// Reads one newline-delimited frame without allocating more than `max_bytes + 1` bytes.
+/// Oversized frames are drained through the newline and their payload is never returned.
+pub fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<BoundedLine> {
+    let mut frame = Vec::with_capacity(max_bytes.saturating_add(1));
+    let mut total = 0usize;
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return if total == 0 {
+                Ok(BoundedLine::Eof)
+            } else if total > max_bytes {
+                Ok(BoundedLine::TooLarge { bytes: total })
+            } else {
+                Ok(BoundedLine::Complete(
+                    String::from_utf8_lossy(&frame).into_owned(),
+                ))
+            };
+        }
+        let newline = buffer.iter().position(|byte| *byte == b'\n');
+        let available = newline.map_or(buffer.len(), |index| index + 1);
+        let next_total = total.saturating_add(available);
+        if next_total <= max_bytes {
+            frame.extend_from_slice(&buffer[..available]);
+        } else if total <= max_bytes {
+            let keep = max_bytes.saturating_sub(total).saturating_add(1);
+            frame.extend_from_slice(&buffer[..available.min(keep)]);
+        }
+        total = next_total;
+        reader.consume(available);
+        if newline.is_some() {
+            return if total > max_bytes {
+                Ok(BoundedLine::TooLarge { bytes: total })
+            } else {
+                Ok(BoundedLine::Complete(
+                    String::from_utf8_lossy(&frame).into_owned(),
+                ))
+            };
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -838,6 +888,7 @@ pub struct UnixLocalControlServer<C> {
     paths: LocalControlPaths,
     token: String,
     dispatcher: Arc<LocalControlDispatcher<C>>,
+    request_budget: Arc<tokio::sync::Semaphore>,
 }
 
 #[cfg(unix)]
@@ -865,6 +916,9 @@ impl<C: ManagementApiClient + Clone + Send + 'static> UnixLocalControlServer<C> 
             paths,
             token,
             dispatcher: Arc::new(dispatcher),
+            request_budget: Arc::new(tokio::sync::Semaphore::new(
+                LOCAL_CONTROL_MAX_CONCURRENT_REQUESTS,
+            )),
         })
     }
 
@@ -884,8 +938,9 @@ impl<C: ManagementApiClient + Clone + Send + 'static> UnixLocalControlServer<C> 
                 Ok(stream) => {
                     let dispatcher = Arc::clone(&self.dispatcher);
                     let token = self.token.clone();
+                    let request_budget = Arc::clone(&self.request_budget);
                     thread::spawn(move || {
-                        let _ = serve_unix_client(stream, &token, &dispatcher);
+                        let _ = serve_unix_client(stream, &token, &dispatcher, request_budget);
                     });
                 }
                 Err(err) => {
@@ -908,6 +963,7 @@ fn serve_unix_client<C: ManagementApiClient + Clone>(
     stream: std::os::unix::net::UnixStream,
     token: &str,
     dispatcher: &LocalControlDispatcher<C>,
+    request_budget: Arc<tokio::sync::Semaphore>,
 ) -> CoreResult<()> {
     let peer_uid = unix_peer_uid(&stream)?;
     let current_uid = unsafe { libc::geteuid() };
@@ -922,30 +978,52 @@ fn serve_unix_client<C: ManagementApiClient + Clone>(
         .map_err(|err| CoreError::new("LOCAL_CONTROL_STREAM_FAILED", err.to_string()))?;
     let mut reader = BufReader::new(reader_stream);
     let mut writer = stream;
+    let connection_budget = tokio::sync::Semaphore::new(LOCAL_CONTROL_MAX_REQUESTS_PER_CONNECTION);
     loop {
-        let mut line = String::new();
-        let read = reader
-            .read_line(&mut line)
+        let line = read_bounded_line(&mut reader, LOCAL_CONTROL_MAX_LINE_BYTES)
             .map_err(|err| CoreError::new("LOCAL_CONTROL_READ_FAILED", err.to_string()))?;
-        if read == 0 {
-            return Ok(());
-        }
-        let response = if line.len() > LOCAL_CONTROL_MAX_LINE_BYTES {
-            LocalControlResponse::failure(
-                "",
-                "LOCAL_CONTROL_REQUEST_TOO_LARGE",
-                "request exceeds the one MiB protocol limit",
-                false,
-            )
-        } else {
-            match serde_json::from_str::<LocalControlRequest>(&line) {
-                Ok(request) => handle_local_control_request(request, token, dispatcher),
-                Err(err) => LocalControlResponse::failure(
+        let response = match line {
+            BoundedLine::Eof => return Ok(()),
+            BoundedLine::TooLarge { bytes } => {
+                eprintln!("local control rejected oversized request ({bytes} bytes)");
+                LocalControlResponse::failure(
                     "",
-                    "LOCAL_CONTROL_REQUEST_INVALID",
-                    err.to_string(),
+                    "LOCAL_CONTROL_REQUEST_TOO_LARGE",
+                    "request exceeds the one MiB protocol limit",
                     false,
-                ),
+                )
+            }
+            BoundedLine::Complete(line) => {
+                let connection_permit = connection_budget.try_acquire();
+                let permit = request_budget.try_acquire();
+                let response = if connection_permit.is_err() {
+                    LocalControlResponse::failure(
+                        "",
+                        "LOCAL_CONTROL_CONNECTION_BUDGET_EXHAUSTED",
+                        "local control per-connection request limit is reached",
+                        true,
+                    )
+                } else if permit.is_err() {
+                    LocalControlResponse::failure(
+                        "",
+                        "LOCAL_CONTROL_REQUEST_BUDGET_EXHAUSTED",
+                        "local control request concurrency limit is reached",
+                        true,
+                    )
+                } else {
+                    match serde_json::from_str::<LocalControlRequest>(&line) {
+                        Ok(request) => handle_local_control_request(request, token, dispatcher),
+                        Err(err) => LocalControlResponse::failure(
+                            "",
+                            "LOCAL_CONTROL_REQUEST_INVALID",
+                            err.to_string(),
+                            false,
+                        ),
+                    }
+                };
+                drop(permit);
+                drop(connection_permit);
+                response
             }
         };
         serde_json::to_writer(&mut writer, &response).map_err(json_error)?;
@@ -1150,6 +1228,7 @@ fn validate_private_file(_path: &Path) -> CoreResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use std::{io::Read, net::TcpListener, sync::mpsc, time::Duration};
 
     fn test_credential() -> ManagementCredential {
@@ -1165,6 +1244,28 @@ mod tests {
             crate::CredentialStorageBackend::LocalFileFallback,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn bounded_reader_rejects_oversize_without_returning_payload_and_keeps_sync() {
+        let mut reader = BufReader::new(Cursor::new(b"123456789\n{}\n".to_vec()));
+        assert_eq!(
+            BoundedLine::TooLarge { bytes: 10 },
+            read_bounded_line(&mut reader, 9).unwrap()
+        );
+        assert_eq!(
+            BoundedLine::Complete("{}\n".to_string()),
+            read_bounded_line(&mut reader, 9).unwrap()
+        );
+    }
+
+    #[test]
+    fn bounded_reader_accepts_frame_at_limit() {
+        let mut reader = BufReader::new(Cursor::new(b"{}\nnext\n".to_vec()));
+        assert_eq!(
+            BoundedLine::Complete("{}\n".to_string()),
+            read_bounded_line(&mut reader, 3).unwrap()
+        );
     }
 
     #[test]
