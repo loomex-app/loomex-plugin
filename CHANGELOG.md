@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.70
+
+- Harden workflow builder guide contracts for Human Input batch answers and
+  condition branch identifiers.
+
 ## 0.1.69
 
 - Require a real natural-language workflow description before starting the
