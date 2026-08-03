@@ -246,6 +246,59 @@ pub fn read_recent_log_entries(path: impl AsRef<Path>, limit: usize) -> CoreResu
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TolerantLogRead {
+    pub entries: Vec<LogEntry>,
+    pub malformed_lines: usize,
+}
+
+/// Read usable structured log entries without letting one damaged JSONL line hide
+/// the rest of the diagnostic data. Callers can surface malformed_lines as a
+/// warning while continuing to report runner health and context.
+pub fn read_recent_log_entries_tolerant(
+    path: impl AsRef<Path>,
+    limit: usize,
+) -> CoreResult<TolerantLogRead> {
+    let path = path.as_ref();
+    if !path.exists() {
+        return Ok(TolerantLogRead {
+            entries: Vec::new(),
+            malformed_lines: 0,
+        });
+    }
+    let file = File::open(path).map_err(|err| {
+        CoreError::new(
+            "LOCAL_LOG_READ_FAILED",
+            format!("failed to open log file: {err}"),
+        )
+    })?;
+    let mut entries = Vec::new();
+    let mut malformed_lines = 0;
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|err| {
+            CoreError::new(
+                "LOCAL_LOG_READ_FAILED",
+                format!("failed to read log line: {err}"),
+            )
+        })?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<LogEntry>(&line) {
+            Ok(entry) => entries.push(entry),
+            Err(_) => malformed_lines += 1,
+        }
+    }
+    let limit = limit.max(1);
+    if entries.len() > limit {
+        entries = entries.split_off(entries.len() - limit);
+    }
+    Ok(TolerantLogRead {
+        entries,
+        malformed_lines,
+    })
+}
+
 /// Redact an entry immediately before it crosses a local API boundary.
 ///
 /// FileLogSink already redacts new records before persistence. This second pass is intentional:
@@ -394,6 +447,20 @@ mod tests {
         assert_eq!(1, entries.len());
         assert_eq!("run_123", entries[0].correlation_id);
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tolerant_log_reader_skips_malformed_lines_and_reports_warning_count() {
+        let path = test_log_path("tolerant");
+        let _ = fs::remove_file(&path);
+        let valid = serde_json::to_string(&LogEntry::new("info", "runner.connected", "ok"))
+            .expect("serialize log");
+        fs::write(&path, format!("{valid}\nnot-json\n")).expect("write log");
+
+        let report = read_recent_log_entries_tolerant(&path, 10).expect("read tolerant logs");
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.malformed_lines, 1);
+        let _ = fs::remove_file(path);
     }
 
     #[test]

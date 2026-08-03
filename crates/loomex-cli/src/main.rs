@@ -29,15 +29,15 @@ use loomex_core::{
     },
     protocol::PROTOCOL_VERSION,
     read_bounded_line, read_local_control_token, read_recent_log_entries,
-    release_runner_runtime_guard_for_surface, runner_runtime_guard_path, user_credential_profile,
-    AuthTokenResponse, BoundedLine, BundledRuntimeInstall, CliConfig, CliConfigOverrides,
-    CredentialKind, CredentialStorageBackend, CredentialStore, DeviceLoginChallenge, FileLogSink,
-    FsListInput, FsReadInput, FsWriteInput, HttpManagementApiClient, HumanRequestSummary,
-    LocalCapabilityExecutor, LocalControlDispatcher, LocalControlPaths, LocalControlRequest,
-    LocalControlResponse, LogEntry, ManagementApiClient, ManagementCredential, Organization,
-    Runner, RunnerServiceManifest, RunnerServicePlatform, RunnerServiceSpec, RuntimeInstaller,
-    SbomPackage, ShellCancellationToken, SystemCredentialStore, WorkflowRunStartRequest,
-    LOCAL_CONTROL_PROTOCOL_VERSION,
+    read_recent_log_entries_tolerant, release_runner_runtime_guard_for_surface,
+    runner_runtime_guard_path, user_credential_profile, AuthTokenResponse, BoundedLine,
+    BundledRuntimeInstall, CliConfig, CliConfigOverrides, CredentialKind, CredentialStorageBackend,
+    CredentialStore, DeviceLoginChallenge, FileLogSink, FsListInput, FsReadInput, FsWriteInput,
+    HttpManagementApiClient, HumanRequestSummary, LocalCapabilityExecutor, LocalControlDispatcher,
+    LocalControlPaths, LocalControlRequest, LocalControlResponse, LogEntry, ManagementApiClient,
+    ManagementCredential, Organization, Runner, RunnerServiceManifest, RunnerServicePlatform,
+    RunnerServiceSpec, RuntimeInstaller, SbomPackage, ShellCancellationToken,
+    SystemCredentialStore, WorkflowRunStartRequest, LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use setup_transaction::{
@@ -1562,6 +1562,7 @@ fn run_runner_plugin_control(args: &[String], options: &GlobalOptions) -> Result
         }
         "org.list" => plugin_org_list(options)?,
         "org.create" => plugin_org_create(&params, options)?,
+        "org.create.recover" => plugin_org_create_recover(&params, options)?,
         "org.select" => {
             let changing = plugin_validate_org_selection(&params, options)?;
             if changing {
@@ -1620,6 +1621,7 @@ fn plugin_control_is_lifecycle_mutation(method: &str) -> bool {
             | "auth.register.verify"
             | "auth.logout"
             | "org.create"
+            | "org.create.recover"
             | "org.select"
             | "runner.control"
     )
@@ -1728,30 +1730,178 @@ fn plugin_org_create(params: &Value, options: &GlobalOptions) -> Result<Value, S
     let mut client =
         HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
             .map_err(format_core_error)?;
+    let expected_slug = organization_request_slug(name, slug);
+    if let Some(existing) = client
+        .list_organizations(&credential)
+        .map_err(format_core_error)?
+        .into_iter()
+        .find(|item| item.slug.as_deref() == expected_slug.as_deref())
+    {
+        return plugin_finish_org_setup(
+            existing,
+            &mut config,
+            &config_path,
+            &store,
+            &resolved.profile,
+            options,
+            true,
+        );
+    }
     let organization = client
         .create_organization(&credential, name, slug)
         .map_err(format_core_error)?;
 
-    clear_plugin_runner_scope(&mut config, &resolved.profile)?;
+    plugin_finish_org_setup(
+        organization,
+        &mut config,
+        &config_path,
+        &store,
+        &resolved.profile,
+        options,
+        false,
+    )
+}
+
+fn plugin_org_create_recover(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
+    let name = plugin_required_string(params, "name")?;
+    let slug = params.get("slug").and_then(Value::as_str);
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let store = SystemCredentialStore::new(credential_dir());
+    let credential = load_user_credential(&store, &resolved.profile)?;
+    let mut client =
+        HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
+            .map_err(format_core_error)?;
+    let expected_slug = organization_request_slug(name, slug);
+    let organizations = match client.list_organizations(&credential) {
+        Ok(organizations) => organizations,
+        Err(error) => {
+            let error = format_core_error(error);
+            if !error_is_retryable(&error) {
+                return Err(error);
+            }
+            return Ok(plugin_org_setup_pending(
+                &resolved.profile,
+                None,
+                "organization_unknown",
+                Some(&error),
+            ));
+        }
+    };
+    let Some(organization) = organizations
+        .into_iter()
+        .find(|item| expected_slug.is_some() && item.slug.as_deref() == expected_slug.as_deref())
+    else {
+        return Ok(plugin_org_setup_pending(
+            &resolved.profile,
+            None,
+            "organization_unknown",
+            None,
+        ));
+    };
+
+    plugin_finish_org_setup(
+        organization,
+        &mut config,
+        &config_path,
+        &store,
+        &resolved.profile,
+        options,
+        true,
+    )
+}
+
+fn plugin_finish_org_setup(
+    organization: Organization,
+    config: &mut CliConfig,
+    config_path: &Path,
+    store: &SystemCredentialStore,
+    profile: &str,
+    options: &GlobalOptions,
+    reconciled: bool,
+) -> Result<Value, String> {
+    clear_plugin_runner_scope(config, profile)?;
     config
         .set_key(
-            &format!("profiles.{}.organizationId", resolved.profile),
+            &format!("profiles.{profile}.organizationId"),
             organization.id.clone(),
         )
         .map_err(format_core_error)?;
-    config.save(&config_path).map_err(format_core_error)?;
-    store.delete(&resolved.profile).map_err(format_core_error)?;
+    config.save(config_path).map_err(format_core_error)?;
+    store.delete(profile).map_err(format_core_error)?;
 
-    let runner_bootstrap = plugin_bootstrap_runner_auth(options)?;
-    let service_activation = plugin_activation_result(options);
+    let runner_bootstrap = match plugin_bootstrap_runner_auth(options) {
+        Ok(result) => result,
+        Err(error) if error_is_retryable(&error) => json!({
+            "bootstrapped": false,
+            "reused": false,
+            "status": "pending",
+            "error": plugin_structured_error(&error),
+            "retryable": true,
+        }),
+        Err(error) => return Err(error),
+    };
+    let runner_ready = runner_bootstrap
+        .get("bootstrapped")
+        .and_then(Value::as_bool)
+        .or_else(|| runner_bootstrap.get("reused").and_then(Value::as_bool))
+        .unwrap_or(false);
     Ok(json!({
-        "profile": resolved.profile,
+        "profile": profile,
         "organization": organization,
-        "changed": true,
+        "changed": !reconciled,
+        "reconciled": reconciled,
+        "setupStatus": if runner_ready { "runner_ready" } else { "runner_pending" },
         "runnerBootstrap": runner_bootstrap,
-        "serviceActivation": service_activation,
-        "nextAction": "workflow.list",
+        "serviceActivation": plugin_activation_result(options),
+        "nextAction": if runner_ready { "workflow.list" } else { "org.create" },
     }))
+}
+
+fn plugin_org_setup_pending(
+    profile: &str,
+    organization: Option<Organization>,
+    organization_state: &str,
+    error: Option<&str>,
+) -> Value {
+    let mut result = json!({
+        "profile": profile,
+        "organization": organization,
+        "changed": false,
+        "reconciled": false,
+        "setupStatus": "pending_reconciliation",
+        "organizationState": organization_state,
+        "runnerState": "unknown",
+        "retryable": true,
+        "nextAction": "org.create",
+    });
+    if let Some(error) = error {
+        result["reconciliationError"] = plugin_structured_error(error);
+    }
+    result
+}
+
+fn organization_request_slug(name: &str, slug: Option<&str>) -> Option<String> {
+    let source = slug
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(name);
+    let mut normalized = String::new();
+    let mut pending_separator = false;
+    for character in source.trim().chars() {
+        if character.is_ascii_alphanumeric() {
+            if pending_separator && !normalized.is_empty() {
+                normalized.push('-');
+            }
+            normalized.push(character.to_ascii_lowercase());
+            pending_separator = false;
+        } else {
+            pending_separator = true;
+        }
+    }
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 fn plugin_activation_result(options: &GlobalOptions) -> Value {
@@ -1858,8 +2008,9 @@ fn plugin_logs_tail(params: &Value) -> Result<Value, String> {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
     let level = params.get("level").and_then(Value::as_str);
-    let mut entries =
-        read_recent_log_entries(default_log_path(), 1_000).map_err(format_core_error)?;
+    let report =
+        read_recent_log_entries_tolerant(default_log_path(), 1_000).map_err(format_core_error)?;
+    let mut entries = report.entries;
     if let Some(level) = level {
         entries.retain(|entry| entry.level == level);
     }
@@ -1873,7 +2024,15 @@ fn plugin_logs_tail(params: &Value) -> Result<Value, String> {
         .collect::<Vec<_>>();
     let next_cursor =
         (offset + entries.len() < total).then(|| (offset + entries.len()).to_string());
-    Ok(json!({"entries": entries, "nextCursor": next_cursor}))
+    let warnings = (report.malformed_lines > 0)
+        .then(|| {
+            json!([{
+                "code": "LOCAL_LOG_PARSE_WARNING",
+                "message": format!("{} malformed log line(s) skipped", report.malformed_lines),
+            }])
+        })
+        .unwrap_or_else(|| json!([]));
+    Ok(json!({"entries": entries, "nextCursor": next_cursor, "warnings": warnings}))
 }
 
 fn plugin_confirmed(params: &Value) -> Result<(), String> {
@@ -7861,10 +8020,40 @@ fn run_runner_status(options: &GlobalOptions) -> Result<String, String> {
     let mut client =
         HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
             .map_err(format_core_error)?;
-    let entries =
-        read_recent_log_entries(default_log_path(), DEFAULT_LOG_LIMIT).unwrap_or_default();
+    let log_report = read_recent_log_entries_tolerant(default_log_path(), DEFAULT_LOG_LIMIT)
+        .unwrap_or_else(|_| loomex_core::TolerantLogRead {
+            entries: Vec::new(),
+            malformed_lines: 0,
+        });
+    let entries = log_report.entries;
     let report = build_runner_status_report(&resolved, credential.as_ref(), &mut client, &entries);
-    format_runner_status_report(&report, options)
+    format_runner_status_report_with_log_warnings(&report, options, log_report.malformed_lines)
+}
+
+fn format_runner_status_report_with_log_warnings(
+    report: &RunnerStatusReport,
+    options: &GlobalOptions,
+    malformed_log_lines: usize,
+) -> Result<String, String> {
+    if options.json {
+        let mut value: Value = serde_json::from_str(&format_runner_status_report(report, options)?)
+            .map_err(|err| format!("LOCAL_STATUS_SERIALIZE_FAILED: {err}"))?;
+        if malformed_log_lines > 0 {
+            value["warnings"] = json!([format!(
+                "{} malformed log line(s) skipped",
+                malformed_log_lines
+            )]);
+        }
+        return Ok(value.to_string());
+    }
+    let mut output = format_runner_status_report(report, options)?;
+    if malformed_log_lines > 0 {
+        output.push_str(&format!(
+            "\nwarning: {} malformed log line(s) skipped",
+            malformed_log_lines
+        ));
+    }
+    Ok(output)
 }
 
 fn build_runner_status_report<C: ManagementApiClient>(
@@ -7957,9 +8146,9 @@ fn format_runner_status_report(
 
 fn print_runner_logs(args: &[String], global_options: &GlobalOptions) -> Result<String, String> {
     let options = LogOptions::parse(args)?;
-    let entries = read_recent_log_entries(&options.path, options.limit)
+    let report = read_recent_log_entries_tolerant(&options.path, options.limit)
         .map_err(|err| format!("{}: {}", err.code, err.message))?;
-    let entries = filter_log_entries(entries, options.run_id.as_deref())
+    let entries = filter_log_entries(report.entries, options.run_id.as_deref())
         .into_iter()
         .map(redact_log_entry_for_output)
         .collect::<Vec<_>>();
@@ -7970,7 +8159,11 @@ fn print_runner_logs(args: &[String], global_options: &GlobalOptions) -> Result<
             "limit": options.limit,
             "runId": options.run_id,
             "summary": log_summary(&entries),
-            "entries": entries
+            "entries": entries,
+            "warnings": (report.malformed_lines > 0).then(|| json!([{
+                "code": "LOCAL_LOG_PARSE_WARNING",
+                "message": format!("{} malformed log line(s) skipped", report.malformed_lines),
+            }])).unwrap_or_else(|| json!([])),
         })
         .to_string());
     }
@@ -8961,5 +9154,18 @@ mod worker_tests {
 
         assert_eq!(result.unwrap()["status"], "ok");
         assert!(joined.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn organization_slug_matches_backend_normalization() {
+        assert_eq!(
+            organization_request_slug(" Acme, Inc. ", None).as_deref(),
+            Some("acme-inc")
+        );
+        assert_eq!(
+            organization_request_slug("ignored", Some("Team_42")).as_deref(),
+            Some("team-42")
+        );
+        assert_eq!(organization_request_slug("!!!", None), None);
     }
 }

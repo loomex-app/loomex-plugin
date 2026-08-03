@@ -68,8 +68,8 @@ pub use local_control::{
     LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 pub use logs::{
-    read_recent_log_entries, redact_log_entry_for_local_output, FileLogSink, LogEntry, LogSink,
-    MemoryLogSink,
+    read_recent_log_entries, read_recent_log_entries_tolerant, redact_log_entry_for_local_output,
+    FileLogSink, LogEntry, LogSink, MemoryLogSink, TolerantLogRead,
 };
 pub use management::{
     user_credential_profile, ApiKeyExchangeResult, AuthTokenResponse, CredentialKind,

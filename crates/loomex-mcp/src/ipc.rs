@@ -73,7 +73,8 @@ pub enum ClientError {
     Unauthorized(String),
     Protocol(String),
     Remote(ControlError),
-    Timeout,
+    IpcTimeout,
+    BootstrapTimeout,
 }
 
 impl ClientError {
@@ -83,13 +84,14 @@ impl ClientError {
             Self::Unauthorized(_) => "local_auth_failed",
             Self::Protocol(_) => "ipc_protocol_error",
             Self::Remote(error) => &error.code,
-            Self::Timeout => "ipc_timeout",
+            Self::IpcTimeout => "ipc_timeout",
+            Self::BootstrapTimeout => "bootstrap_timeout",
         }
     }
 
     pub fn retryable(&self) -> bool {
         match self {
-            Self::Unavailable(_) | Self::Timeout => true,
+            Self::Unavailable(_) | Self::IpcTimeout | Self::BootstrapTimeout => true,
             Self::Remote(error) => error.retryable,
             Self::Unauthorized(_) | Self::Protocol(_) => false,
         }
@@ -103,9 +105,12 @@ impl std::fmt::Display for ClientError {
                 formatter.write_str(message)
             }
             Self::Remote(error) => formatter.write_str(&error.message),
-            Self::Timeout => {
+            Self::IpcTimeout => {
                 formatter.write_str("the local runner did not respond before the deadline")
             }
+            Self::BootstrapTimeout => formatter.write_str(
+                "organization or Runner bootstrap did not respond before the deadline; the result is being reconciled",
+            ),
         }
     }
 }
@@ -147,7 +152,7 @@ impl LocalControlClient {
         let deadline = deadline.min(Duration::from_secs(47));
         timeout(deadline, self.call_inner(method, params))
             .await
-            .map_err(|_| ClientError::Timeout)?
+            .map_err(|_| ClientError::IpcTimeout)?
     }
 
     pub async fn call_default(&self, method: &str, params: &Value) -> Result<Value, ClientError> {
@@ -265,7 +270,14 @@ impl ControlClient {
         deadline: Duration,
     ) -> Result<Value, ClientError> {
         if is_bootstrap_method(method) {
-            return self.bootstrap.call(method, params, deadline).await;
+            return match self.bootstrap.call(method, params, deadline).await {
+                Err(ClientError::BootstrapTimeout) if method == "org.create" => {
+                    self.bootstrap
+                        .call("org.create.recover", params, deadline)
+                        .await
+                }
+                result => result,
+            };
         }
         match self.daemon.call(method, params, deadline).await {
             Err(error)
@@ -330,7 +342,7 @@ impl BootstrapClient {
             .kill_on_drop(true);
         let output = timeout(deadline.min(Duration::from_secs(47)), command.output())
             .await
-            .map_err(|_| ClientError::Timeout)?
+            .map_err(|_| ClientError::BootstrapTimeout)?
             .map_err(|error| {
                 ClientError::Unavailable(format!(
                     "could not start bundled Loomex runtime {}: {error}",
@@ -993,6 +1005,31 @@ exit 20
 
         assert_eq!(error.code(), "MANAGEMENT_HTTP_FAILED");
         assert_eq!(error.to_string(), "connection refused");
+        assert!(error.retryable());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bootstrap_timeout_has_a_phase_specific_code() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("loomex");
+        fs::write(&executable, "#!/bin/sh\nsleep 1\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let client = BootstrapClient::new(executable);
+
+        let error = client
+            .call(
+                "org.create",
+                &json!({"name":"Acme"}),
+                Duration::from_millis(100),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), "bootstrap_timeout");
+        assert!(error.to_string().contains("reconciled"));
         assert!(error.retryable());
     }
 
