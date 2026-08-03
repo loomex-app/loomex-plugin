@@ -867,10 +867,10 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
     #[cfg(unix)]
     #[tokio::test]
     async fn every_daemon_method_uses_authenticated_local_control() {
-        use std::{
-            io::{BufRead, BufReader, Write},
-            os::unix::{fs::PermissionsExt, net::UnixListener},
-            thread,
+        use std::os::unix::fs::PermissionsExt;
+        use tokio::{
+            io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+            net::UnixListener,
         };
 
         let contracts = tool_contracts()
@@ -892,13 +892,16 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
             .map(|(_, method, _, _)| *method)
             .collect::<Vec<_>>();
         let server_token = token.clone();
-        let server = thread::spawn(move || {
+        // Keep the fake daemon on the same async runtime as the client. A
+        // blocking std::thread server could be starved when this test ran in
+        // parallel with the rest of the MCP suite, causing a false auth/IPC
+        // failure even though the request was valid.
+        let server = tokio::spawn(async move {
             for expected_method in expected_methods {
-                let (mut stream, _) = listener.accept().unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
+                let (reader, mut writer) = stream.into_split();
                 let mut line = String::new();
-                BufReader::new(stream.try_clone().unwrap())
-                    .read_line(&mut line)
-                    .unwrap();
+                BufReader::new(reader).read_line(&mut line).await.unwrap();
                 let request: Value = serde_json::from_str(&line).unwrap();
                 assert_eq!(request["protocolVersion"], LOCAL_CONTROL_VERSION);
                 assert_eq!(request["authToken"], server_token);
@@ -909,8 +912,9 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
                     "ok": true,
                     "result": {"transport": "daemon", "method": expected_method},
                 });
-                serde_json::to_writer(&mut stream, &response).unwrap();
-                stream.write_all(b"\n").unwrap();
+                let mut payload = serde_json::to_vec(&response).unwrap();
+                payload.push(b'\n');
+                writer.write_all(&payload).await.unwrap();
             }
         });
         let missing_bootstrap = temp.path().join("bootstrap-must-not-run");
@@ -927,7 +931,7 @@ printf '{"schemaVersion":"loomex.cli.pluginControl/v1","method":"%s","result":{"
             assert_eq!(result["transport"], "daemon");
             assert_eq!(result["method"], method);
         }
-        server.join().unwrap();
+        server.await.unwrap();
     }
 
     #[cfg(unix)]
