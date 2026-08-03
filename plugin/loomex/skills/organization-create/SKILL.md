@@ -14,5 +14,16 @@ the exact name and optional slug.
 
 The tool creates and selects the organization, clears execution context, and
 bootstraps the organization-scoped local Runner. It does not create a
-workspace path. After success, continue the original request. If the tool
-fails, stop and report its exact structured error.
+workspace path. After success, continue the original request.
+
+The result separates setup phases. `setupStatus: "runner_ready"` means the
+organization and local Runner are ready. `setupStatus: "runner_pending"` or
+`"pending_reconciliation"` is recoverable: preserve the returned organization
+and retry the setup action, not the entire login flow. A bootstrap timeout is
+not proof that organization creation failed; the plugin reconciles the
+authenticated user's organizations by the exact server slug before allowing
+another create. Never issue a blind duplicate create or ask the user to log
+out and sign in again solely because Runner bootstrap timed out.
+
+For a terminal validation or authorization error, stop and report its exact
+structured error.
