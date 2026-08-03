@@ -25,11 +25,11 @@ serverUrl = "https://loomex.app"
 
 ## Install from the Loomex marketplace
 
-The normal installation uses the explicitly resolved `0.1.71` release on macOS
+The normal installation uses the explicitly resolved `0.1.72` release on macOS
 and Linux. Download the bootstrap and its signature as separate files:
 
 ```bash
-version=0.1.71
+version=0.1.72
 base="https://github.com/loomex-app/loomex-plugin/releases/download/v$version"
 curl --fail --location --proto '=https' --tlsv1.2 \
   "$base/install-codex.sh" -o install-codex.sh
@@ -46,7 +46,7 @@ sh install-codex.sh
 To install or upgrade to an exact plugin version:
 
 ```bash
-version=0.1.71
+version=0.1.72
 base="https://github.com/loomex-app/loomex-plugin/releases/download/v$version"
 curl --fail --location --proto '=https' --tlsv1.2 "$base/install-codex.sh" -o install-codex.sh
 curl --fail --location --proto '=https' --tlsv1.2 "$base/install-codex.sh.sigstore.json" -o install-codex.sh.sigstore.json
@@ -56,7 +56,7 @@ cosign verify-blob --bundle install-codex.sh.sigstore.json \
 sh install-codex.sh
 ```
 
-The `0.1.71` release removes persistent execution workspace binding from the
+The `0.1.72` release removes persistent execution workspace binding from the
 Runner contract. Workflows are organization-scoped; every execution
 supplies its own local workspace root. It also includes the guided account
 registration, logout, organization
