@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use getrandom::fill as random_fill;
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    read_recent_log_entries, redact_log_entry_for_local_output, CoreError, CoreResult,
+    read_recent_log_entries_tolerant, redact_log_entry_for_local_output, CoreError, CoreResult,
     ManagementApiClient, ManagementCredential, WorkflowBuilderStartRequest,
 };
 
@@ -28,6 +28,8 @@ pub const LOCAL_CONTROL_TOKEN_NAME: &str = "control.token";
 pub const LOCAL_CONTROL_MAX_LINE_BYTES: usize = 1024 * 1024;
 pub const LOCAL_CONTROL_MAX_CONCURRENT_REQUESTS: usize = 32;
 pub const LOCAL_CONTROL_MAX_REQUESTS_PER_CONNECTION: usize = 8;
+const RUN_WAIT_RECOVERY_ATTEMPTS: usize = 3;
+const RUN_WAIT_RECOVERY_BACKOFF_MS: [u64; RUN_WAIT_RECOVERY_ATTEMPTS] = [250, 500, 1_000];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BoundedLine {
@@ -487,7 +489,8 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                     .and_then(|value| value.parse::<usize>().ok())
                     .unwrap_or(0);
                 let level = optional_string(params, "level");
-                let mut entries = read_recent_log_entries(log_path, 1_000)?;
+                let report = read_recent_log_entries_tolerant(log_path, 1_000)?;
+                let mut entries = report.entries;
                 if let Some(level) = level {
                     entries.retain(|entry| entry.level == level);
                 }
@@ -501,7 +504,13 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                     .collect::<Vec<_>>();
                 let next_cursor = (offset + entries.len() < total)
                     .then(|| (offset + entries.len()).to_string());
-                Ok(json!({"entries": entries, "nextCursor": next_cursor}))
+                let warnings = (report.malformed_lines > 0).then(|| {
+                    json!([{
+                        "code": "LOCAL_LOG_PARSE_WARNING",
+                        "message": format!("{} malformed log line(s) skipped", report.malformed_lines),
+                    }])
+                }).unwrap_or_else(|| json!([]));
+                Ok(json!({"entries": entries, "nextCursor": next_cursor, "warnings": warnings}))
             }
             "doctor" => self.doctor(params),
             "setup.status" | "setup.plan" | "setup.apply" | "setup.rollback" | "auth.status" |
@@ -626,7 +635,16 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
                 },
             ));
             match self.log_path.as_deref() {
-                Some(path) => match read_recent_log_entries(path, 1) {
+                Some(path) => match read_recent_log_entries_tolerant(path, 1) {
+                    Ok(report) if report.malformed_lines > 0 => checks.push(doctor_check(
+                        "logs",
+                        "warning",
+                        format!(
+                            "{} malformed log line(s) skipped at {}",
+                            report.malformed_lines,
+                            path.display()
+                        ),
+                    )),
                     Ok(_) => checks.push(doctor_check(
                         "logs",
                         "ok",
@@ -677,14 +695,42 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
             .and_then(Value::as_u64)
             .unwrap_or(0);
         self.with_client(|client| {
-            let response = client.wait_runner_workflow_execution_scoped(
-                &self.credential,
-                execution_id,
-                after_sequence,
-                timeout_seconds,
-                Some("plugin"),
-            )?;
-            run_detail_value(response)
+            let mut last_error = None;
+            for attempt in 0..=RUN_WAIT_RECOVERY_ATTEMPTS {
+                match client.wait_runner_workflow_execution_scoped(
+                    &self.credential,
+                    execution_id,
+                    after_sequence,
+                    timeout_seconds,
+                    Some("plugin"),
+                ) {
+                    Ok(response) => return run_detail_value(response),
+                    Err(error) if is_retryable_code(error.code) => {
+                        last_error = Some(error);
+                        if attempt == RUN_WAIT_RECOVERY_ATTEMPTS {
+                            break;
+                        }
+
+                        // A failed long-poll leaves the durable execution state unknown. Re-read
+                        // that state before retrying so a transient socket/proxy reset does not
+                        // surface to the caller and a terminal run is never waited on again.
+                        match client.get_runner_workflow_execution_scoped(
+                            &self.credential,
+                            execution_id,
+                            Some("plugin"),
+                        ) {
+                            Ok(response) => return run_detail_value(response),
+                            Err(error) if is_retryable_code(error.code) => {
+                                last_error = Some(error);
+                            }
+                            Err(error) => return Err(error),
+                        }
+                        thread::sleep(Duration::from_millis(RUN_WAIT_RECOVERY_BACKOFF_MS[attempt]));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(last_error.expect("run wait recovery must record its last error"))
         })
     }
 }
@@ -1275,6 +1321,44 @@ mod tests {
         assert_eq!(value["protocolVersion"], LOCAL_CONTROL_PROTOCOL_VERSION);
         assert_eq!(value["id"], "req-1");
         assert!(value.get("error").is_none());
+    }
+
+    #[test]
+    fn run_wait_recovers_after_transport_failure_by_rechecking_state() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buffer = [0_u8; 4096];
+                let _ = stream.read(&mut buffer).unwrap();
+                if attempt == 0 {
+                    // Simulate the socket reset that can interrupt a long-poll request.
+                    continue;
+                }
+                let body = r#"{"data":{"execution":{"id":"run-1","status":"running"},"events":[],"latestSequence":1,"timedOut":false}}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let client =
+            crate::HttpManagementApiClient::new(format!("http://{address}"), None).unwrap();
+        let dispatcher = LocalControlDispatcher::new(client, test_credential());
+
+        let result = dispatcher
+            .dispatch(
+                "run.wait",
+                &json!({"executionId":"run-1","afterSequence":1,"timeoutSeconds":0}),
+            )
+            .unwrap();
+
+        assert_eq!(result["execution"]["id"], "run-1");
+        assert_eq!(result["execution"]["status"], "running");
+        server.join().unwrap();
     }
 
     #[test]

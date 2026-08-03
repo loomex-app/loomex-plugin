@@ -129,6 +129,8 @@ impl ApiKeyExchangeResult {
 pub struct Organization {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub slug: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
