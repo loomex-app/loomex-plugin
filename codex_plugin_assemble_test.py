@@ -471,7 +471,7 @@ else:
         )
         implemented = set(re.findall(r'"(loomex_[a-z_]+)"', rust))
         advertised = set(re.findall(r"`(loomex_[a-z_]+)`", skill))
-        self.assertEqual(len(implemented), 36)
+        self.assertEqual(len(implemented), 39)
         self.assertEqual(advertised, implemented)
 
     def test_auth_skill_forbids_direct_cli_fallback_and_obeys_retryability(self) -> None:

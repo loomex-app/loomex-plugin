@@ -30,14 +30,15 @@ use loomex_core::{
     protocol::PROTOCOL_VERSION,
     read_bounded_line, read_local_control_token, read_recent_log_entries,
     read_recent_log_entries_tolerant, release_runner_runtime_guard_for_surface,
-    runner_runtime_guard_path, user_credential_profile, AuthTokenResponse, BoundedLine,
-    BundledRuntimeInstall, CliConfig, CliConfigOverrides, CredentialKind, CredentialStorageBackend,
-    CredentialStore, DeviceLoginChallenge, FileLogSink, FsListInput, FsReadInput, FsWriteInput,
-    HttpManagementApiClient, HumanRequestSummary, LocalCapabilityExecutor, LocalControlDispatcher,
-    LocalControlPaths, LocalControlRequest, LocalControlResponse, LogEntry, ManagementApiClient,
-    ManagementCredential, Organization, Runner, RunnerServiceManifest, RunnerServicePlatform,
-    RunnerServiceSpec, RuntimeInstaller, SbomPackage, ShellCancellationToken,
-    SystemCredentialStore, WorkflowRunStartRequest, LOCAL_CONTROL_PROTOCOL_VERSION,
+    runner_runtime_guard_path, user_credential_profile, workspace_token_expires_at,
+    AuthTokenResponse, BoundedLine, BundledRuntimeInstall, CliConfig, CliConfigOverrides,
+    CredentialKind, CredentialStorageBackend, CredentialStore, DeviceLoginChallenge, FileLogSink,
+    FsListInput, FsReadInput, FsWriteInput, HttpManagementApiClient, HumanRequestSummary,
+    LocalCapabilityExecutor, LocalControlDispatcher, LocalControlPaths, LocalControlRequest,
+    LocalControlResponse, LogEntry, ManagementApiClient, ManagementCredential, Organization,
+    Runner, RunnerServiceManifest, RunnerServicePlatform, RunnerServiceSpec, RuntimeInstaller,
+    SbomPackage, ShellCancellationToken, SystemCredentialStore, WorkflowRunStartRequest,
+    WorkspaceLoginOrRegisterResult, LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use setup_transaction::{
@@ -1538,10 +1539,13 @@ fn run_runner_plugin_control(args: &[String], options: &GlobalOptions) -> Result
         "setup.apply" => plugin_setup_apply(&params, options)?,
         "setup.rollback" => plugin_setup_rollback(&params, options)?,
         "auth.status" => plugin_auth_status(options)?,
+        "auth.login" => plugin_auth_login(&params, options)?,
         "auth.start" => plugin_auth_start(&params, options)?,
         "auth.wait" => plugin_auth_wait(&params, options)?,
         "auth.register" => plugin_auth_register(&params, options)?,
         "auth.register.verify" => plugin_auth_register_verify(&params, options)?,
+        "auth.password.forgot" => plugin_auth_password_forgot(&params, options)?,
+        "auth.password.reset" => plugin_auth_password_reset(&params, options)?,
         "auth.logout" => {
             plugin_confirmed(&params)?;
             let mut lifecycle = plugin_stop_service_and_invalidate_local_control(options)?;
@@ -1615,10 +1619,13 @@ fn plugin_control_is_lifecycle_mutation(method: &str) -> bool {
         method,
         "setup.apply"
             | "setup.rollback"
+            | "auth.login"
             | "auth.start"
             | "auth.wait"
             | "auth.register"
             | "auth.register.verify"
+            | "auth.password.forgot"
+            | "auth.password.reset"
             | "auth.logout"
             | "org.create"
             | "org.create.recover"
@@ -3352,33 +3359,17 @@ fn plugin_auth_status(options: &GlobalOptions) -> Result<Value, String> {
         .load(&user_credential_profile(&resolved.profile))
         .map_err(format_core_error)?;
     let now = current_epoch_seconds()?;
-    let credential_status = |credential: Option<ManagementCredential>| match credential {
-        Some(credential) => {
-            match credential.validate_not_expiring(now, MANAGEMENT_TOKEN_CLOCK_SKEW_SECONDS) {
-                Ok(()) => (
-                    true,
-                    Some(credential.expires_at),
-                    credential.storage_warning,
-                ),
-                Err(error) => (
-                    false,
-                    Some(credential.expires_at),
-                    Some(format_core_error(error)),
-                ),
-            }
-        }
-        None => (false, None, None),
-    };
     let runner_credential_present = runner_credential.is_some();
     let runner_upgrade_reason = runner_credential
         .as_ref()
         .and_then(runner_credential_upgrade_reason);
     let (mut runner_authenticated, runner_expires_at, runner_warning) =
-        credential_status(runner_credential);
+        credential_auth_status(runner_credential, now);
     if runner_upgrade_reason.is_some() {
         runner_authenticated = false;
     }
-    let (user_authenticated, user_expires_at, user_warning) = credential_status(user_credential);
+    let (user_authenticated, user_expires_at, user_warning) =
+        credential_auth_status(user_credential, now);
     let warning = runner_upgrade_reason
         .map(|reason| format!("RUNNER_CREDENTIAL_UPGRADE_REQUIRED: {reason}"))
         .or(runner_warning)
@@ -3399,6 +3390,204 @@ fn plugin_auth_status(options: &GlobalOptions) -> Result<Value, String> {
         "runnerExpiresAt": runner_expires_at,
         "warning": warning,
     }))
+}
+
+fn credential_auth_status(
+    credential: Option<ManagementCredential>,
+    now_epoch_seconds: u64,
+) -> (bool, Option<String>, Option<String>) {
+    match credential {
+        Some(credential) => {
+            match credential
+                .validate_not_expiring(now_epoch_seconds, MANAGEMENT_TOKEN_CLOCK_SKEW_SECONDS)
+            {
+                Ok(()) => (
+                    true,
+                    Some(credential.expires_at),
+                    credential.storage_warning,
+                ),
+                Err(error) => (
+                    false,
+                    Some(credential.expires_at),
+                    Some(format_core_error(error)),
+                ),
+            }
+        }
+        None => (false, None, None),
+    }
+}
+
+fn plugin_auth_form(mode: &str) -> Value {
+    json!({
+        "authForm": {
+            "mode": mode,
+            "secure": true,
+            "sensitivity": "sensitive",
+            "clearOn": ["submit", "cancel", "timeout", "failure", "logout"]
+        },
+        "nextAction": match mode {
+            "forgot" => "auth.password.forgot",
+            "otp" => "auth.register.verify",
+            "reset" => "auth.password.reset",
+            _ => "auth.login",
+        }
+    })
+}
+
+fn plugin_auth_login(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
+    let Some(email) = params.get("email").and_then(Value::as_str) else {
+        return Ok(plugin_auth_form("login"));
+    };
+    let password = plugin_required_string(params, "password")?;
+    let first_name = params
+        .get("firstName")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let last_name = params.get("lastName").and_then(Value::as_str).unwrap_or("");
+    let confirm_password = params
+        .get("confirmPassword")
+        .and_then(Value::as_str)
+        .unwrap_or(password);
+    let config_path = cli_config_path();
+    let mut config = load_cli_config_from(&config_path)?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let store = SystemCredentialStore::new(credential_dir());
+    if store
+        .load(&resolved.profile)
+        .map_err(format_core_error)?
+        .is_some()
+        || store
+            .load(&user_credential_profile(&resolved.profile))
+            .map_err(format_core_error)?
+            .is_some()
+    {
+        return Err(
+            "AUTH_LOGOUT_REQUIRED: logout before starting a new Loomex workspace session"
+                .to_string(),
+        );
+    }
+    let mut client =
+        HttpManagementApiClient::new(&resolved.server_url, resolved.host_header.clone())
+            .map_err(format_core_error)?;
+    match client
+        .login_or_register_workspace(email, first_name, last_name, password, confirm_password)
+        .map_err(format_core_error)?
+    {
+        WorkspaceLoginOrRegisterResult::RegistrationChallenge(challenge) => {
+            let mut result = plugin_auth_form("otp");
+            result["pending"] = json!(true);
+            result["challenge"] = serde_json::to_value(challenge)
+                .map_err(|error| format!("AUTH_RESPONSE_INVALID: {error}"))?;
+            result["nextAction"] = json!("auth.register.verify");
+            result["profile"] = json!(resolved.profile);
+            result["serverUrl"] = json!(resolved.server_url);
+            Ok(result)
+        }
+        WorkspaceLoginOrRegisterResult::Authenticated(login) => complete_workspace_user_session(
+            &mut config,
+            &config_path,
+            &store,
+            &resolved.profile,
+            &resolved.server_url,
+            login.token,
+        ),
+    }
+}
+
+fn complete_workspace_user_session<S: CredentialStore + ?Sized>(
+    config: &mut CliConfig,
+    config_path: &Path,
+    store: &S,
+    profile: &str,
+    server_url: &str,
+    access_token: String,
+) -> Result<Value, String> {
+    let credential_profile = user_credential_profile(profile);
+    let expires_at = workspace_token_expires_at(&access_token).map_err(format_core_error)?;
+    let credential = ManagementCredential::from_user_token_response(
+        &credential_profile,
+        "",
+        AuthTokenResponse {
+            access_token,
+            refresh_token: None,
+            token_type: "Bearer".to_string(),
+            expires_at: expires_at.clone(),
+        },
+        CredentialStorageBackend::LocalFileFallback,
+    )
+    .map_err(format_core_error)?;
+    let storage = store.save(&credential).map_err(format_core_error)?;
+    clear_plugin_auth_scope(config, profile)?;
+    config
+        .set_key(
+            &format!("profiles.{profile}.serverUrl"),
+            server_url.to_string(),
+        )
+        .map_err(format_core_error)?;
+    if let Err(error) = config.save(config_path) {
+        let _ = store.delete(&credential_profile);
+        return Err(format_core_error(error));
+    }
+    Ok(json!({
+        "authenticated": true,
+        "userAuthenticated": true,
+        "runnerAuthenticated": false,
+        "organizationSelectionRequired": true,
+        "organizationId": null,
+        "profile": profile,
+        "serverUrl": server_url,
+        "expiresAt": expires_at,
+        "storageBackend": storage_backend_name(storage.backend),
+        "storageWarning": storage.warning,
+        "nextAction": "org.list"
+    }))
+}
+
+fn plugin_auth_password_forgot(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
+    let Some(email) = params.get("email").and_then(Value::as_str) else {
+        return Ok(plugin_auth_form("forgot"));
+    };
+    let config = load_cli_config()?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
+        .map_err(format_core_error)?;
+    let challenge = client
+        .request_workspace_password_reset(email)
+        .map_err(format_core_error)?;
+    let mut result = plugin_auth_form("reset");
+    result["pending"] = json!(true);
+    result["challenge"] = serde_json::to_value(challenge)
+        .map_err(|error| format!("AUTH_RESPONSE_INVALID: {error}"))?;
+    result["nextAction"] = json!("auth.password.reset");
+    result["profile"] = json!(resolved.profile);
+    result["serverUrl"] = json!(resolved.server_url);
+    Ok(result)
+}
+
+fn plugin_auth_password_reset(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
+    let challenge_id = plugin_required_string(params, "challengeId")?;
+    let email = plugin_required_string(params, "email")?;
+    let code = plugin_required_string(params, "code")?;
+    let password = plugin_required_string(params, "password")?;
+    let confirm_password = plugin_required_string(params, "confirmPassword")?;
+    let config = load_cli_config()?;
+    let resolved = config
+        .resolve(options.config_overrides(), |key| env::var(key).ok())
+        .map_err(format_core_error)?;
+    let mut client = HttpManagementApiClient::new(&resolved.server_url, resolved.host_header)
+        .map_err(format_core_error)?;
+    let reset = client
+        .reset_workspace_password(challenge_id, email, code, password, confirm_password)
+        .map_err(format_core_error)?;
+    let mut result = plugin_auth_form("login");
+    result["status"] = json!(reset.status);
+    result["authenticated"] = json!(false);
+    result["nextAction"] = json!("auth.login");
+    Ok(result)
 }
 
 fn plugin_auth_start(params: &Value, options: &GlobalOptions) -> Result<Value, String> {
@@ -3506,6 +3695,7 @@ fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Resul
     let login = client
         .verify_workspace_registration(challenge_id, email, code)
         .map_err(format_core_error)?;
+    let expires_at = workspace_token_expires_at(&login.token).map_err(format_core_error)?;
     let credential_profile = user_credential_profile(&resolved.profile);
     let credential = ManagementCredential::from_user_token_response(
         &credential_profile,
@@ -3514,7 +3704,7 @@ fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Resul
             access_token: login.token,
             refresh_token: None,
             token_type: "Bearer".to_string(),
-            expires_at: "9999-12-31T23:59:59Z".to_string(),
+            expires_at: expires_at.clone(),
         },
         CredentialStorageBackend::LocalFileFallback,
     )
@@ -3540,6 +3730,7 @@ fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Resul
         "organizationId": Value::Null,
         "profile": resolved.profile,
         "serverUrl": resolved.server_url,
+        "expiresAt": expires_at,
         "storageBackend": storage_backend_name(storage.backend),
         "storageWarning": storage.warning,
         "nextAction": "org.list",
@@ -9167,5 +9358,47 @@ mod worker_tests {
             Some("team-42")
         );
         assert_eq!(organization_request_slug("!!!", None), None);
+    }
+
+    #[test]
+    fn auth_status_requires_reauthentication_for_expired_user_credentials() {
+        let credential = ManagementCredential::from_user_token_response(
+            "default.user",
+            "",
+            AuthTokenResponse {
+                access_token: "workspace-token".to_string(),
+                refresh_token: None,
+                token_type: "Bearer".to_string(),
+                expires_at: "2026-01-01T00:00:00Z".to_string(),
+            },
+            CredentialStorageBackend::LocalFileFallback,
+        )
+        .unwrap();
+        let (authenticated, expires_at, warning) =
+            credential_auth_status(Some(credential), 1_800_000_000);
+        assert!(!authenticated);
+        assert_eq!(expires_at.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert!(warning.unwrap().contains("AUTH_TOKEN_EXPIRED"));
+    }
+
+    #[test]
+    fn auth_status_keeps_bounded_user_credentials_authenticated_until_expiry() {
+        let credential = ManagementCredential::from_user_token_response(
+            "default.user",
+            "",
+            AuthTokenResponse {
+                access_token: "workspace-token".to_string(),
+                refresh_token: None,
+                token_type: "Bearer".to_string(),
+                expires_at: "2099-01-01T00:00:00Z".to_string(),
+            },
+            CredentialStorageBackend::LocalFileFallback,
+        )
+        .unwrap();
+        let (authenticated, expires_at, warning) =
+            credential_auth_status(Some(credential), 1_800_000_000);
+        assert!(authenticated);
+        assert_eq!(expires_at.as_deref(), Some("2099-01-01T00:00:00Z"));
+        assert!(warning.is_some());
     }
 }

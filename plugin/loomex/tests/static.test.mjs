@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const tools = [
   "loomex_setup_status", "loomex_setup_plan", "loomex_setup_apply", "loomex_setup_rollback",
-  "loomex_auth_status", "loomex_auth_start", "loomex_auth_wait", "loomex_auth_register", "loomex_auth_register_verify", "loomex_auth_logout",
+  "loomex_auth_status", "loomex_auth_login", "loomex_auth_start", "loomex_auth_wait", "loomex_auth_register", "loomex_auth_register_verify", "loomex_auth_password_forgot", "loomex_auth_password_reset", "loomex_auth_logout",
   "loomex_org_list", "loomex_org_create", "loomex_org_select",
   "loomex_workflow_list", "loomex_workflow_show", "loomex_workflow_validate", "loomex_workflow_run",
   "loomex_workflow_create", "loomex_workflow_create_respond", "loomex_workflow_create_finalize",
@@ -22,7 +22,7 @@ const tools = [
 
 test("skill exposes the settled MCP tool contract exactly", async () => {
   const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
-  assert.equal(tools.length, 36);
+  assert.equal(tools.length, 39);
   for (const name of tools) assert.match(skill, new RegExp(`\\b${name}\\b`), name);
   assert.doesNotMatch(skill, /loomex_organization_|loomex_human_request_/);
 });
@@ -68,6 +68,21 @@ test("credential and sensitive human-input handling stays outside model context"
   assert.match(human, /expiry\s+metadata/);
   assert.match(safety, /Passwords, password confirmations, verification codes/);
   assert.match(safety, /prompts, transcripts, tool results/);
+});
+
+test("login skill uses the combined secure auth and redacted reset contract", async () => {
+  const login = await readFile(path.join(root, "skills", "login", "SKILL.md"), "utf8");
+  const html = await readFile(path.join(root, "..", "..", "crates", "loomex-mcp", "src", "human_input_app.html"), "utf8");
+  for (const name of ["loomex_auth_login", "loomex_auth_register_verify", "loomex_auth_password_forgot", "loomex_auth_password_reset"]) {
+    assert.match(login, new RegExp(`\\b${name}\\b`));
+  }
+  assert.match(login, /wrong password[\s\S]*never[\s\S]*registration/i);
+  assert.match(login, /never enter model-visible results, transcript, prompt, localStorage, widget/);
+  assert.match(html, /sensitive authentication/);
+  assert.match(html, /clearAuthFields/);
+  assert.match(html, /window\.openai\.callTool/);
+  assert.match(html, /auth_password_reset/);
+  assert.match(html, /auth-register-tab/);
 });
 
 test("workflow guide pack is complete and hash-pinned", async () => {

@@ -6,7 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD as BASE64, URL_SAFE, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -18,6 +21,7 @@ use crate::{CoreError, CoreResult};
 const RUNNER_AUTH_EXCHANGE_PATH: &str = "/runner-control/runner/v1/auth/exchange/";
 const RUNNER_AUTH_BOOTSTRAP_PATH: &str = "/runner-control/runner/v1/auth/bootstrap/";
 const RUNNER_TOKEN_NON_EXPIRING_EXPIRES_AT: &str = "9999-12-31T23:59:59Z";
+const MAX_WORKSPACE_TOKEN_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 const MANAGEMENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANAGEMENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -97,6 +101,17 @@ pub struct ApiKeyExchangeResult {
 pub struct WorkspaceLoginResult {
     pub token: String,
     pub organization_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceLoginOrRegisterResult {
+    Authenticated(WorkspaceLoginResult),
+    RegistrationChallenge(WorkspaceRegistrationChallenge),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspacePasswordResetResult {
+    pub status: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -397,6 +412,11 @@ struct WorkspaceRegistrationData {
     resend_available_at: Option<String>,
     #[serde(default)]
     reused: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspacePasswordResetData {
+    status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -940,6 +960,14 @@ pub trait ManagementApiClient {
         organization_id: &str,
     ) -> CoreResult<ApiKeyExchangeResult>;
     fn login_workspace(&mut self, email: &str, password: &str) -> CoreResult<WorkspaceLoginResult>;
+    fn login_or_register_workspace(
+        &mut self,
+        email: &str,
+        first_name: &str,
+        last_name: &str,
+        password: &str,
+        confirm_password: &str,
+    ) -> CoreResult<WorkspaceLoginOrRegisterResult>;
     fn register_workspace(
         &mut self,
         email: &str,
@@ -954,6 +982,18 @@ pub trait ManagementApiClient {
         email: &str,
         code: &str,
     ) -> CoreResult<WorkspaceLoginResult>;
+    fn request_workspace_password_reset(
+        &mut self,
+        email: &str,
+    ) -> CoreResult<WorkspaceRegistrationChallenge>;
+    fn reset_workspace_password(
+        &mut self,
+        challenge_id: &str,
+        email: &str,
+        code: &str,
+        password: &str,
+        confirm_password: &str,
+    ) -> CoreResult<WorkspacePasswordResetResult>;
     fn create_organization(
         &mut self,
         credential: &ManagementCredential,
@@ -1629,6 +1669,55 @@ impl ManagementApiClient for HttpManagementApiClient {
         })
     }
 
+    fn login_or_register_workspace(
+        &mut self,
+        email: &str,
+        first_name: &str,
+        last_name: &str,
+        password: &str,
+        confirm_password: &str,
+    ) -> CoreResult<WorkspaceLoginOrRegisterResult> {
+        let response = self
+            .apply_common_headers(
+                self.client
+                    .post(self.url("/workspace/auth/login-or-register/")),
+            )
+            .json(&serde_json::json!({
+                "email": email,
+                "firstName": first_name,
+                "lastName": last_name,
+                "password": password,
+                "confirmPassword": confirm_password,
+            }))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<Value> = parse_json_response(response)?;
+        if envelope.data.get("token").and_then(Value::as_str).is_some() {
+            let data: WorkspaceLoginData = serde_json::from_value(envelope.data)
+                .map_err(|err| CoreError::new("MANAGEMENT_RESPONSE_INVALID", err.to_string()))?;
+            let organization_id = data.organization.map(|item| item.id);
+            return Ok(WorkspaceLoginOrRegisterResult::Authenticated(
+                WorkspaceLoginResult {
+                    token: data.token,
+                    organization_id,
+                },
+            ));
+        }
+        let challenge: WorkspaceRegistrationData = serde_json::from_value(envelope.data)
+            .map_err(|err| CoreError::new("MANAGEMENT_RESPONSE_INVALID", err.to_string()))?;
+        Ok(WorkspaceLoginOrRegisterResult::RegistrationChallenge(
+            WorkspaceRegistrationChallenge {
+                challenge_id: challenge.challenge_id,
+                email: challenge.email,
+                status: challenge.status,
+                purpose: challenge.purpose,
+                expires_at: challenge.expires_at,
+                resend_available_at: challenge.resend_available_at,
+                reused: challenge.reused,
+            },
+        ))
+    }
+
     fn register_workspace(
         &mut self,
         email: &str,
@@ -1683,6 +1772,58 @@ impl ManagementApiClient for HttpManagementApiClient {
         Ok(WorkspaceLoginResult {
             token: envelope.data.token,
             organization_id,
+        })
+    }
+
+    fn request_workspace_password_reset(
+        &mut self,
+        email: &str,
+    ) -> CoreResult<WorkspaceRegistrationChallenge> {
+        let response = self
+            .apply_common_headers(
+                self.client
+                    .post(self.url("/workspace/auth/password/forgot/")),
+            )
+            .json(&serde_json::json!({"email": email}))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<WorkspaceRegistrationData> = parse_json_response(response)?;
+        Ok(WorkspaceRegistrationChallenge {
+            challenge_id: envelope.data.challenge_id,
+            email: envelope.data.email,
+            status: envelope.data.status,
+            purpose: envelope.data.purpose,
+            expires_at: envelope.data.expires_at,
+            resend_available_at: envelope.data.resend_available_at,
+            reused: envelope.data.reused,
+        })
+    }
+
+    fn reset_workspace_password(
+        &mut self,
+        challenge_id: &str,
+        email: &str,
+        code: &str,
+        password: &str,
+        confirm_password: &str,
+    ) -> CoreResult<WorkspacePasswordResetResult> {
+        let response = self
+            .apply_common_headers(
+                self.client
+                    .post(self.url("/workspace/auth/password/reset/")),
+            )
+            .json(&serde_json::json!({
+                "challengeId": challenge_id,
+                "email": email,
+                "code": code,
+                "password": password,
+                "confirmPassword": confirm_password,
+            }))
+            .send()
+            .map_err(|err| CoreError::new("MANAGEMENT_HTTP_FAILED", err.to_string()))?;
+        let envelope: ClientEnvelope<WorkspacePasswordResetData> = parse_json_response(response)?;
+        Ok(WorkspacePasswordResetResult {
+            status: envelope.data.status,
         })
     }
 
@@ -3153,6 +3294,106 @@ pub fn parse_rfc3339_utc_epoch_seconds(value: &str) -> CoreResult<u64> {
         .map_err(|_| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", "timestamp is before epoch"))
 }
 
+/// Derive a bounded expiry from the signed Django user-token payload returned by
+/// workspace authentication. The backend remains authoritative for signature
+/// validation; this local claim is used only to ensure stored credentials are
+/// eventually reauthenticated and can never become non-expiring locally.
+pub fn workspace_token_expires_at(token: &str) -> CoreResult<String> {
+    let mut signed_parts = token.split(':');
+    let encoded_payload = signed_parts.next().ok_or_else(|| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token is missing its signed payload",
+        )
+    })?;
+    if signed_parts.next().is_none() {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token signature is missing",
+        ));
+    }
+    let payload = URL_SAFE_NO_PAD
+        .decode(encoded_payload)
+        .or_else(|_| URL_SAFE.decode(encoded_payload))
+        .map_err(|_| {
+            CoreError::new(
+                "AUTH_TOKEN_EXPIRY_INVALID",
+                "workspace token payload is invalid",
+            )
+        })?;
+    let payload: Value = serde_json::from_slice(&payload).map_err(|_| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token payload is not JSON",
+        )
+    })?;
+    let issued_at = payload.get("iat").and_then(Value::as_u64).ok_or_else(|| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token iat is missing",
+        )
+    })?;
+    let expires_at = payload.get("exp").and_then(Value::as_u64).ok_or_else(|| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token exp is missing",
+        )
+    })?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| {
+            CoreError::new(
+                "SYSTEM_CLOCK_INVALID",
+                "system clock is before the Unix epoch",
+            )
+        })?
+        .as_secs();
+    if issued_at > now.saturating_add(300) {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token iat is too far in the future",
+        ));
+    }
+    let ttl = expires_at.saturating_sub(issued_at);
+    if expires_at <= issued_at || ttl > MAX_WORKSPACE_TOKEN_TTL_SECONDS {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token expiry is outside the bounded backend lifetime",
+        ));
+    }
+    if expires_at <= now {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRED",
+            "workspace token is expired",
+        ));
+    }
+    format_rfc3339_utc_epoch_seconds(expires_at)
+}
+
+fn format_rfc3339_utc_epoch_seconds(seconds: u64) -> CoreResult<String> {
+    let days = i64::try_from(seconds / 86_400)
+        .map_err(|_| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", "timestamp overflow"))?;
+    let day_seconds = seconds % 86_400;
+    let z = days
+        .checked_add(719_468)
+        .ok_or_else(|| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", "timestamp overflow"))?;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_part = (5 * doy + 2) / 153;
+    let day = doy - (153 * month_part + 2) / 5 + 1;
+    let month = month_part + if month_part < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    let hour = day_seconds / 3_600;
+    let minute = (day_seconds % 3_600) / 60;
+    let second = day_seconds % 60;
+    Ok(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
+    ))
+}
+
 fn parse_i64(value: Option<&str>, field: &'static str) -> CoreResult<i64> {
     value
         .ok_or_else(|| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", field))?
@@ -3232,6 +3473,40 @@ mod tests {
         response_body: &'static str,
     ) -> (String, mpsc::Receiver<String>, std::thread::JoinHandle<()>) {
         serve_one_http_response_with_status("200 OK", response_body)
+    }
+
+    #[test]
+    fn workspace_token_expiry_is_derived_from_bounded_backend_claim() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let token = format!(
+            "{}:signature",
+            URL_SAFE_NO_PAD.encode(
+                json!({"iat": now, "exp": now + 3600, "kind": "user"})
+                    .to_string()
+                    .as_bytes()
+            )
+        );
+        let expires_at = workspace_token_expires_at(&token).unwrap();
+        assert_eq!(
+            parse_rfc3339_utc_epoch_seconds(&expires_at).unwrap(),
+            now + 3600
+        );
+
+        let unbounded = format!(
+            "{}:signature",
+            URL_SAFE_NO_PAD.encode(
+                json!({"iat": now, "exp": now + MAX_WORKSPACE_TOKEN_TTL_SECONDS + 1})
+                    .to_string()
+                    .as_bytes()
+            )
+        );
+        assert_eq!(
+            workspace_token_expires_at(&unbounded).unwrap_err().code,
+            "AUTH_TOKEN_EXPIRY_INVALID"
+        );
     }
 
     fn serve_one_http_response_with_status(
@@ -3330,6 +3605,60 @@ mod tests {
         assert!(raw.starts_with("POST /api/v1/auth/device/token HTTP/1.1\r\n"));
         assert!(raw.contains(r#"{"device_code":"device-1"}"#));
         assert!(!raw.to_ascii_lowercase().contains("authorization:"));
+    }
+
+    #[test]
+    fn workspace_combined_auth_and_password_reset_http_contracts_are_exact() {
+        let (server_url, request, server) = serve_one_http_response(
+            r#"{"data":{"challengeId":"challenge-1","email":"new@example.com","status":"pending","expiresAt":"2099-01-01T00:00:00Z","resendAvailableAt":null,"reused":false}}"#,
+        );
+        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
+        let result = client
+            .login_or_register_workspace(
+                "new@example.com",
+                "Ada",
+                "Lovelace",
+                "Password1!",
+                "Password1!",
+            )
+            .unwrap();
+        assert!(matches!(
+            result,
+            WorkspaceLoginOrRegisterResult::RegistrationChallenge(_)
+        ));
+        let raw = captured_request(request, server);
+        assert!(raw.starts_with("POST /api/v1/workspace/auth/login-or-register/ HTTP/1.1\r\n"));
+        assert!(raw.contains(r#""firstName":"Ada""#));
+        assert!(raw.contains(r#""confirmPassword":"Password1!""#));
+
+        let (server_url, request, server) = serve_one_http_response(
+            r#"{"data":{"challengeId":"reset-1","email":"user@example.com","status":"pending"}}"#,
+        );
+        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
+        let challenge = client
+            .request_workspace_password_reset("user@example.com")
+            .unwrap();
+        assert_eq!(challenge.challenge_id, "reset-1");
+        let raw = captured_request(request, server);
+        assert!(raw.starts_with("POST /api/v1/workspace/auth/password/forgot/ HTTP/1.1\r\n"));
+        assert!(raw.contains(r#""email":"user@example.com""#));
+
+        let (server_url, request, server) =
+            serve_one_http_response(r#"{"data":{"status":"password_reset"}}"#);
+        let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
+        let reset = client
+            .reset_workspace_password(
+                "reset-1",
+                "user@example.com",
+                "123456",
+                "Password2!",
+                "Password2!",
+            )
+            .unwrap();
+        assert_eq!(reset.status, "password_reset");
+        let raw = captured_request(request, server);
+        assert!(raw.starts_with("POST /api/v1/workspace/auth/password/reset/ HTTP/1.1\r\n"));
+        assert!(raw.contains(r#""challengeId":"reset-1""#));
     }
 
     #[test]

@@ -100,6 +100,23 @@ pub fn definitions() -> Vec<ToolDefinition> {
             obj(&[], &[]),
             ro(),
         ),
+        tool_with_meta(
+            "loomex_auth_login",
+            "Sign in or register",
+            "Open the secure Loomex workspace sign-in form. Existing accounts sign in; new emails start registration OTP without exposing credentials to the model.",
+            obj(
+                &[
+                    ("email", string()),
+                    ("firstName", string()),
+                    ("lastName", string()),
+                    ("password", string()),
+                    ("confirmPassword", string()),
+                ],
+                &[],
+            ),
+            mutating(false, false, true),
+            auth_ui_meta(),
+        ),
         tool(
             "loomex_auth_start",
             "Start authentication",
@@ -119,11 +136,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             mutating(false, false, true),
         ),
-        tool(
+        tool_with_meta(
             "loomex_auth_register",
             "Register account",
-            "Create a Loomex workspace account and return the email verification challenge. This does not create an organization.",
-            "auth.register",
+            "Open the secure Loomex workspace registration form and return the email verification challenge. This does not create an organization.",
             obj(
                 &[
                     ("email", string()),
@@ -135,17 +151,49 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 &["email", "password", "confirmPassword"],
             ),
             mutating(false, false, true),
+            auth_ui_meta(),
         ),
-        tool(
+        tool_with_meta(
             "loomex_auth_register_verify",
             "Verify registration",
-            "Verify a Loomex registration email code and save the new local user session.",
-            "auth.register.verify",
+            "Verify a Loomex registration email code through the secure authentication form and save the new local user session.",
             obj(
                 &[("challengeId", string()), ("email", string()), ("code", string())],
                 &["challengeId", "email", "code"],
             ),
             mutating(true, false, true),
+            auth_ui_meta(),
+        ),
+        tool_with_meta(
+            "loomex_auth_password_forgot",
+            "Forgot password",
+            "Send a password-reset OTP to the supplied email through the secure authentication form.",
+            obj(&[("email", string())], &[]),
+            mutating(false, false, true),
+            auth_ui_meta(),
+        ),
+        tool_with_meta(
+            "loomex_auth_password_reset",
+            "Reset password",
+            "Verify a password-reset OTP and set a new password through the secure authentication form.",
+            obj(
+                &[
+                    ("challengeId", string()),
+                    ("email", string()),
+                    ("code", string()),
+                    ("password", string()),
+                    ("confirmPassword", string()),
+                ],
+                &[
+                    "challengeId",
+                    "email",
+                    "code",
+                    "password",
+                    "confirmPassword",
+                ],
+            ),
+            mutating(true, false, true),
+            auth_ui_meta(),
         ),
         tool(
             "loomex_auth_logout",
@@ -521,10 +569,13 @@ pub fn route(name: &str) -> Option<ToolRoute> {
                 "loomex_setup_apply" => "setup.apply",
                 "loomex_setup_rollback" => "setup.rollback",
                 "loomex_auth_status" => "auth.status",
+                "loomex_auth_login" => "auth.login",
                 "loomex_auth_start" => "auth.start",
                 "loomex_auth_wait" => "auth.wait",
                 "loomex_auth_register" => "auth.register",
                 "loomex_auth_register_verify" => "auth.register.verify",
+                "loomex_auth_password_forgot" => "auth.password.forgot",
+                "loomex_auth_password_reset" => "auth.password.reset",
                 "loomex_auth_logout" => "auth.logout",
                 "loomex_org_list" => "org.list",
                 "loomex_org_create" => "org.create",
@@ -738,6 +789,24 @@ fn human_input_meta() -> Value {
     })
 }
 
+fn auth_ui_meta() -> Value {
+    json!({
+        "ui": {
+            "resourceUri": HUMAN_INPUT_APP_URI,
+            "visibility": ["model", "app"],
+            "prefersBorder": true
+        },
+        "openai/outputTemplate": HUMAN_INPUT_APP_URI,
+        "openai/widgetAccessible": true,
+        "security": {
+            "sensitiveInput": true,
+            "modelVisible": false,
+            "oneShot": true,
+            "clearOn": ["submit", "cancel", "timeout", "failure", "logout"]
+        }
+    })
+}
+
 fn obj(properties: &[(&str, Value)], required: &[&str]) -> Value {
     let properties = properties
         .iter()
@@ -878,6 +947,7 @@ fn output_data_schema(tool_name: &str) -> Value {
             &["rolledBack", "version"],
         ),
         "loomex_auth_status" => auth_status_schema(),
+        "loomex_auth_login" => auth_flow_schema(),
         "loomex_auth_start" => evolvable_object(
             &[
                 ("loginId", identifier()),
@@ -934,6 +1004,8 @@ fn output_data_schema(tool_name: &str) -> Value {
                 "nextAction",
             ],
         ),
+        "loomex_auth_password_forgot" => auth_flow_schema(),
+        "loomex_auth_password_reset" => auth_flow_schema(),
         "loomex_auth_logout" => evolvable_object(
             &[
                 ("profile", identifier()),
@@ -1220,6 +1292,50 @@ fn auth_status_schema() -> Value {
     )
 }
 
+fn auth_flow_schema() -> Value {
+    evolvable_object(
+        &[
+            (
+                "authForm",
+                evolvable_object(
+                    &[
+                        (
+                            "mode",
+                            enum_string(&["login", "register", "forgot", "otp", "reset"]),
+                        ),
+                        ("secure", json!({"const":true})),
+                        ("sensitivity", json!({"const":"sensitive"})),
+                        ("clearOn", array_of(string())),
+                    ],
+                    &["mode", "secure", "sensitivity"],
+                ),
+            ),
+            ("pending", boolean()),
+            (
+                "challenge",
+                evolvable_object(
+                    &[
+                        ("challengeId", identifier()),
+                        ("email", string()),
+                        ("status", string()),
+                    ],
+                    &["challengeId", "email", "status"],
+                ),
+            ),
+            ("authenticated", boolean()),
+            ("userAuthenticated", boolean()),
+            ("runnerAuthenticated", boolean()),
+            ("organizationSelectionRequired", boolean()),
+            ("profile", identifier()),
+            ("serverUrl", uri_string()),
+            ("expiresAt", string()),
+            ("nextAction", identifier()),
+            ("status", string()),
+        ],
+        &[],
+    )
+}
+
 fn availability_schema() -> Value {
     evolvable_object(&[("available", boolean())], &["available"])
 }
@@ -1413,6 +1529,10 @@ mod tests {
             "loomex_auth_status" => {
                 json!({"authenticated":false,"userAuthenticated":false,"runnerAuthenticated":false,"profile":"default"})
             }
+            "loomex_auth_login" => json!({
+                "authForm":{"mode":"login","secure":true,"sensitivity":"sensitive"},
+                "nextAction":"auth.login"
+            }),
             "loomex_auth_start" => {
                 json!({"loginId":"login-1","verificationUri":"https://loomex.app/device","userCode":"ABCD","expiresInSeconds":600,"intervalSeconds":5})
             }
@@ -1432,6 +1552,18 @@ mod tests {
                 "profile":"default",
                 "serverUrl":"https://loomex.app",
                 "nextAction":"org.list"
+            }),
+            "loomex_auth_password_forgot" => json!({
+                "authForm":{"mode":"reset","secure":true,"sensitivity":"sensitive"},
+                "pending":true,
+                "challenge":{"challengeId":"challenge-1","email":"user@example.com","status":"pending"},
+                "nextAction":"auth.password.reset"
+            }),
+            "loomex_auth_password_reset" => json!({
+                "authForm":{"mode":"login","secure":true,"sensitivity":"sensitive"},
+                "status":"password_reset",
+                "authenticated":false,
+                "nextAction":"auth.login"
             }),
             "loomex_auth_logout" => {
                 json!({"profile":"default","localCredentialRemoved":true,"serverRevokeAttempted":true,"serverRevokeSucceeded":true})
@@ -1547,7 +1679,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_unique_route_and_strict_top_level_schema() {
         let definitions = definitions();
-        assert_eq!(definitions.len(), 36);
+        assert_eq!(definitions.len(), 39);
         let mut names = HashSet::new();
         for tool in definitions {
             assert!(names.insert(tool.name));
@@ -1588,6 +1720,36 @@ mod tests {
             respond.meta.as_ref().unwrap()["ui"]["visibility"],
             json!(["model", "app"])
         );
+    }
+
+    #[test]
+    fn every_secret_taking_auth_tool_serializes_secure_ui_enforcement() {
+        for name in [
+            "loomex_auth_login",
+            "loomex_auth_register",
+            "loomex_auth_register_verify",
+            "loomex_auth_password_reset",
+        ] {
+            let definition = definitions()
+                .into_iter()
+                .find(|definition| definition.name == name)
+                .unwrap();
+            let serialized = serde_json::to_value(&definition).unwrap();
+            let security = &serialized["_meta"]["security"];
+            assert_eq!(security["sensitiveInput"], json!(true), "{name}");
+            assert_eq!(security["modelVisible"], json!(false), "{name}");
+            assert_eq!(security["oneShot"], json!(true), "{name}");
+            assert_eq!(
+                security["clearOn"],
+                json!(["submit", "cancel", "timeout", "failure", "logout"]),
+                "{name}"
+            );
+            assert_eq!(
+                serialized["_meta"]["openai/outputTemplate"],
+                json!(HUMAN_INPUT_APP_URI),
+                "{name}"
+            );
+        }
     }
 
     #[test]
