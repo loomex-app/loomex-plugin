@@ -11,7 +11,7 @@ model work that belongs in a workflow.
 
 ## Configuration fields
 
-Use catalog-supported `model`, `effort`, `temperature`, `sessionPolicy`,
+Use catalog-supported `model`, `effort`, `sessionPolicy`,
 `toolAccessPolicy`, `prompt`, or `prompts`. The live catalog defines exact
 requirements and limits.
 
@@ -74,4 +74,3 @@ provider-specific config field.
 
 Backend validation is authoritative; Plugin reference context never overrides
 the catalog, schemas, or validation result.
-
