@@ -121,6 +121,8 @@ pub struct WorkspaceRegistrationChallenge {
     pub email: String,
     pub status: String,
     #[serde(default)]
+    pub code_length: Option<u8>,
+    #[serde(default)]
     pub purpose: Option<String>,
     #[serde(default)]
     pub expires_at: Option<String>,
@@ -404,6 +406,8 @@ struct WorkspaceRegistrationData {
     challenge_id: String,
     email: String,
     status: String,
+    #[serde(default)]
+    code_length: Option<u8>,
     #[serde(default)]
     purpose: Option<String>,
     #[serde(default)]
@@ -1710,6 +1714,7 @@ impl ManagementApiClient for HttpManagementApiClient {
                 challenge_id: challenge.challenge_id,
                 email: challenge.email,
                 status: challenge.status,
+                code_length: challenge.code_length,
                 purpose: challenge.purpose,
                 expires_at: challenge.expires_at,
                 resend_available_at: challenge.resend_available_at,
@@ -1742,6 +1747,7 @@ impl ManagementApiClient for HttpManagementApiClient {
             challenge_id: envelope.data.challenge_id,
             email: envelope.data.email,
             status: envelope.data.status,
+            code_length: envelope.data.code_length,
             purpose: envelope.data.purpose,
             expires_at: envelope.data.expires_at,
             resend_available_at: envelope.data.resend_available_at,
@@ -1792,6 +1798,7 @@ impl ManagementApiClient for HttpManagementApiClient {
             challenge_id: envelope.data.challenge_id,
             email: envelope.data.email,
             status: envelope.data.status,
+            code_length: envelope.data.code_length,
             purpose: envelope.data.purpose,
             expires_at: envelope.data.expires_at,
             resend_available_at: envelope.data.resend_available_at,
@@ -3610,7 +3617,7 @@ mod tests {
     #[test]
     fn workspace_combined_auth_and_password_reset_http_contracts_are_exact() {
         let (server_url, request, server) = serve_one_http_response(
-            r#"{"data":{"challengeId":"challenge-1","email":"new@example.com","status":"pending","expiresAt":"2099-01-01T00:00:00Z","resendAvailableAt":null,"reused":false}}"#,
+            r#"{"data":{"challengeId":"challenge-1","email":"new@example.com","status":"pending","codeLength":8,"expiresAt":"2099-01-01T00:00:00Z","resendAvailableAt":null,"reused":false}}"#,
         );
         let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
         let result = client
@@ -3623,22 +3630,27 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            result,
+            &result,
             WorkspaceLoginOrRegisterResult::RegistrationChallenge(_)
         ));
+        let WorkspaceLoginOrRegisterResult::RegistrationChallenge(challenge) = result else {
+            unreachable!();
+        };
+        assert_eq!(challenge.code_length, Some(8));
         let raw = captured_request(request, server);
         assert!(raw.starts_with("POST /api/v1/workspace/auth/login-or-register/ HTTP/1.1\r\n"));
         assert!(raw.contains(r#""firstName":"Ada""#));
         assert!(raw.contains(r#""confirmPassword":"Password1!""#));
 
         let (server_url, request, server) = serve_one_http_response(
-            r#"{"data":{"challengeId":"reset-1","email":"user@example.com","status":"pending"}}"#,
+            r#"{"data":{"challengeId":"reset-1","email":"user@example.com","status":"pending","codeLength":8}}"#,
         );
         let mut client = HttpManagementApiClient::new(server_url, None).unwrap();
         let challenge = client
             .request_workspace_password_reset("user@example.com")
             .unwrap();
         assert_eq!(challenge.challenge_id, "reset-1");
+        assert_eq!(challenge.code_length, Some(8));
         let raw = captured_request(request, server);
         assert!(raw.starts_with("POST /api/v1/workspace/auth/password/forgot/ HTTP/1.1\r\n"));
         assert!(raw.contains(r#""email":"user@example.com""#));

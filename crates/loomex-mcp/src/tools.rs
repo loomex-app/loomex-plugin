@@ -1318,6 +1318,10 @@ fn auth_flow_schema() -> Value {
                         ("challengeId", identifier()),
                         ("email", string()),
                         ("status", string()),
+                        (
+                            "codeLength",
+                            json!({"type":"integer","minimum":4,"maximum":12}),
+                        ),
                     ],
                     &["challengeId", "email", "status"],
                 ),

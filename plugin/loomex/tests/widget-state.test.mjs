@@ -423,6 +423,27 @@ test("secure auth distinguishes OTP failures and exposes expiry/resend cleanup p
   assert.equal(auth.storage.entries.size, 0);
 });
 
+test("secure auth renders and validates the backend-declared OTP length with a safe fallback", async () => {
+  const html = await readFile(
+    path.join(repositoryRoot, "crates", "loomex-mcp", "src", "human_input_app.html"),
+    "utf8",
+  );
+  const auth = authLifecycleContext(scriptFrom(html), new MemoryStorage(), []);
+  auth.context.renderAuth({
+    authForm: { mode: "otp" },
+    challenge: { challengeId: "challenge-8", email: "new@example.com", status: "pending", codeLength: 8, expiresAt: "2099-01-01T00:00:00Z" },
+  });
+  assert.equal(auth.form.querySelectorAll(".auth-otp input").length, 8);
+  auth.form.querySelectorAll(".auth-otp input").forEach((input, index) => { input.value = String(index + 1); });
+  await auth.form.listeners.get("submit")({ preventDefault() {} });
+
+  auth.context.renderAuth({
+    authForm: { mode: "otp" },
+    challenge: { challengeId: "challenge-fallback", email: "new@example.com", status: "pending", codeLength: 99, expiresAt: "2099-01-01T00:00:00Z" },
+  });
+  assert.equal(auth.form.querySelectorAll(".auth-otp input").length, 6);
+});
+
 test("secure auth lifecycle clears secrets across submit, rejection, expiry, cancel, logout, resend, and mode changes", async () => {
   const html = await readFile(
     path.join(repositoryRoot, "crates", "loomex-mcp", "src", "human_input_app.html"),
