@@ -12,7 +12,7 @@ AI-agent prompt.
 
 ## Configuration fields
 
-Use catalog-supported `personId`, `model`, `effort`, `temperature`,
+Use catalog-supported `personId`, `model`, `effort`,
 `sessionPolicy`, `toolAccessPolicy`, `prompt`, and `prompts`.
 
 ## Valid enum values
@@ -71,4 +71,3 @@ filesystem/network access.
 ## Backend validation notes
 
 Catalog, Person status, permissions, and Backend validation outrank this guide.
-

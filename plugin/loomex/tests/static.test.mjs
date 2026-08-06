@@ -120,6 +120,19 @@ test("workflow guide pack is complete and hash-pinned", async () => {
   assert.equal(required.size, 0);
 });
 
+test("AI Agent and Person guides omit unsupported temperature configuration", async () => {
+  const guidesRoot = path.join(root, "skills", "create-workflow", "guides", "node-guides");
+  const requiredFields = {
+    "ai-agent.md": ["model", "effort", "sessionPolicy", "toolAccessPolicy", "prompt", "prompts"],
+    "person.md": ["personId", "model", "effort", "sessionPolicy", "toolAccessPolicy", "prompt", "prompts"],
+  };
+  for (const [name, fields] of Object.entries(requiredFields)) {
+    const guide = await readFile(path.join(guidesRoot, name), "utf8");
+    assert.doesNotMatch(guide, /temperature|tempreture/i, name);
+    for (const field of fields) assert.match(guide, new RegExp("`" + field + "`"), `${name}:${field}`);
+  }
+});
+
 test("documentation states durable execution and the closed-Codex limitation", async () => {
   const readme = await readFile(path.join(root, "README.md"), "utf8");
   const architecture = await readFile(

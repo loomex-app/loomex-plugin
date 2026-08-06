@@ -38,7 +38,7 @@
       "id": "node.ai-agent",
       "path": "node-guides/ai-agent.md",
       "nodeTypes": ["ai_agent"],
-      "sha256": "f6de8f583d3231f4844f78a61017bdad4130bfe17a40d73e7f1a469f49b8374b",
+      "sha256": "bf8c4181a66fec7d364a5f350ad62e2bda16d008b86a56223a069b839aaf06b1",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "node"
     },
@@ -46,7 +46,7 @@
       "id": "node.person",
       "path": "node-guides/person.md",
       "nodeTypes": ["person"],
-      "sha256": "6f188924f021b6126ced01aabca4e417f0b703a64f3e0bcabcc1838153b58980",
+      "sha256": "1bd97efbe67560a844d9c6c6ddadf6ae50b63dd5528cfa44f3efd4ab72ebadd7",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "node"
     },
