@@ -136,7 +136,7 @@
       .auth-link { padding: 0; color: #6ff8e4; background: transparent; font-size: 12px; font-weight: 700; }
       .auth-submit { width: 100%; margin-top: 4px; }
       .auth-actions { display: grid; gap: 12px; margin-top: 20px; }
-      .auth-otp { display: grid; grid-template-columns: repeat(6, 1fr); gap: 7px; }
+      .auth-otp { display: grid; gap: 7px; }
       .auth-otp input { min-width: 0; padding: 12px 0; text-align: center; font-size: 18px; font-weight: 850; }
       .auth-meta { margin: 0; color: #98a7bc; font-size: 12px; line-height: 1.45; }
       .auth-clear-note { color: #7e8ca1; font-size: 11px; text-align: center; }
@@ -169,6 +169,9 @@
       let authExpiryTimer = null;
       let authResendTimer = null;
       const HUMAN_STATE_PREFIX = "loomex-human-input";
+      const AUTH_CODE_LENGTH_DEFAULT = 6;
+      const AUTH_CODE_LENGTH_MIN = 4;
+      const AUTH_CODE_LENGTH_MAX = 12;
 
       function structuredData(value) {
         const structured = value?.structuredContent ?? value;
@@ -468,8 +471,14 @@
         return `<div class="auth-field"><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${escapeHtml(value)}" autocomplete="${autocomplete}" required /></div>`;
       }
 
+      function authCodeLength(challenge = authState.challenge) {
+        const length = Number(challenge?.codeLength);
+        return Number.isInteger(length) && length >= AUTH_CODE_LENGTH_MIN && length <= AUTH_CODE_LENGTH_MAX ? length : AUTH_CODE_LENGTH_DEFAULT;
+      }
+
       function authOtpInputs() {
-        return `<div class="auth-field"><label>Verification code</label><div class="auth-otp">${Array.from({ length: 6 }, (_, index) => `<input id="auth-code-${index}" type="text" inputmode="numeric" maxlength="1" autocomplete="${index === 0 ? "one-time-code" : "off"}" aria-label="Verification code digit ${index + 1}" />`).join("")}</div></div>`;
+        const length = authCodeLength();
+        return `<div class="auth-field"><label>Verification code</label><div class="auth-otp" style="grid-template-columns:repeat(${length},minmax(0,1fr))">${Array.from({ length }, (_, index) => `<input id="auth-code-${index}" type="text" inputmode="numeric" maxlength="1" autocomplete="${index === 0 ? "one-time-code" : "off"}" aria-label="Verification code digit ${index + 1}" />`).join("")}</div></div>`;
       }
 
       function authCode() {
@@ -547,7 +556,7 @@
         if (authState.busy || !window.openai?.callTool) return;
         if (authState.expired) { setStatus("The verification code expired. Request a new code.", true); return; }
         const request = authRequestForForm();
-        if ((request.name === "loomex_auth_register_verify" || request.name === "loomex_auth_password_reset") && request.arguments.code.length !== 6) { setStatus("Enter the 6-digit verification code.", true); return; }
+        if ((request.name === "loomex_auth_register_verify" || request.name === "loomex_auth_password_reset") && request.arguments.code.length !== authCodeLength()) { setStatus(`Enter the ${authCodeLength()}-digit verification code.`, true); return; }
         if (request.name === "loomex_auth_password_reset" && request.arguments.password !== request.arguments.confirmPassword) { setStatus("Passwords do not match.", true); return; }
         if ((request.name === "loomex_auth_login" || request.name === "loomex_auth_password_forgot") && !request.arguments.email) { setStatus("Enter your email address.", true); return; }
         authState.busy = true;

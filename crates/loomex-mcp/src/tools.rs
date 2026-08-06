@@ -1318,6 +1318,10 @@ fn auth_flow_schema() -> Value {
                         ("challengeId", identifier()),
                         ("email", string()),
                         ("status", string()),
+                        (
+                            "codeLength",
+                            json!({"type":"integer","minimum":4,"maximum":12}),
+                        ),
                     ],
                     &["challengeId", "email", "status"],
                 ),
@@ -1802,6 +1806,40 @@ mod tests {
             validate_output(&definition.output_schema, &failure(definition.name))
                 .unwrap_or_else(|error| panic!("{} failure fixture: {error}", definition.name));
         }
+    }
+
+    #[test]
+    fn auth_flow_schema_accepts_optional_code_length_only_within_safe_bounds() {
+        let definition = definition("loomex_auth_password_forgot").unwrap();
+        let missing = envelope(
+            definition.name,
+            json!({
+                "authForm":{"mode":"reset","secure":true,"sensitivity":"sensitive"},
+                "pending":true,
+                "challenge":{"challengeId":"reset-1","email":"user@example.com","status":"pending"}
+            }),
+        );
+        validate_output(&definition.output_schema, &missing).unwrap();
+
+        let valid = envelope(
+            definition.name,
+            json!({
+                "authForm":{"mode":"reset","secure":true,"sensitivity":"sensitive"},
+                "pending":true,
+                "challenge":{"challengeId":"reset-1","email":"user@example.com","status":"pending","codeLength":8}
+            }),
+        );
+        validate_output(&definition.output_schema, &valid).unwrap();
+
+        let invalid = envelope(
+            definition.name,
+            json!({
+                "authForm":{"mode":"reset","secure":true,"sensitivity":"sensitive"},
+                "pending":true,
+                "challenge":{"challengeId":"reset-1","email":"user@example.com","status":"pending","codeLength":99}
+            }),
+        );
+        assert!(validate_output(&definition.output_schema, &invalid).is_err());
     }
 
     #[test]
