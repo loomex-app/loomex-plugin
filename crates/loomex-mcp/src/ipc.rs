@@ -410,10 +410,13 @@ fn is_bootstrap_method(method: &str) -> bool {
             | "setup.apply"
             | "setup.rollback"
             | "auth.status"
+            | "auth.login"
             | "auth.start"
             | "auth.wait"
             | "auth.register"
             | "auth.register.verify"
+            | "auth.password.forgot"
+            | "auth.password.reset"
             | "auth.logout"
             | "org.list"
             | "org.create"
@@ -605,6 +608,7 @@ mod tests {
                 json!({"targetVersion": "1.0.0", "confirm": true}),
             ),
             ("loomex_auth_status", "auth.status", Bootstrap, json!({})),
+            ("loomex_auth_login", "auth.login", Bootstrap, json!({})),
             ("loomex_auth_start", "auth.start", Bootstrap, json!({})),
             (
                 "loomex_auth_wait",
@@ -630,6 +634,24 @@ mod tests {
                     "challengeId": "challenge-1",
                     "email": "new@example.com",
                     "code": "123456"
+                }),
+            ),
+            (
+                "loomex_auth_password_forgot",
+                "auth.password.forgot",
+                Bootstrap,
+                json!({"email": "user@example.com"}),
+            ),
+            (
+                "loomex_auth_password_reset",
+                "auth.password.reset",
+                Bootstrap,
+                json!({
+                    "challengeId": "challenge-1",
+                    "email": "user@example.com",
+                    "code": "123456",
+                    "password": "Password1!",
+                    "confirmPassword": "Password1!"
                 }),
             ),
             (
@@ -792,7 +814,7 @@ mod tests {
         use std::collections::HashSet;
 
         let contracts = tool_contracts();
-        assert_eq!(contracts.len(), 36);
+        assert_eq!(contracts.len(), 39);
         let advertised = crate::tools::definitions();
         assert_eq!(advertised.len(), contracts.len());
         let expected_names = contracts

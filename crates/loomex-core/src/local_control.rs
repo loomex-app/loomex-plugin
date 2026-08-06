@@ -514,7 +514,8 @@ impl<C: ManagementApiClient + Clone> LocalControlDispatcher<C> {
             }
             "doctor" => self.doctor(params),
             "setup.status" | "setup.plan" | "setup.apply" | "setup.rollback" | "auth.status" |
-            "auth.start" | "auth.wait" |
+            "auth.login" | "auth.start" | "auth.wait" | "auth.register" |
+            "auth.register.verify" | "auth.password.forgot" | "auth.password.reset" |
             "auth.logout" | "org.list" | "org.select" |
             "runner.control" => Err(CoreError::new(
                 "LOCAL_CONTROL_METHOD_REQUIRES_BOOTSTRAP_CLIENT",

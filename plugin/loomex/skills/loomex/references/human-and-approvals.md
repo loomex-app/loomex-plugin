@@ -28,7 +28,10 @@ twice. Preserve the question order in the submitted `answers[]`. The app
 submits the exact request ID through
 `loomex_human_respond`.
 
-Secure answers are one-shot and memory-only. The side panel must not persist
+Secure answers are one-shot and memory-only. Authentication forms use this
+same side-panel boundary for email, passwords, password confirmations, and
+OTPs; those values must never be returned by an auth tool. The side panel must
+not persist
 their values in `localStorage`, `window.openai.widgetState`, prompts,
 transcripts, or tool-result text. Clear the in-memory value after submit,
 cancel, logout, timeout, or rejection; a reload must show an empty form. The

@@ -1,41 +1,45 @@
 ---
 name: login
-description: Use when the user asks to sign in to Loomex, register a new Loomex account, or continue after authentication has completed.
+description: Use when the user asks to sign in to Loomex, register a new Loomex account, recover a password, or continue after authentication has completed.
 ---
 
-# Login and registration
+# Workspace authentication
 
 Use only Loomex MCP tools. Never inspect or edit credential files, call the
 backend directly, or ask the user to run a CLI command.
 
-## Existing account
+1. Call `loomex_setup_status`, then `loomex_auth_status`. If setup is ready and
+   the user is not authenticated, call `loomex_auth_login` with no arguments to
+   open the secure credential-entry UI for the secure Loomex workspace form. The form follows the workspace
+   Login.tsx conventions: dark animated/glass layout, Loomex branding, clear
+   field hierarchy, loading/error feedback, and six-digit OTP inputs.
+2. Let the secure form collect email and password. Never ask for, accept,
+   repeat, or summarize a password or confirmation in Codex chat. The form
+   calls `loomex_auth_login` directly. An existing account signs in; an email
+   that is not already an active account starts the registration OTP branch.
+   A wrong password is a terminal login error on the same page and must never
+   retry registration.
+3. For a registration challenge, keep the returned `challengeId`, expiry, and
+   resend metadata only as redacted UI state. The form collects the email code
+   in a secure field and calls `loomex_auth_register_verify`. Handle invalid,
+   expired, replayed, rate-limited, and cooldown responses without creating a
+   new registration attempt automatically.
+4. Use the form's `Forgot password?` action for recovery. It calls
+   `loomex_auth_password_forgot` with the email, then collects the reset code,
+   new password, and confirmation in the secure UI and calls
+   `loomex_auth_password_reset`. A successful reset returns to the login form;
+   it must not auto-select or create an organization.
+5. After successful login or registration verification, call
+   `loomex_org_list`. If it returns no organizations, use
+   `organization-create`; if it returns multiple organizations, use
+   `organization-switch`; if it returns exactly one and no scope is selected,
+   select that exact organization. Preserve the existing organization and
+   Runner bootstrap behavior.
 
-1. Call `loomex_setup_status`, then `loomex_auth_status`.
-2. If unauthenticated, call `loomex_auth_start`, show its exact verification
-   URI and code, then call `loomex_auth_wait` with the exact returned `loginId`.
-3. After success, call `loomex_org_list`. If it returns no organizations, use
-   the `organization-create` skill. If it returns multiple organizations, use
-   `organization-switch`.
-
-## New account
-
-1. Collect the email, first name, and last name in the conversation only when
-   needed. Never ask for, accept, repeat, or summarize a password or password
-   confirmation in Codex chat.
-2. Open the host's secure credential-entry UI and let that UI call
-   `loomex_auth_register` directly. Keep password fields outside model context,
-   transcript, prompt, and tool-result content; the model receives only the
-   redacted registration state or error code.
-3. Show the returned verification state and ask for the email code. Treat the
-   code as sensitive too: use the secure UI when the host provides it, and never
-   include it in a progress message or tool-result summary.
-4. Call `loomex_auth_register_verify` from the secure UI with the exact
-   `challengeId`, email, and code. Then use `organization-create` because a new
-   account has no organization yet.
-
-The secure credential UI is one-shot: clear password, confirmation, and
-verification-code fields after submit, cancel, logout, timeout, or failure.
-Never store them in localStorage, widget state, prompt state, or any durable
-credential file owned by the plugin. Never expose access tokens or passwords. A
-successful login does not imply that an organization, organization, or
-execution workspace is selected.
+Authentication values are one-shot and memory-only. The secure UI clears email,
+password, confirmation, and OTP fields after submit, cancel, timeout, backend
+failure, or logout. Passwords, OTPs, challenge secrets, and access tokens must
+   stay outside model context and never enter model-visible results, transcript, prompt, localStorage, widget
+   Never store them in localStorage, widget state, or any durable state.
+state, logs, or durable plugin files. Only redacted status, `nextAction`, and
+non-sensitive challenge metadata may be shown to the model.

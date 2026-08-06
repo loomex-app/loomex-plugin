@@ -1093,7 +1093,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             list_response["result"]["tools"].as_array().unwrap().len(),
-            36
+            39
         );
         let null_metadata_response = server()
             .handle(json!({

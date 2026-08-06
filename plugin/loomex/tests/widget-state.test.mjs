@@ -181,6 +181,47 @@ function humanContext(script, storage, requestId) {
   return { form, otherInput, setWidgetStateCalls };
 }
 
+function authContext(script, storage) {
+  const form = fakeElement();
+  const main = fakeElement();
+  const status = fakeElement();
+  const elements = new Map([["#form", form], ["main", main], ["#status", status]]);
+  const window = {
+    localStorage: storage,
+    addEventListener() {},
+    openai: {
+      toolOutput: {
+        structuredContent: {
+          schemaVersion: "loomex.mcp/v1",
+          ok: true,
+          tool: "loomex_auth_login",
+          data: {
+            authForm: {
+              mode: "login",
+              secure: true,
+              sensitivity: "sensitive",
+            },
+          },
+          meta: { requestId: "auth-request", timestampMs: 1 },
+        },
+      },
+      setWidgetState() {
+        throw new Error("secure auth must not write widget state");
+      },
+    },
+  };
+  const context = vm.createContext({
+    window,
+    document: {
+      querySelector(selector) {
+        return elements.get(selector) || fakeElement();
+      },
+    },
+  });
+  vm.runInContext(script, context);
+  return { form, storage };
+}
+
 test("workflow action state survives remounts but does not leak to another tool-result scope", async () => {
   const html = await readFile(
     path.join(repositoryRoot, "crates", "loomex-mcp", "src", "list_table_app.html"),
@@ -237,4 +278,15 @@ test("human-input drafts restore only in the same tool-result scope without stea
   const differentChat = humanContext(script, storage, "chat-b");
   assert.equal(differentChat.otherInput.value, "");
   assert.equal(differentChat.form.classList.contains("submitted"), false);
+});
+
+test("secure auth form does not persist widget or reload state", async () => {
+  const html = await readFile(
+    path.join(repositoryRoot, "crates", "loomex-mcp", "src", "human_input_app.html"),
+    "utf8",
+  );
+  const storage = new MemoryStorage();
+  const auth = authContext(scriptFrom(html), storage);
+  assert.match(auth.form.innerHTML, /auth-shell/);
+  assert.equal(storage.entries.size, 0);
 });

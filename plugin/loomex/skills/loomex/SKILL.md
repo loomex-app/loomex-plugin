@@ -157,9 +157,9 @@ Read every reference needed for the user's request before calling its tools.
 
 - Setup: `loomex_setup_status`, `loomex_setup_plan`, `loomex_setup_apply`,
   `loomex_setup_rollback`
-- Authentication: `loomex_auth_status`, `loomex_auth_start`,
-  `loomex_auth_wait`, `loomex_auth_register`,
-  `loomex_auth_register_verify`, `loomex_auth_logout`
+- Authentication: `loomex_auth_status`, `loomex_auth_login`, `loomex_auth_start`,
+  `loomex_auth_wait`, `loomex_auth_register`, `loomex_auth_register_verify`,
+  `loomex_auth_password_forgot`, `loomex_auth_password_reset`, `loomex_auth_logout`
 - Scope: `loomex_org_list`, `loomex_org_create`, `loomex_org_select`,
 - Workflows: `loomex_workflow_list`, `loomex_workflow_show`,
   `loomex_workflow_validate`,
