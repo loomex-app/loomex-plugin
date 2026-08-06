@@ -124,7 +124,7 @@ fn subprocess_speaks_clean_json_rpc_and_forwards_to_local_control() {
     assert_eq!(responses.len(), 3, "notifications must not emit a frame");
     let response = |id: i64| responses.iter().find(|item| item["id"] == id).unwrap();
     assert_eq!(response(1)["result"]["protocolVersion"], "2025-06-18");
-    assert_eq!(response(2)["result"]["tools"].as_array().unwrap().len(), 36);
+    assert_eq!(response(2)["result"]["tools"].as_array().unwrap().len(), 39);
     let agent_response_tool = response(2)["result"]["tools"]
         .as_array()
         .unwrap()
