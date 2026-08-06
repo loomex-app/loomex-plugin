@@ -136,11 +136,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             mutating(false, false, true),
         ),
-        tool(
+        tool_with_meta(
             "loomex_auth_register",
             "Register account",
-            "Create a Loomex workspace account and return the email verification challenge. This does not create an organization.",
-            "auth.register",
+            "Open the secure Loomex workspace registration form and return the email verification challenge. This does not create an organization.",
             obj(
                 &[
                     ("email", string()),
@@ -152,17 +151,18 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 &["email", "password", "confirmPassword"],
             ),
             mutating(false, false, true),
+            auth_ui_meta(),
         ),
-        tool(
+        tool_with_meta(
             "loomex_auth_register_verify",
             "Verify registration",
-            "Verify a Loomex registration email code and save the new local user session.",
-            "auth.register.verify",
+            "Verify a Loomex registration email code through the secure authentication form and save the new local user session.",
             obj(
                 &[("challengeId", string()), ("email", string()), ("code", string())],
                 &["challengeId", "email", "code"],
             ),
             mutating(true, false, true),
+            auth_ui_meta(),
         ),
         tool_with_meta(
             "loomex_auth_password_forgot",
@@ -1720,6 +1720,36 @@ mod tests {
             respond.meta.as_ref().unwrap()["ui"]["visibility"],
             json!(["model", "app"])
         );
+    }
+
+    #[test]
+    fn every_secret_taking_auth_tool_serializes_secure_ui_enforcement() {
+        for name in [
+            "loomex_auth_login",
+            "loomex_auth_register",
+            "loomex_auth_register_verify",
+            "loomex_auth_password_reset",
+        ] {
+            let definition = definitions()
+                .into_iter()
+                .find(|definition| definition.name == name)
+                .unwrap();
+            let serialized = serde_json::to_value(&definition).unwrap();
+            let security = &serialized["_meta"]["security"];
+            assert_eq!(security["sensitiveInput"], json!(true), "{name}");
+            assert_eq!(security["modelVisible"], json!(false), "{name}");
+            assert_eq!(security["oneShot"], json!(true), "{name}");
+            assert_eq!(
+                security["clearOn"],
+                json!(["submit", "cancel", "timeout", "failure", "logout"]),
+                "{name}"
+            );
+            assert_eq!(
+                serialized["_meta"]["openai/outputTemplate"],
+                json!(HUMAN_INPUT_APP_URI),
+                "{name}"
+            );
+        }
     }
 
     #[test]
