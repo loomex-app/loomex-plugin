@@ -165,7 +165,9 @@
       let activeRequestId = null;
       let activeStateScope = "";
       let submissionSucceeded = false;
-      let authState = { mode: "login", challenge: null, email: "", busy: false };
+      let authState = { mode: "login", challenge: null, email: "", busy: false, expired: false };
+      let authExpiryTimer = null;
+      let authResendTimer = null;
       const HUMAN_STATE_PREFIX = "loomex-human-input";
 
       function structuredData(value) {
@@ -344,7 +346,14 @@
       function authEnvelopeData(result) {
         const structured = result?.structuredContent ?? result ?? {};
         if (structured.ok === false) {
-          throw new Error(structured.error?.message || "Authentication request failed.");
+          const error = new Error(structured.error?.message || "Authentication request failed.");
+          error.code = String(structured.error?.code || "AUTHENTICATION_FAILED");
+          throw error;
+        }
+        if (structured.isError === true || result?.isError === true) {
+          const error = new Error(structured.error?.message || result?.error?.message || "Authentication request failed.");
+          error.code = String(structured.error?.code || result?.error?.code || "AUTHENTICATION_FAILED");
+          throw error;
         }
         return structured.data ?? structured;
       }
@@ -354,8 +363,105 @@
         return challenge && typeof challenge === "object" ? challenge : null;
       }
 
+      function clearAuthTimers() {
+        if (authExpiryTimer) window.clearInterval(authExpiryTimer);
+        if (authResendTimer) window.clearInterval(authResendTimer);
+        authExpiryTimer = null;
+        authResendTimer = null;
+      }
+
       function clearAuthFields() {
         form.querySelectorAll("input").forEach((input) => { input.value = ""; });
+      }
+
+      function clearSensitiveAuthFields() {
+        form.querySelectorAll("#auth-password, #auth-confirm-password, .auth-otp input").forEach((input) => { input.value = ""; });
+      }
+
+      function resetAuthState(mode = "login", email = "") {
+        clearAuthTimers();
+        clearSensitiveAuthFields();
+        authState = { mode, challenge: null, email, busy: false, expired: false };
+      }
+
+      function authTimestamp(value) {
+        const timestamp = Date.parse(String(value || ""));
+        return Number.isFinite(timestamp) ? timestamp : null;
+      }
+
+      function authCooldownRemaining(challenge = authState.challenge) {
+        const availableAt = authTimestamp(challenge?.resendAvailableAt);
+        return availableAt === null ? 0 : Math.max(0, availableAt - Date.now());
+      }
+
+      function authExpiryRemaining(challenge = authState.challenge) {
+        const expiresAt = authTimestamp(challenge?.expiresAt);
+        return expiresAt === null ? null : Math.max(0, expiresAt - Date.now());
+      }
+
+      function formatAuthDuration(milliseconds) {
+        const seconds = Math.ceil(Math.max(0, milliseconds) / 1000);
+        return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+      }
+
+      function authErrorMessage(error) {
+        const code = String(error?.code || "").toUpperCase();
+        if (code.includes("OTP_INVALID") || code.includes("CODE_INVALID")) return "That verification code is invalid. Check the email and try again.";
+        if (code.includes("OTP_EXPIRED") || code.includes("CHALLENGE_EXPIRED") || code.includes("CODE_EXPIRED")) return "That verification code has expired. Request a new code.";
+        if (code.includes("OTP_REPLAY") || code.includes("OTP_ALREADY") || code.includes("OTP_NOT_PENDING") || code.includes("CODE_REPLAY")) return "That verification code was already used. Start a new verification request.";
+        if (code.includes("VALIDATION") || code.includes("PASSWORD_MISMATCH") || code.includes("EMAIL_INVALID")) return "Check the entered details and try again.";
+        if (code.includes("RATE_LIMIT") || code.includes("TOO_MANY") || code.includes("OTP_ATTEMPTS_EXCEEDED")) return "Too many attempts. Wait for the cooldown before requesting another code.";
+        return error instanceof Error ? error.message : "Authentication failed. Try again.";
+      }
+
+      function scheduleAuthTimers() {
+        clearAuthTimers();
+        const challenge = authState.challenge;
+        if (!challenge) return;
+        const tick = () => {
+          const meta = form.querySelector("#auth-expiry-meta");
+          const remaining = authExpiryRemaining(challenge);
+          if (remaining !== null) {
+            if (remaining <= 0) {
+              authState.expired = true;
+              authState.busy = false;
+              clearSensitiveAuthFields();
+              if (meta) meta.textContent = "Code expired. Request a new code.";
+              const submit = form.querySelector("#auth-submit");
+              if (submit) submit.disabled = true;
+              setStatus("The verification code expired. Request a new code.", true);
+              if (authExpiryTimer) window.clearInterval(authExpiryTimer);
+              authExpiryTimer = null;
+              return;
+            }
+            if (meta) meta.textContent = `Code expires in ${formatAuthDuration(remaining)}.`;
+          }
+          const resend = form.querySelector("#auth-resend");
+          const cooldown = authCooldownRemaining(challenge);
+          if (resend) {
+            resend.disabled = cooldown > 0 || authState.busy;
+            resend.textContent = cooldown > 0 ? `Resend code in ${formatAuthDuration(cooldown)}` : "Resend code";
+          }
+          if (cooldown <= 0 && authResendTimer) {
+            window.clearInterval(authResendTimer);
+            authResendTimer = null;
+          }
+        };
+        tick();
+        if (authExpiryRemaining(challenge) !== null) authExpiryTimer = window.setInterval(tick, 1000);
+        if (authCooldownRemaining(challenge) > 0) authResendTimer = window.setInterval(tick, 1000);
+      }
+
+      function authModeTransition(mode, message = null, error = false) {
+        const email = authState.email;
+        resetAuthState(mode, email);
+        renderAuth({ authForm: { mode } }, message, error);
+      }
+
+      function clearAuthSession() {
+        clearAuthTimers();
+        clearAuthFields();
+        authState = { mode: "login", challenge: null, email: "", busy: false, expired: false };
       }
 
       function authInput(id, label, type = "text", value = "", autocomplete = "off") {
@@ -372,11 +478,13 @@
 
       function renderAuth(data, message = null, error = false) {
         const requestedMode = data?.authForm?.mode || authState.mode || "login";
+        if (requestedMode !== authState.mode) clearSensitiveAuthFields();
         authState.mode = requestedMode;
         const challenge = authChallenge(data);
         if (challenge) {
           authState.challenge = challenge;
           authState.email = challenge.email || authState.email;
+          authState.expired = false;
         }
         main.classList.remove("hidden");
         form.classList.remove("submitted");
@@ -385,20 +493,46 @@
         const title = mode === "otp" ? "Verify your email" : mode === "forgot" ? "Reset your password" : mode === "reset" ? "Choose a new password" : mode === "register" ? "Create your workspace account" : "Welcome back";
         const subtitle = mode === "otp" ? `Enter the code sent to ${escapeHtml(authState.email)}.` : mode === "forgot" ? "We will send a verification code to your email." : mode === "reset" ? `Use the code sent to ${escapeHtml(authState.email)}.` : "Sign in securely to continue to your Loomex workspace.";
         const formContent = mode === "otp"
-          ? `${authOtpInputs()}<p class="auth-meta">${escapeHtml(challenge?.expiresAt ? `Code expires at ${challenge.expiresAt}.` : "Codes expire soon.")}</p>`
+          ? `${authOtpInputs()}<p id="auth-expiry-meta" class="auth-meta">${escapeHtml(challenge?.expiresAt ? "Checking code expiry..." : "Codes expire soon.")}</p><button id="auth-resend" class="secondary" type="button">Resend code</button>`
           : mode === "forgot"
             ? authInput("auth-email", "Email", "email", authState.email, "email")
             : mode === "reset"
-              ? `${authOtpInputs()}${authInput("auth-password", "New password", "password", "", "new-password")}${authInput("auth-confirm-password", "Confirm new password", "password", "", "new-password")}`
+              ? `${authOtpInputs()}${authInput("auth-password", "New password", "password", "", "new-password")}${authInput("auth-confirm-password", "Confirm new password", "password", "", "new-password")}<p id="auth-expiry-meta" class="auth-meta">${escapeHtml(challenge?.expiresAt ? "Checking code expiry..." : "Codes expire soon.")}</p><button id="auth-resend" class="secondary" type="button">Resend code</button>`
               : `${authInput("auth-email", "Email", "email", authState.email, "email")}${mode === "register" ? `<div class="auth-grid">${authInput("auth-first-name", "First name", "text", "", "given-name")}${authInput("auth-last-name", "Last name", "text", "", "family-name")}</div>` : ""}${authInput("auth-password", "Password", "password", "", "current-password")}${mode === "register" ? authInput("auth-confirm-password", "Confirm password", "password", "", "new-password") : ""}`;
         form.innerHTML = `<section class="auth-shell" aria-label="Secure Loomex authentication"><div class="auth-brand"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%2314f1d6' d='M4 7h24v4H4zm4 7h16v4H8zm4 7h8v4h-8z'/%3E%3C/svg%3E" alt="Loomex" /><strong>Loomex workspace</strong></div>${isLogin ? `<div class="auth-tabs"><button id="auth-login-tab" type="button" class="${mode === "login" ? "active" : ""}">Sign in</button><button id="auth-register-tab" type="button" class="${mode === "register" ? "active" : ""}">Create account</button></div>` : ""}<h1>${title}</h1><p class="summary">${subtitle}</p><div class="auth-actions">${formContent}<button id="auth-submit" class="auth-submit" type="submit">${mode === "otp" ? "Verify email" : mode === "forgot" ? "Send reset code" : mode === "reset" ? "Reset password" : mode === "register" ? "Create account" : "Sign in"}</button>${isLogin && mode === "login" ? `<button id="auth-forgot" class="auth-link" type="button">Forgot password?</button>` : ""}${!isLogin ? `<button id="auth-back" class="secondary" type="button">Back to sign in</button>` : ""}<span class="auth-clear-note">Passwords and codes stay in this secure form and are cleared after each attempt.</span></div></section>`;
         statusEl.style.display = "none";
-        form.querySelector("#auth-login-tab")?.addEventListener("click", () => { authState.mode = "login"; authState.challenge = null; renderAuth({ authForm: { mode: "login" } }); });
-        form.querySelector("#auth-register-tab")?.addEventListener("click", () => { authState.mode = "register"; authState.challenge = null; renderAuth({ authForm: { mode: "register" } }); });
-        form.querySelector("#auth-forgot")?.addEventListener("click", () => { authState.mode = "forgot"; renderAuth({ authForm: { mode: "forgot" } }); });
-        form.querySelector("#auth-back")?.addEventListener("click", () => { clearAuthFields(); authState = { mode: "login", challenge: null, email: "", busy: false }; renderAuth({ authForm: { mode: "login" } }); });
+        form.querySelector("#auth-login-tab")?.addEventListener("click", () => authModeTransition("login"));
+        form.querySelector("#auth-register-tab")?.addEventListener("click", () => authModeTransition("register"));
+        form.querySelector("#auth-forgot")?.addEventListener("click", () => authModeTransition("forgot"));
+        form.querySelector("#auth-back")?.addEventListener("click", () => { resetAuthState("login"); renderAuth({ authForm: { mode: "login" } }); });
+        form.querySelector("#auth-resend")?.addEventListener("click", () => void resendAuthCode());
         form.querySelectorAll(".auth-otp input").forEach((input, index, inputs) => input.addEventListener("input", () => { input.value = input.value.replace(/\D/g, "").slice(-1); inputs[index + 1]?.focus(); }));
+        scheduleAuthTimers();
         if (message) setStatus(message, error);
+      }
+
+      async function resendAuthCode() {
+        if (authState.busy) return;
+        const cooldown = authCooldownRemaining();
+        if (cooldown > 0) { setStatus(`Wait ${formatAuthDuration(cooldown)} before requesting another code.`, true); return; }
+        if (authState.mode === "otp") {
+          authModeTransition("register", "Enter your registration details again to request a new code.");
+          return;
+        }
+        if (authState.mode !== "reset" || !authState.email || !window.openai?.callTool) return;
+        authState.busy = true;
+        clearSensitiveAuthFields();
+        try {
+          const result = await window.openai.callTool("loomex_auth_password_forgot", { email: authState.email });
+          const data = authEnvelopeData(result);
+          authState.busy = false;
+          clearSensitiveAuthFields();
+          renderAuth(data, "A new verification code was sent. Check your email.");
+        } catch (error) {
+          authState.busy = false;
+          clearSensitiveAuthFields();
+          renderAuth({ authForm: { mode: "reset" } }, authErrorMessage(error), true);
+        }
       }
 
       function authRequestForForm() {
@@ -411,13 +545,16 @@
 
       async function submitAuthForm() {
         if (authState.busy || !window.openai?.callTool) return;
+        if (authState.expired) { setStatus("The verification code expired. Request a new code.", true); return; }
         const request = authRequestForForm();
-        if (request.name === "loomex_auth_register_verify" && request.arguments.code.length < 4) { setStatus("Enter the verification code.", true); return; }
-        if (request.name === "loomex_auth_password_reset" && request.arguments.code.length < 4) { setStatus("Enter the verification code.", true); return; }
+        if ((request.name === "loomex_auth_register_verify" || request.name === "loomex_auth_password_reset") && request.arguments.code.length !== 6) { setStatus("Enter the 6-digit verification code.", true); return; }
+        if (request.name === "loomex_auth_password_reset" && request.arguments.password !== request.arguments.confirmPassword) { setStatus("Passwords do not match.", true); return; }
+        if ((request.name === "loomex_auth_login" || request.name === "loomex_auth_password_forgot") && !request.arguments.email) { setStatus("Enter your email address.", true); return; }
         authState.busy = true;
         const button = form.querySelector("#auth-submit");
         if (button) { button.disabled = true; button.textContent = "Working..."; }
         const wasReset = request.name === "loomex_auth_password_reset";
+        clearSensitiveAuthFields();
         try {
           const result = await window.openai.callTool(request.name, request.arguments);
           clearAuthFields();
@@ -425,7 +562,8 @@
           const authenticated = data.authenticated === true;
           const reset = wasReset && data.status === "password_reset";
           if (reset) {
-            authState = { mode: "login", challenge: null, email: authState.email, busy: false };
+            const email = authState.email;
+            resetAuthState("login", email);
             renderAuth({ authForm: { mode: "login" } }, "Password reset. Sign in with your new password.");
           } else if (authenticated) {
             authState.busy = false;
@@ -438,7 +576,13 @@
         } catch (error) {
           clearAuthFields();
           authState.busy = false;
-          renderAuth({ authForm: { mode: authState.mode } }, error instanceof Error ? error.message : "Authentication failed.", true);
+          const code = String(error?.code || "").toUpperCase();
+          if (code.includes("OTP_EXPIRED") || code.includes("CHALLENGE_EXPIRED") || code.includes("CODE_EXPIRED")) authState.expired = true;
+          if (code.includes("OTP_REPLAY") || code.includes("OTP_ALREADY") || code.includes("OTP_NOT_PENDING") || code.includes("CODE_REPLAY")) {
+            authModeTransition("login", authErrorMessage(error), true);
+          } else {
+            renderAuth({ authForm: { mode: authState.mode } }, authErrorMessage(error), true);
+          }
         }
       }
 
@@ -454,6 +598,7 @@
           renderAuth(auth);
           return;
         }
+        if (form.querySelector(".auth-shell")) clearAuthSession();
         const candidate = normalizeRequest(output);
         const nextRequest = candidate?.id ? candidate : humanRequest;
         const nextType = nextRequest?.inputSpec?.inputType;
@@ -716,6 +861,9 @@
           render(event.data.params?.result || event.data.params || {});
         }
       });
+
+      window.addEventListener("loomex:auth-logout", clearAuthSession);
+      window.addEventListener("loomex:auth-cancel", clearAuthSession);
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();

@@ -219,7 +219,7 @@ function authContext(script, storage) {
     },
   });
   vm.runInContext(script, context);
-  return { form, storage };
+  return { context, form, storage };
 }
 
 test("workflow action state survives remounts but does not leak to another tool-result scope", async () => {
@@ -289,4 +289,21 @@ test("secure auth form does not persist widget or reload state", async () => {
   const auth = authContext(scriptFrom(html), storage);
   assert.match(auth.form.innerHTML, /auth-shell/);
   assert.equal(storage.entries.size, 0);
+});
+
+test("secure auth distinguishes OTP failures and exposes expiry/resend cleanup paths", async () => {
+  const html = await readFile(
+    path.join(repositoryRoot, "crates", "loomex-mcp", "src", "human_input_app.html"),
+    "utf8",
+  );
+  const auth = authContext(scriptFrom(html), new MemoryStorage());
+  assert.match(auth.context.authErrorMessage({ code: "OTP_INVALID" }), /invalid/i);
+  assert.match(auth.context.authErrorMessage({ code: "OTP_EXPIRED" }), /expired/i);
+  assert.match(auth.context.authErrorMessage({ code: "OTP_REPLAYED" }), /already used/i);
+  assert.match(auth.context.authErrorMessage({ code: "AUTH_RATE_LIMITED" }), /Too many attempts/i);
+  assert.match(html, /scheduleAuthTimers/);
+  assert.match(html, /resendAuthCode/);
+  assert.match(html, /clearAuthSession/);
+  auth.context.clearAuthSession();
+  assert.equal(auth.storage.entries.size, 0);
 });

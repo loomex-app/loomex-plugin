@@ -6,7 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD as BASE64, URL_SAFE, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -18,6 +21,7 @@ use crate::{CoreError, CoreResult};
 const RUNNER_AUTH_EXCHANGE_PATH: &str = "/runner-control/runner/v1/auth/exchange/";
 const RUNNER_AUTH_BOOTSTRAP_PATH: &str = "/runner-control/runner/v1/auth/bootstrap/";
 const RUNNER_TOKEN_NON_EXPIRING_EXPIRES_AT: &str = "9999-12-31T23:59:59Z";
+const MAX_WORKSPACE_TOKEN_TTL_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 const MANAGEMENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANAGEMENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -3290,6 +3294,106 @@ pub fn parse_rfc3339_utc_epoch_seconds(value: &str) -> CoreResult<u64> {
         .map_err(|_| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", "timestamp is before epoch"))
 }
 
+/// Derive a bounded expiry from the signed Django user-token payload returned by
+/// workspace authentication. The backend remains authoritative for signature
+/// validation; this local claim is used only to ensure stored credentials are
+/// eventually reauthenticated and can never become non-expiring locally.
+pub fn workspace_token_expires_at(token: &str) -> CoreResult<String> {
+    let mut signed_parts = token.split(':');
+    let encoded_payload = signed_parts.next().ok_or_else(|| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token is missing its signed payload",
+        )
+    })?;
+    if signed_parts.next().is_none() {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token signature is missing",
+        ));
+    }
+    let payload = URL_SAFE_NO_PAD
+        .decode(encoded_payload)
+        .or_else(|_| URL_SAFE.decode(encoded_payload))
+        .map_err(|_| {
+            CoreError::new(
+                "AUTH_TOKEN_EXPIRY_INVALID",
+                "workspace token payload is invalid",
+            )
+        })?;
+    let payload: Value = serde_json::from_slice(&payload).map_err(|_| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token payload is not JSON",
+        )
+    })?;
+    let issued_at = payload.get("iat").and_then(Value::as_u64).ok_or_else(|| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token iat is missing",
+        )
+    })?;
+    let expires_at = payload.get("exp").and_then(Value::as_u64).ok_or_else(|| {
+        CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token exp is missing",
+        )
+    })?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| {
+            CoreError::new(
+                "SYSTEM_CLOCK_INVALID",
+                "system clock is before the Unix epoch",
+            )
+        })?
+        .as_secs();
+    if issued_at > now.saturating_add(300) {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token iat is too far in the future",
+        ));
+    }
+    let ttl = expires_at.saturating_sub(issued_at);
+    if expires_at <= issued_at || ttl > MAX_WORKSPACE_TOKEN_TTL_SECONDS {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRY_INVALID",
+            "workspace token expiry is outside the bounded backend lifetime",
+        ));
+    }
+    if expires_at <= now {
+        return Err(CoreError::new(
+            "AUTH_TOKEN_EXPIRED",
+            "workspace token is expired",
+        ));
+    }
+    format_rfc3339_utc_epoch_seconds(expires_at)
+}
+
+fn format_rfc3339_utc_epoch_seconds(seconds: u64) -> CoreResult<String> {
+    let days = i64::try_from(seconds / 86_400)
+        .map_err(|_| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", "timestamp overflow"))?;
+    let day_seconds = seconds % 86_400;
+    let z = days
+        .checked_add(719_468)
+        .ok_or_else(|| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", "timestamp overflow"))?;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_part = (5 * doy + 2) / 153;
+    let day = doy - (153 * month_part + 2) / 5 + 1;
+    let month = month_part + if month_part < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    let hour = day_seconds / 3_600;
+    let minute = (day_seconds % 3_600) / 60;
+    let second = day_seconds % 60;
+    Ok(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
+    ))
+}
+
 fn parse_i64(value: Option<&str>, field: &'static str) -> CoreResult<i64> {
     value
         .ok_or_else(|| CoreError::new("AUTH_TOKEN_EXPIRY_INVALID", field))?
@@ -3369,6 +3473,40 @@ mod tests {
         response_body: &'static str,
     ) -> (String, mpsc::Receiver<String>, std::thread::JoinHandle<()>) {
         serve_one_http_response_with_status("200 OK", response_body)
+    }
+
+    #[test]
+    fn workspace_token_expiry_is_derived_from_bounded_backend_claim() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let token = format!(
+            "{}:signature",
+            URL_SAFE_NO_PAD.encode(
+                json!({"iat": now, "exp": now + 3600, "kind": "user"})
+                    .to_string()
+                    .as_bytes()
+            )
+        );
+        let expires_at = workspace_token_expires_at(&token).unwrap();
+        assert_eq!(
+            parse_rfc3339_utc_epoch_seconds(&expires_at).unwrap(),
+            now + 3600
+        );
+
+        let unbounded = format!(
+            "{}:signature",
+            URL_SAFE_NO_PAD.encode(
+                json!({"iat": now, "exp": now + MAX_WORKSPACE_TOKEN_TTL_SECONDS + 1})
+                    .to_string()
+                    .as_bytes()
+            )
+        );
+        assert_eq!(
+            workspace_token_expires_at(&unbounded).unwrap_err().code,
+            "AUTH_TOKEN_EXPIRY_INVALID"
+        );
     }
 
     fn serve_one_http_response_with_status(

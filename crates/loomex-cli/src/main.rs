@@ -30,15 +30,15 @@ use loomex_core::{
     protocol::PROTOCOL_VERSION,
     read_bounded_line, read_local_control_token, read_recent_log_entries,
     read_recent_log_entries_tolerant, release_runner_runtime_guard_for_surface,
-    runner_runtime_guard_path, user_credential_profile, AuthTokenResponse, BoundedLine,
-    BundledRuntimeInstall, CliConfig, CliConfigOverrides, CredentialKind, CredentialStorageBackend,
-    CredentialStore, DeviceLoginChallenge, FileLogSink, FsListInput, FsReadInput, FsWriteInput,
-    HttpManagementApiClient, HumanRequestSummary, LocalCapabilityExecutor, LocalControlDispatcher,
-    LocalControlPaths, LocalControlRequest, LocalControlResponse, LogEntry, ManagementApiClient,
-    ManagementCredential, Organization, Runner, RunnerServiceManifest, RunnerServicePlatform,
-    RunnerServiceSpec, RuntimeInstaller, SbomPackage, ShellCancellationToken,
-    SystemCredentialStore, WorkflowRunStartRequest, WorkspaceLoginOrRegisterResult,
-    LOCAL_CONTROL_PROTOCOL_VERSION,
+    runner_runtime_guard_path, user_credential_profile, workspace_token_expires_at,
+    AuthTokenResponse, BoundedLine, BundledRuntimeInstall, CliConfig, CliConfigOverrides,
+    CredentialKind, CredentialStorageBackend, CredentialStore, DeviceLoginChallenge, FileLogSink,
+    FsListInput, FsReadInput, FsWriteInput, HttpManagementApiClient, HumanRequestSummary,
+    LocalCapabilityExecutor, LocalControlDispatcher, LocalControlPaths, LocalControlRequest,
+    LocalControlResponse, LogEntry, ManagementApiClient, ManagementCredential, Organization,
+    Runner, RunnerServiceManifest, RunnerServicePlatform, RunnerServiceSpec, RuntimeInstaller,
+    SbomPackage, ShellCancellationToken, SystemCredentialStore, WorkflowRunStartRequest,
+    WorkspaceLoginOrRegisterResult, LOCAL_CONTROL_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use setup_transaction::{
@@ -3359,33 +3359,17 @@ fn plugin_auth_status(options: &GlobalOptions) -> Result<Value, String> {
         .load(&user_credential_profile(&resolved.profile))
         .map_err(format_core_error)?;
     let now = current_epoch_seconds()?;
-    let credential_status = |credential: Option<ManagementCredential>| match credential {
-        Some(credential) => {
-            match credential.validate_not_expiring(now, MANAGEMENT_TOKEN_CLOCK_SKEW_SECONDS) {
-                Ok(()) => (
-                    true,
-                    Some(credential.expires_at),
-                    credential.storage_warning,
-                ),
-                Err(error) => (
-                    false,
-                    Some(credential.expires_at),
-                    Some(format_core_error(error)),
-                ),
-            }
-        }
-        None => (false, None, None),
-    };
     let runner_credential_present = runner_credential.is_some();
     let runner_upgrade_reason = runner_credential
         .as_ref()
         .and_then(runner_credential_upgrade_reason);
     let (mut runner_authenticated, runner_expires_at, runner_warning) =
-        credential_status(runner_credential);
+        credential_auth_status(runner_credential, now);
     if runner_upgrade_reason.is_some() {
         runner_authenticated = false;
     }
-    let (user_authenticated, user_expires_at, user_warning) = credential_status(user_credential);
+    let (user_authenticated, user_expires_at, user_warning) =
+        credential_auth_status(user_credential, now);
     let warning = runner_upgrade_reason
         .map(|reason| format!("RUNNER_CREDENTIAL_UPGRADE_REQUIRED: {reason}"))
         .or(runner_warning)
@@ -3406,6 +3390,31 @@ fn plugin_auth_status(options: &GlobalOptions) -> Result<Value, String> {
         "runnerExpiresAt": runner_expires_at,
         "warning": warning,
     }))
+}
+
+fn credential_auth_status(
+    credential: Option<ManagementCredential>,
+    now_epoch_seconds: u64,
+) -> (bool, Option<String>, Option<String>) {
+    match credential {
+        Some(credential) => {
+            match credential
+                .validate_not_expiring(now_epoch_seconds, MANAGEMENT_TOKEN_CLOCK_SKEW_SECONDS)
+            {
+                Ok(()) => (
+                    true,
+                    Some(credential.expires_at),
+                    credential.storage_warning,
+                ),
+                Err(error) => (
+                    false,
+                    Some(credential.expires_at),
+                    Some(format_core_error(error)),
+                ),
+            }
+        }
+        None => (false, None, None),
+    }
 }
 
 fn plugin_auth_form(mode: &str) -> Value {
@@ -3496,6 +3505,7 @@ fn complete_workspace_user_session<S: CredentialStore + ?Sized>(
     access_token: String,
 ) -> Result<Value, String> {
     let credential_profile = user_credential_profile(profile);
+    let expires_at = workspace_token_expires_at(&access_token).map_err(format_core_error)?;
     let credential = ManagementCredential::from_user_token_response(
         &credential_profile,
         "",
@@ -3503,7 +3513,7 @@ fn complete_workspace_user_session<S: CredentialStore + ?Sized>(
             access_token,
             refresh_token: None,
             token_type: "Bearer".to_string(),
-            expires_at: "9999-12-31T23:59:59Z".to_string(),
+            expires_at: expires_at.clone(),
         },
         CredentialStorageBackend::LocalFileFallback,
     )
@@ -3528,6 +3538,7 @@ fn complete_workspace_user_session<S: CredentialStore + ?Sized>(
         "organizationId": null,
         "profile": profile,
         "serverUrl": server_url,
+        "expiresAt": expires_at,
         "storageBackend": storage_backend_name(storage.backend),
         "storageWarning": storage.warning,
         "nextAction": "org.list"
@@ -3684,6 +3695,7 @@ fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Resul
     let login = client
         .verify_workspace_registration(challenge_id, email, code)
         .map_err(format_core_error)?;
+    let expires_at = workspace_token_expires_at(&login.token).map_err(format_core_error)?;
     let credential_profile = user_credential_profile(&resolved.profile);
     let credential = ManagementCredential::from_user_token_response(
         &credential_profile,
@@ -3692,7 +3704,7 @@ fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Resul
             access_token: login.token,
             refresh_token: None,
             token_type: "Bearer".to_string(),
-            expires_at: "9999-12-31T23:59:59Z".to_string(),
+            expires_at: expires_at.clone(),
         },
         CredentialStorageBackend::LocalFileFallback,
     )
@@ -3718,6 +3730,7 @@ fn plugin_auth_register_verify(params: &Value, options: &GlobalOptions) -> Resul
         "organizationId": Value::Null,
         "profile": resolved.profile,
         "serverUrl": resolved.server_url,
+        "expiresAt": expires_at,
         "storageBackend": storage_backend_name(storage.backend),
         "storageWarning": storage.warning,
         "nextAction": "org.list",
@@ -9345,5 +9358,47 @@ mod worker_tests {
             Some("team-42")
         );
         assert_eq!(organization_request_slug("!!!", None), None);
+    }
+
+    #[test]
+    fn auth_status_requires_reauthentication_for_expired_user_credentials() {
+        let credential = ManagementCredential::from_user_token_response(
+            "default.user",
+            "",
+            AuthTokenResponse {
+                access_token: "workspace-token".to_string(),
+                refresh_token: None,
+                token_type: "Bearer".to_string(),
+                expires_at: "2026-01-01T00:00:00Z".to_string(),
+            },
+            CredentialStorageBackend::LocalFileFallback,
+        )
+        .unwrap();
+        let (authenticated, expires_at, warning) =
+            credential_auth_status(Some(credential), 1_800_000_000);
+        assert!(!authenticated);
+        assert_eq!(expires_at.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert!(warning.unwrap().contains("AUTH_TOKEN_EXPIRED"));
+    }
+
+    #[test]
+    fn auth_status_keeps_bounded_user_credentials_authenticated_until_expiry() {
+        let credential = ManagementCredential::from_user_token_response(
+            "default.user",
+            "",
+            AuthTokenResponse {
+                access_token: "workspace-token".to_string(),
+                refresh_token: None,
+                token_type: "Bearer".to_string(),
+                expires_at: "2099-01-01T00:00:00Z".to_string(),
+            },
+            CredentialStorageBackend::LocalFileFallback,
+        )
+        .unwrap();
+        let (authenticated, expires_at, warning) =
+            credential_auth_status(Some(credential), 1_800_000_000);
+        assert!(authenticated);
+        assert_eq!(expires_at.as_deref(), Some("2099-01-01T00:00:00Z"));
+        assert!(warning.is_some());
     }
 }

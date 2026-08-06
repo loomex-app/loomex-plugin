@@ -1328,6 +1328,7 @@ fn auth_flow_schema() -> Value {
             ("organizationSelectionRequired", boolean()),
             ("profile", identifier()),
             ("serverUrl", uri_string()),
+            ("expiresAt", string()),
             ("nextAction", identifier()),
             ("status", string()),
         ],
