@@ -872,6 +872,37 @@ mod tests {
     }
 
     #[test]
+    fn human_list_typed_request_preserves_exact_request_and_directs_to_open() {
+        let human_request = json!({
+            "id": "human-1",
+            "status": "pending",
+            "inputSpec": {
+                "schemaVersion": "loomex.human-input/v1",
+                "inputType": "single_select",
+                "question": "Choose a release channel",
+                "options": [
+                    {"id": "stable", "label": "Stable"},
+                    {"id": "beta", "label": "Beta"}
+                ]
+            },
+            "executionId": "execution-1"
+        });
+        let text = tool_result_text(
+            "loomex_human_list",
+            &success_envelope(
+                "loomex_human_list",
+                "request-1".to_string(),
+                json!({"humanRequests": [human_request.clone()], "nextCursor": null}),
+            ),
+        )
+        .unwrap();
+
+        assert!(text.contains("TYPED HUMAN INPUT CONTRACT"));
+        assert!(text.contains("loomex_human_open"));
+        assert!(text.contains(&serde_json::to_string(&human_request).unwrap()));
+    }
+
+    #[test]
     fn pending_codex_task_is_not_hidden_by_a_resolved_runner_task() {
         let text = tool_result_text(
             "loomex_agent_task_list",

@@ -381,10 +381,11 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             mutating(true, true, true),
         ),
-        tool_with_meta(
+        tool(
             "loomex_human_list",
             "List human requests",
             "List pending or resolved human-in-the-loop requests. After this tool returns a pending typed request, immediately call loomex_human_open for boolean, radio, checkbox, single_select, or multi_select requests; keep text requests in Codex chat. Non-text forms are the live continuation surface: do not stop for a manual continue message or ask for their values in chat.",
+            "human.list",
             obj(
                 &[
                     ("status", enum_string(&["pending", "resolved", "all"])),
@@ -396,7 +397,6 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 &[],
             ),
             open_ro(),
-            human_input_meta(),
         ),
         tool_with_meta(
             "loomex_human_respond",
@@ -773,18 +773,6 @@ fn list_table_meta() -> Value {
             "prefersBorder": true
         },
         "openai/outputTemplate": LIST_TABLE_APP_URI,
-        "openai/widgetAccessible": true
-    })
-}
-
-fn human_input_meta() -> Value {
-    json!({
-        "ui": {
-            "resourceUri": HUMAN_INPUT_APP_URI,
-            "visibility": ["model", "app"],
-            "prefersBorder": true
-        },
-        "openai/outputTemplate": HUMAN_INPUT_APP_URI,
         "openai/widgetAccessible": true
     })
 }
@@ -1693,7 +1681,7 @@ mod tests {
     }
 
     #[test]
-    fn human_input_tools_publish_app_visibility_metadata() {
+    fn human_input_tool_metadata_keeps_ui_only_on_open_and_respond() {
         let definitions = definitions();
         let open = definitions
             .iter()
@@ -1716,9 +1704,17 @@ mod tests {
             open.meta.as_ref().unwrap()["ui"]["visibility"],
             json!(["model", "app"])
         );
+        assert!(list.meta.is_none());
+        let serialized_list = serde_json::to_value(list).unwrap();
+        assert!(serialized_list.get("_meta").is_none());
+        assert!(serialized_list.get("meta").is_none());
         assert_eq!(
-            list.meta.as_ref().unwrap()["ui"]["resourceUri"],
-            HUMAN_INPUT_APP_URI
+            serde_json::to_value(open).unwrap()["_meta"]["openai/outputTemplate"],
+            json!(HUMAN_INPUT_APP_URI)
+        );
+        assert_eq!(
+            serde_json::to_value(open).unwrap()["_meta"]["openai/widgetAccessible"],
+            json!(true)
         );
         assert_eq!(
             respond.meta.as_ref().unwrap()["ui"]["visibility"],
