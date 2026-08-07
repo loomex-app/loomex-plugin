@@ -139,6 +139,8 @@ pub use service::{
 pub struct CoreError {
     pub code: &'static str,
     pub message: String,
+    /// Optional server-owned context retained across local-control boundaries.
+    pub details: Option<serde_json::Value>,
 }
 
 impl CoreError {
@@ -146,6 +148,19 @@ impl CoreError {
         Self {
             code,
             message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn with_details(
+        code: &'static str,
+        message: impl Into<String>,
+        details: serde_json::Value,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            details: Some(details),
         }
     }
 }

@@ -17,6 +17,20 @@ The graph contains `nodes` and `transitions`. Use exactly one `start` and one
 `end` node. The generated draft must contain the schemas, not only the config:
 the draft is validated before Backend normalization.
 
+## Package node limits
+
+The Backend validator is authoritative for package limits on create, finalize,
+and edit/validation paths. Send the canonical flat graph unchanged; the Plugin
+must not calculate a second allowance, remove nodes, or convert a rejection into
+a success. The maximum-node metric is the length of the canonical `nodes`
+array, including `start`, `end`, and any system nodes. A graph at exactly the
+package maximum is accepted, while the first additional node is rejected.
+
+Package-limit failures are hard failures. Preserve the server's stable error
+`code` and `message`, plus its structured `details` such as `metric`, `current`,
+`requested`, `limit`, and `period` when present. The same rule applies to
+active-workflow, execution, person, memory, and duration limits.
+
 ## Valid enum values
 
 Use only enum values returned by the live Backend catalog. Human Input values

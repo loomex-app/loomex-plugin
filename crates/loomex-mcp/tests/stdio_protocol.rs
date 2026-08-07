@@ -153,6 +153,89 @@ fn subprocess_speaks_clean_json_rpc_and_forwards_to_local_control() {
 }
 
 #[test]
+fn package_limit_ipc_errors_are_structured_failures_without_success_data() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = temp.path().join("control.sock");
+    let token = temp.path().join("control.token");
+    fs::write(&token, "0123456789abcdef0123456789abcdef\n").unwrap();
+    fs::set_permissions(&token, fs::Permissions::from_mode(0o600)).unwrap();
+    let listener = UnixListener::bind(&socket).unwrap();
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let daemon = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request_line = String::new();
+        BufReader::new(stream.try_clone().unwrap())
+            .read_line(&mut request_line)
+            .unwrap();
+        let request: Value = serde_json::from_str(&request_line).unwrap();
+        assert_eq!(request["method"], "workflow.create.finalize");
+        writeln!(
+            stream,
+            "{}",
+            json!({
+                "protocolVersion":"loomex.local-control/v1",
+                "id":request["id"],
+                "ok":false,
+                "error":{
+                    "code":"WORKFLOW_NODE_LIMIT_EXCEEDED",
+                    "message":"workflow node package limit exceeded",
+                    "retryable":false,
+                    "details":{
+                        "metric":"workflow_nodes",
+                        "current":5,
+                        "requested":1,
+                        "limit":5,
+                        "period":"2026-08"
+                    }
+                }
+            })
+        )
+        .unwrap();
+    });
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_loomex-mcp"))
+        .env("LOOMEX_RUNTIME_DIR", temp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{}",
+        json!({
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"tools/call",
+            "params":{
+                "name":"loomex_workflow_create_finalize",
+                "arguments":{"sessionId":"builder-1","idempotencyKey":"finalize-123"}
+            }
+        })
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    daemon.join().unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let structured = &response["result"]["structuredContent"];
+    assert_eq!(structured["ok"], false);
+    assert_eq!(structured["error"]["code"], "WORKFLOW_NODE_LIMIT_EXCEEDED");
+    assert_eq!(structured["error"]["details"]["metric"], "workflow_nodes");
+    assert_eq!(structured["error"]["details"]["limit"], 5);
+    assert!(structured.get("data").is_none());
+    assert_eq!(response["result"]["isError"], true);
+    assert!(response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Structured package-limit context"));
+}
+
+#[test]
 fn parse_errors_are_framed_and_stdout_contains_only_json() {
     let temp = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_loomex-mcp"))

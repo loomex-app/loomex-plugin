@@ -3252,10 +3252,15 @@ fn management_error_from_status_and_body(status: u16, body: &str) -> CoreError {
         if !error.request_id.is_empty() {
             message.push_str(&format!(" request_id={}", error.request_id));
         }
-        if let Some(details) = error.details {
+        let details = error.details;
+        if let Some(details) = &details {
             message.push_str(&format!(" details={details}"));
         }
-        return CoreError::new(code, message);
+        return if let Some(details) = details {
+            CoreError::with_details(code, message, details)
+        } else {
+            CoreError::new(code, message)
+        };
     }
     CoreError::new(
         match status {

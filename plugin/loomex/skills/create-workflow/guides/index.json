@@ -6,7 +6,7 @@
       "id": "workflow-contract",
       "path": "workflow-contract.md",
       "nodeTypes": [],
-      "sha256": "b500ce03db492bc447dad58528bffe85c628238144e6606347a55bc2e292ce9a",
+      "sha256": "d4b59e4dcb5de1041cc98abc303ee35baafcdc728405cc887c4d66d2f3517704",
       "audience": ["clarifier", "designer", "reviewer"],
       "kind": "contract"
     },

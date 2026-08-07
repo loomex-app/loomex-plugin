@@ -65,6 +65,9 @@ pub struct ControlError {
     pub message: String,
     #[serde(default)]
     pub retryable: bool,
+    /// Opaque server-owned context such as package metric and boundary values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -239,6 +242,7 @@ impl LocalControlClient {
                     code: "unknown_runner_error".to_string(),
                     message: "the local runner returned an unspecified error".to_string(),
                     retryable: false,
+                    details: None,
                 },
             )))
         }
@@ -399,6 +403,10 @@ fn parse_bootstrap_error(stderr: &[u8]) -> ControlError {
             .unwrap_or("the bundled Loomex bootstrap command failed")
             .to_string(),
         retryable: bool_field("retryable").unwrap_or(false),
+        details: nested
+            .and_then(|value| value.get("details"))
+            .cloned()
+            .or_else(|| error.get("details").cloned()),
     }
 }
 
@@ -1064,6 +1072,17 @@ exit 20
         assert_eq!(error.code, "HTTP_ERROR");
         assert_eq!(error.message, "backend unavailable");
         assert!(error.retryable);
+    }
+
+    #[test]
+    fn bootstrap_error_parser_preserves_nested_package_limit_details() {
+        let error = parse_bootstrap_error(
+            br#"{"schemaVersion":"loomex.cli.error/v1","error":{"code":"WORKFLOW_NODE_LIMIT_EXCEEDED","message":"too many nodes","retryable":false,"details":{"metric":"workflow_nodes","current":5,"requested":1,"limit":5,"period":"2026-08"}},"exitCode":20}"#,
+        );
+
+        assert_eq!(error.code, "WORKFLOW_NODE_LIMIT_EXCEEDED");
+        assert_eq!(error.details.as_ref().unwrap()["metric"], "workflow_nodes");
+        assert_eq!(error.details.as_ref().unwrap()["limit"], 5);
     }
 
     #[test]

@@ -108,6 +108,8 @@ pub struct LocalControlError {
     pub code: String,
     pub message: String,
     pub retryable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 impl LocalControlResponse {
@@ -127,6 +129,16 @@ impl LocalControlResponse {
         message: impl Into<String>,
         retryable: bool,
     ) -> Self {
+        Self::failure_with_details(id, code, message, retryable, None)
+    }
+
+    pub fn failure_with_details(
+        id: impl Into<String>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        retryable: bool,
+        details: Option<Value>,
+    ) -> Self {
         Self {
             protocol_version: LOCAL_CONTROL_PROTOCOL_VERSION.to_string(),
             id: id.into(),
@@ -136,6 +148,7 @@ impl LocalControlResponse {
                 code: code.into(),
                 message: message.into(),
                 retryable,
+                details,
             }),
         }
     }
@@ -921,11 +934,12 @@ pub fn handle_local_control_request<C: ManagementApiClient + Clone>(
     }
     match dispatcher.dispatch(&request.method, &request.params) {
         Ok(value) => LocalControlResponse::success(request.id, value),
-        Err(err) => LocalControlResponse::failure(
+        Err(err) => LocalControlResponse::failure_with_details(
             request.id,
             err.code,
             err.message,
             is_retryable_code(err.code),
+            err.details,
         ),
     }
 }
