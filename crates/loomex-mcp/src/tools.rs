@@ -851,6 +851,9 @@ fn output_error_schema() -> Value {
             ("code", identifier()),
             ("message", json!({"type":"string","minLength":1})),
             ("retryable", boolean()),
+            // Backend package-limit errors carry metric/current/requested/limit
+            // context. Keep the object opaque so the server remains canonical.
+            ("details", any_value()),
         ],
         &["code", "message", "retryable"],
     )
@@ -1061,7 +1064,8 @@ fn output_data_schema(tool_name: &str) -> Value {
         "loomex_workflow_validate" => evolvable_object(
             &[
                 ("valid", boolean()),
-                ("errors", array_of(string())),
+                ("errors", array_of(any_value())),
+                ("validationErrors", array_of(any_value())),
                 ("workflow", json_object()),
             ],
             &["valid", "errors", "workflow"],
@@ -1076,7 +1080,7 @@ fn output_data_schema(tool_name: &str) -> Value {
                 ("nextAction", nullable(string())),
                 ("execution", nullable(evolvable_object(&[], &[]))),
                 ("agentTask", nullable(evolvable_object(&[], &[]))),
-                ("validationErrors", array_of(string())),
+                ("validationErrors", array_of(any_value())),
                 ("workflowDraft", nullable(evolvable_object(&[], &[]))),
                 ("workflow", nullable(evolvable_object(&[], &[]))),
             ],
@@ -1802,6 +1806,56 @@ mod tests {
             validate_output(&definition.output_schema, &failure(definition.name))
                 .unwrap_or_else(|error| panic!("{} failure fixture: {error}", definition.name));
         }
+    }
+
+    #[test]
+    fn workflow_contract_preserves_structured_validation_and_limit_errors() {
+        let definition = definition("loomex_workflow_create_finalize").unwrap();
+        let exact_limit_success = envelope(
+            definition.name,
+            json!({
+                "builderSession": {"id": "builder-1"},
+                "status": "completed",
+                "workflow": {"id": "workflow-1", "nodeCount": 5}
+            }),
+        );
+        // The Plugin accepts the server's exact-limit success without applying
+        // a divergent local node filter; the server counted all canonical nodes.
+        validate_output(&definition.output_schema, &exact_limit_success).unwrap();
+
+        let result = envelope(
+            definition.name,
+            json!({
+                "builderSession": {"id": "builder-1"},
+                "status": "validation_failed",
+                "validationErrors": [{
+                    "code": "WORKFLOW_NODE_LIMIT_EXCEEDED",
+                    "message": "workflow has too many nodes",
+                    "details": {
+                        "metric": "workflow_nodes",
+                        "current": 5,
+                        "requested": 1,
+                        "limit": 5,
+                        "period": "2026-08"
+                    }
+                }]
+            }),
+        );
+        validate_output(&definition.output_schema, &result).unwrap();
+
+        let failure = json!({
+            "schemaVersion": "loomex.mcp/v1",
+            "ok": false,
+            "tool": definition.name,
+            "error": {
+                "code": "MEMORY_VOLUME_LIMIT_EXCEEDED",
+                "message": "memory package limit exceeded",
+                "retryable": false,
+                "details": {"metric": "memory_volume_retention", "limit": 100}
+            },
+            "meta": {"requestId": "request-1", "timestampMs": 1}
+        });
+        validate_output(&definition.output_schema, &failure).unwrap();
     }
 
     #[test]

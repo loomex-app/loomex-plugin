@@ -53,6 +53,12 @@ Loomex Workflow; it is not a separate server-side AI execution path.
 - The seeded workflow owns designer/reviewer prompts and the repair loop. Do not
   construct a prompt, add an output suffix, locally validate, repair, or alter
   the agent result.
+- The Backend is authoritative for package validation. Pass the canonical flat
+  graph through create, finalize, and edit/validation calls unchanged; do not
+  calculate a local package allowance or silently trim a graph. The server
+  counts every entry in `nodes`, including `start`, `end`, and other system
+  nodes. Exactly the package maximum is accepted; the first node beyond it is
+  rejected with the server's package-limit error.
 - When the execution reaches `completed`, call
   `loomex_workflow_create_finalize` once with the returned
   `builderSession.id` and a fresh idempotency key. The server performs canonical validation,
@@ -61,6 +67,11 @@ Loomex Workflow; it is not a separate server-side AI execution path.
 - If finalization returns `WORKFLOW_BUILDER_OUTPUT_INVALID`, stop and report the
   server's validation errors. Do not paste the JSON into the UI or claim that a
   Workflow was saved.
+- If any workflow, execution, person, memory, or duration operation returns a
+  package hard-limit error, stop and report its exact stable error code/message
+  and structured `details` (`metric`, `current`, `requested`, `limit`, and
+  `period` when supplied). Never turn that response into a success or retry it
+  unless the server marks it retryable.
 - On success, report the returned saved Workflow id/name and execution id. The
   returned `workflowDraft` is audit data; it is not a replacement for the
   persisted Workflow.

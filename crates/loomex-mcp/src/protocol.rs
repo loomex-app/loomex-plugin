@@ -221,6 +221,7 @@ impl Server {
                             code: error.code.to_string(),
                             message: error.message,
                             retryable: false,
+                            details: None,
                         };
                         failure_envelope(name, request_id, &ClientError::Remote(prompt_error))
                     } else {
@@ -236,6 +237,11 @@ impl Server {
                             ),
                         }
                     }
+                } else if let Some(error) = embedded_server_error(&data) {
+                    // A compliant local-control server reports failures through
+                    // `ok: false`, but preserve the hard-stop invariant if a
+                    // proxy or older daemon embeds the same error in `result`.
+                    failure_envelope(name, request_id, &ClientError::Remote(error))
                 } else {
                     let success = success_envelope(name, request_id.clone(), data);
                     match tools::validate_output(&definition.output_schema, &success) {
@@ -280,8 +286,14 @@ fn tool_result_text(name: &str, envelope: &Value) -> Result<String, RpcError> {
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("Loomex returned an unspecified error");
+        let context = error
+            .get("details")
+            .filter(|details| is_package_limit_context(code, details))
+            .and_then(|details| serde_json::to_string(details).ok())
+            .map(|details| format!(" Structured package-limit context: {details}."))
+            .unwrap_or_default();
         return Ok(format!(
-            "LOOMEX HARD STOP: {name} failed with {code}: {message}. Do not use shell commands, file edits, direct provider CLIs, or any fallback implementation. Do not claim the Loomex work completed. Only call another loomex_* tool for Loomex recovery or diagnostics; otherwise report this exact error and stop."
+            "LOOMEX HARD STOP: {name} failed with {code}: {message}.{context} Do not use shell commands, file edits, direct provider CLIs, or any fallback implementation. Do not claim the Loomex work completed. Only call another loomex_* tool for Loomex recovery or diagnostics; otherwise report this exact error and stop."
         ));
     }
     let builder_task = envelope
@@ -620,13 +632,95 @@ fn success_envelope(tool: &str, request_id: String, data: Value) -> Value {
 }
 
 fn failure_envelope(tool: &str, request_id: String, error: &ClientError) -> Value {
+    let mut error_value = json!({
+        "code": error.code(),
+        "message": error.to_string(),
+        "retryable": error.retryable()
+    });
+    if let ClientError::Remote(remote) = error {
+        if let Some(details) = &remote.details {
+            error_value["details"] = details.clone();
+        }
+    }
     json!({
         "schemaVersion": MCP_ENVELOPE_VERSION,
         "ok": false,
         "tool": tool,
-        "error": {"code":error.code(), "message":error.to_string(), "retryable":error.retryable()},
+        "error": error_value,
         "meta": {"requestId":request_id, "timestampMs":timestamp_ms()}
     })
+}
+
+fn embedded_server_error(data: &Value) -> Option<crate::ipc::ControlError> {
+    if data.get("ok").and_then(Value::as_bool) != Some(false) {
+        return None;
+    }
+
+    let Some(error) = data.get("error").filter(|value| value.is_object()) else {
+        return Some(fail_closed_embedded_server_error(data));
+    };
+    let Some(code) = error
+        .get("code")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return Some(fail_closed_embedded_server_error(data));
+    };
+    let Some(message) = error
+        .get("message")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return Some(fail_closed_embedded_server_error(data));
+    };
+
+    Some(crate::ipc::ControlError {
+        code: code.to_string(),
+        message: message.to_string(),
+        retryable: error
+            .get("retryable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        details: error
+            .get("details")
+            .cloned()
+            .or_else(|| data.get("details").cloned()),
+    })
+}
+
+fn fail_closed_embedded_server_error(data: &Value) -> crate::ipc::ControlError {
+    crate::ipc::ControlError {
+        code: "unknown_runner_error".to_string(),
+        message: "the local runner returned an unspecified error".to_string(),
+        retryable: false,
+        details: data.get("details").cloned().or_else(|| {
+            data.get("error")
+                .and_then(|value| value.get("details"))
+                .cloned()
+        }),
+    }
+}
+
+fn is_package_limit_context(code: &str, details: &Value) -> bool {
+    let normalized = code.to_ascii_uppercase();
+    normalized.contains("LIMIT")
+        || normalized.contains("QUOTA")
+        || details.as_object().is_some_and(|object| {
+            object.keys().any(|key| {
+                matches!(
+                    key.as_str(),
+                    "metric"
+                        | "current"
+                        | "currentUsage"
+                        | "current_usage"
+                        | "requested"
+                        | "requestedAmount"
+                        | "requested_amount"
+                        | "limit"
+                        | "period"
+                )
+            })
+        })
 }
 
 fn timestamp_ms() -> u128 {
@@ -1047,6 +1141,7 @@ mod tests {
                     code: "PROVIDER_UNAVAILABLE".to_string(),
                     message: "Gemini returned 403".to_string(),
                     retryable: false,
+                    details: None,
                 }),
             ),
         )
@@ -1056,6 +1151,111 @@ mod tests {
         assert!(text.contains("Gemini returned 403"));
         assert!(text.contains("Do not use shell commands"));
         assert!(text.contains("Only call another loomex_* tool"));
+    }
+
+    #[test]
+    fn package_limit_failure_preserves_structured_boundary_context() {
+        let details = json!({
+            "metric": "workflow_nodes",
+            "current": 4,
+            "requested": 1,
+            "limit": 5,
+            "period": "2026-08"
+        });
+        let failure = failure_envelope(
+            "loomex_workflow_create_finalize",
+            "request-1".to_string(),
+            &ClientError::Remote(crate::ipc::ControlError {
+                code: "WORKFLOW_NODE_LIMIT_EXCEEDED".to_string(),
+                message: "workflow node package limit exceeded".to_string(),
+                retryable: false,
+                details: Some(details.clone()),
+            }),
+        );
+
+        assert_eq!(failure["ok"], false);
+        assert_eq!(failure["error"]["details"], details);
+        let text = tool_result_text("loomex_workflow_create_finalize", &failure).unwrap();
+        assert!(text.contains("WORKFLOW_NODE_LIMIT_EXCEEDED"));
+        assert!(text.contains("workflow_nodes"));
+        assert!(text.contains("\"limit\":5"));
+    }
+
+    #[test]
+    fn embedded_server_limit_error_cannot_become_a_success_envelope() {
+        let data = json!({
+            "ok": false,
+            "error": {
+                "code": "ACTIVE_WORKFLOW_LIMIT_EXCEEDED",
+                "message": "active workflow package limit exceeded",
+                "retryable": false,
+                "details": {"metric": "active_workflows", "current": 3, "requested": 1, "limit": 3}
+            }
+        });
+        let error = embedded_server_error(&data).expect("embedded error must be detected");
+        assert_eq!(error.code, "ACTIVE_WORKFLOW_LIMIT_EXCEEDED");
+        assert_eq!(error.details.as_ref().unwrap()["limit"], 3);
+
+        let envelope = failure_envelope(
+            "loomex_workflow_create_finalize",
+            "request-1".to_string(),
+            &ClientError::Remote(error),
+        );
+        assert_eq!(envelope["ok"], false);
+        assert!(envelope.get("data").is_none());
+    }
+
+    #[test]
+    fn embedded_server_errors_fail_closed_and_ignore_error_fields_on_success() {
+        let malformed_failures = [
+            json!({"ok": false}),
+            json!({"ok": false, "error": null, "details": {"raw": "null-error"}}),
+            json!({"ok": false, "error": "not-an-object"}),
+            json!({"ok": false, "error": []}),
+            json!({"ok": false, "error": {"message": "missing code"}}),
+            json!({"ok": false, "error": {"code": "MISSING_MESSAGE"}}),
+            json!({
+                "ok": false,
+                "error": {"code": 42, "message": "wrong code type"}
+            }),
+            json!({
+                "ok": false,
+                "error": {"code": "WRONG_MESSAGE_TYPE", "message": {}}
+            }),
+        ];
+
+        for data in malformed_failures {
+            let error = embedded_server_error(&data).expect("explicit failure must fail closed");
+            assert_eq!(error.code, "unknown_runner_error");
+            assert_eq!(
+                error.message,
+                "the local runner returned an unspecified error"
+            );
+            let envelope = failure_envelope(
+                "loomex_workflow_validate",
+                "request-1".to_string(),
+                &ClientError::Remote(error),
+            );
+            assert_eq!(envelope["ok"], false);
+            assert!(envelope.get("data").is_none());
+        }
+
+        let success_data = json!({
+            "ok": true,
+            "valid": true,
+            "errors": [],
+            "workflow": {},
+            "error": {"code": "RAW_DOMAIN_FIELD", "message": "not a failure"},
+            "details": {"raw": "preserve"}
+        });
+        assert!(embedded_server_error(&success_data).is_none());
+        let success = success_envelope(
+            "loomex_workflow_validate",
+            "request-1".to_string(),
+            success_data.clone(),
+        );
+        assert_eq!(success["ok"], true);
+        assert_eq!(success["data"], success_data);
     }
 
     #[tokio::test]
