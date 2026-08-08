@@ -652,13 +652,28 @@ fn failure_envelope(tool: &str, request_id: String, error: &ClientError) -> Valu
 }
 
 fn embedded_server_error(data: &Value) -> Option<crate::ipc::ControlError> {
-    let is_explicit_failure = data.get("ok").and_then(Value::as_bool) == Some(false);
-    let error = data.get("error").filter(|value| value.is_object())?;
-    let code = error.get("code").and_then(Value::as_str)?;
-    let message = error.get("message").and_then(Value::as_str)?;
-    if !is_explicit_failure && code.is_empty() {
+    if data.get("ok").and_then(Value::as_bool) != Some(false) {
         return None;
     }
+
+    let Some(error) = data.get("error").filter(|value| value.is_object()) else {
+        return Some(fail_closed_embedded_server_error(data));
+    };
+    let Some(code) = error
+        .get("code")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return Some(fail_closed_embedded_server_error(data));
+    };
+    let Some(message) = error
+        .get("message")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return Some(fail_closed_embedded_server_error(data));
+    };
+
     Some(crate::ipc::ControlError {
         code: code.to_string(),
         message: message.to_string(),
@@ -671,6 +686,19 @@ fn embedded_server_error(data: &Value) -> Option<crate::ipc::ControlError> {
             .cloned()
             .or_else(|| data.get("details").cloned()),
     })
+}
+
+fn fail_closed_embedded_server_error(data: &Value) -> crate::ipc::ControlError {
+    crate::ipc::ControlError {
+        code: "unknown_runner_error".to_string(),
+        message: "the local runner returned an unspecified error".to_string(),
+        retryable: false,
+        details: data.get("details").cloned().or_else(|| {
+            data.get("error")
+                .and_then(|value| value.get("details"))
+                .cloned()
+        }),
+    }
 }
 
 fn is_package_limit_context(code: &str, details: &Value) -> bool {
@@ -1175,6 +1203,59 @@ mod tests {
         );
         assert_eq!(envelope["ok"], false);
         assert!(envelope.get("data").is_none());
+    }
+
+    #[test]
+    fn embedded_server_errors_fail_closed_and_ignore_error_fields_on_success() {
+        let malformed_failures = [
+            json!({"ok": false}),
+            json!({"ok": false, "error": null, "details": {"raw": "null-error"}}),
+            json!({"ok": false, "error": "not-an-object"}),
+            json!({"ok": false, "error": []}),
+            json!({"ok": false, "error": {"message": "missing code"}}),
+            json!({"ok": false, "error": {"code": "MISSING_MESSAGE"}}),
+            json!({
+                "ok": false,
+                "error": {"code": 42, "message": "wrong code type"}
+            }),
+            json!({
+                "ok": false,
+                "error": {"code": "WRONG_MESSAGE_TYPE", "message": {}}
+            }),
+        ];
+
+        for data in malformed_failures {
+            let error = embedded_server_error(&data).expect("explicit failure must fail closed");
+            assert_eq!(error.code, "unknown_runner_error");
+            assert_eq!(
+                error.message,
+                "the local runner returned an unspecified error"
+            );
+            let envelope = failure_envelope(
+                "loomex_workflow_validate",
+                "request-1".to_string(),
+                &ClientError::Remote(error),
+            );
+            assert_eq!(envelope["ok"], false);
+            assert!(envelope.get("data").is_none());
+        }
+
+        let success_data = json!({
+            "ok": true,
+            "valid": true,
+            "errors": [],
+            "workflow": {},
+            "error": {"code": "RAW_DOMAIN_FIELD", "message": "not a failure"},
+            "details": {"raw": "preserve"}
+        });
+        assert!(embedded_server_error(&success_data).is_none());
+        let success = success_envelope(
+            "loomex_workflow_validate",
+            "request-1".to_string(),
+            success_data.clone(),
+        );
+        assert_eq!(success["ok"], true);
+        assert_eq!(success["data"], success_data);
     }
 
     #[tokio::test]
