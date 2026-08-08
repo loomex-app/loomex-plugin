@@ -153,6 +153,45 @@ Read every reference needed for the user's request before calling its tools.
    `loomex_runner_status` or `loomex_runner_doctor` shows that the local service
    is unhealthy; a healthy service must be allowed to reconnect by itself.
 
+## First-use readiness and capability-guide gate
+
+For a natural-language request, complete this gate before resuming the original
+request. The capability guide is not a setup shortcut and must never be shown
+while any prerequisite is pending, cancelled, failed, or unknown:
+
+1. Read `loomex_setup_status` and follow its exact `recommendedNextAction`.
+   If it is `setup.plan`, read the plan and ask for confirmation only before
+   `loomex_setup_apply`, passing the exact returned `planId`, `channel`, and
+   `installService`. A setup error or cancellation stops the gate.
+2. Read `loomex_auth_status`. If the account is unauthenticated, route to the
+   `login` child skill for the existing secure login/register/verification UI;
+   never collect credentials in chat. After account authentication is complete,
+   start Runner device authentication with `loomex_auth_start`, then wait
+   serially with `loomex_auth_wait` using the exact returned `loginId`. A timeout
+   is incomplete and retryable with that same ID; a non-retryable error stops.
+3. Resolve organization scope with `loomex_org_list`: an empty `items` array
+   routes to `organization-create`, one unselected organization is selected by
+   its exact ID, and multiple organizations route to `organization-switch`.
+   Require the returned organization and Runner state to be explicit
+   `runner_ready`. Preserve `runner_pending` and `pending_reconciliation` as
+   recoverable states, retry the returned setup action serially, and never issue
+   a blind duplicate create or silently choose a multi-organization scope.
+4. Only after setup, account auth, device auth, organization scope, and
+   `runner_ready` all succeed, read and present
+   [capability-guide.md](references/capability-guide.md) before the original
+   request. Use the current conversation language for explanations while
+   preserving every skill/tool identifier exactly. After the guide is rendered
+   successfully, record the non-sensitive plugin marker
+   `loomex.first-use.capability-guide.v1`; do not put credentials, OTPs, tokens,
+   challenge values, organization secrets, or transcript content in that marker.
+   If the marker is already present, skip the guide and resume the request.
+
+Failures, cancellation, pending state, or an unsuccessful retry never record
+the marker. Report the failed stage, exact structured `code`/`message`,
+`retryable` value, and the real next action. Never invent a shell/file fallback
+or a second login/create flow to force the gate through. A retry must resume the
+known stage with the same authoritative ID where the contract provides one.
+
 ## Tool inventory
 
 - Setup: `loomex_setup_status`, `loomex_setup_plan`, `loomex_setup_apply`,

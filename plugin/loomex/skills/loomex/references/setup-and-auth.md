@@ -66,6 +66,42 @@ If the action is `unsupported`, report the structured reason and do not attempt
 setup. If it is `package.error`, report `bundledRuntime.error`; do not misreport
 a malformed or unavailable package as an unsupported platform.
 
+## Complete first-use readiness gate
+
+The main `loomex` skill runs this sequence before showing the post-auth
+capability catalog or resuming a natural-language request:
+
+1. `loomex_setup_status` must be followed by the exact returned action. Read
+   `loomex_setup_plan` when recommended, and call `loomex_setup_apply` only
+   after confirmation with the exact `planId`, `channel`, and `installService`.
+   Setup failure or cancellation is a stopped gate, not a guide state.
+2. `loomex_auth_status` must show account authentication. An unauthenticated
+   account routes to the existing `login` child skill and its secure
+   `loomex_auth_login`/register UI. Do not ask the model-visible conversation
+   for credentials. Once account auth is complete, use
+   `loomex_auth_start` and `loomex_auth_wait` serially for Runner device auth;
+   preserve the exact `loginId` returned by `loomex_auth_start`.
+3. Call `loomex_org_list` after authentication. An empty `items` array goes to
+   `organization-create`; one organization is selected with its exact
+   `organizationId`; multiple organizations go to `organization-switch` and
+   require the user's choice. Organization scope is not ready until the
+   structured health state is `runner_ready`.
+4. `runner_pending` and `pending_reconciliation` are recoverable, not success:
+   preserve the returned organization/action identifiers and retry the same
+   setup action serially. A timeout is unknown state; reconcile before another
+   create or login. A non-retryable setup, auth, organization, or Runner error
+   stops the gate and reports its exact `code`, `message`, and `retryable` value.
+
+Only after all four stages succeed may the main skill present
+`references/capability-guide.md`. It presents the eight catalog entries in the
+current conversation language, keeps technical names unchanged, and then
+records the non-sensitive plugin marker `loomex.first-use.capability-guide.v1`.
+The marker is a host/plugin-supported boolean/version marker only; it must not
+contain a token, password, OTP, challenge, credential, organization secret, or
+transcript. If it is already present, skip the catalog and resume the original
+request. Failure, cancellation, pending state, or an unsuccessful retry never
+records the marker.
+
 ## Authenticate
 
 Call `loomex_auth_status`. If unauthenticated, call `loomex_auth_start`, show the
