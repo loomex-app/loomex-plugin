@@ -401,7 +401,13 @@ impl LocalCapabilityExecutor {
         }
         for change in &changes {
             let path = self.resolve_workspace_path_for_write(&change.path)?;
-            let snapshot = write_snapshot(&path, false)?;
+            let snapshot = write_snapshot(&path, false).map_err(|error| {
+                if error.code == "FS_WRITE_PERMISSION_DENIED" {
+                    CoreError::new("PATCH_PREPARE_FAILED", "patch target is not writable")
+                } else {
+                    error
+                }
+            })?;
             let before = fs::read_to_string(&path).map_err(fs_error("PATCH_READ_FAILED"))?;
             if let Some(expected) = input.base_sha256_by_path.get(&change.path) {
                 if sha256_hex(before.as_bytes()) != *expected {
@@ -1128,9 +1134,9 @@ impl LocalCapabilityExecutor {
         let url = Url::parse(&input.url)
             .map_err(|error| CoreError::new("HTTP_URL_INVALID", error.to_string()))?;
         validate_http_url(&url)?;
-        self.security.network.validate_url(&url)?;
         let timeout = Duration::from_secs(http_timeout_seconds(input.timeout_seconds)?);
         let max_response_bytes = http_response_limit(input.max_response_bytes)?;
+        self.security.network.validate_url(&url)?;
         let validated_addresses = self.security.network.validated_socket_addrs(&url)?;
         let client = Client::builder()
             .timeout(timeout)
@@ -1206,7 +1212,7 @@ impl LocalCapabilityExecutor {
                     resolved.to_string_lossy().to_string(),
                     format!(
                         "PRAGMA query_only=ON; BEGIN; {}; COMMIT;",
-                        sqlite_limit_query(&input.query, max_rows)
+                        sqlite_limit_query(&input.query, max_rows.saturating_add(1))
                     ),
                 ],
                 workspace_scope: ShellWorkspaceScope::Unrestricted,
@@ -1358,6 +1364,14 @@ impl LocalCapabilityExecutor {
             .sandbox
             .validate_relative_path(requested_path)?;
         let joined = self.workspace_root.join(requested_path);
+        if let Ok(metadata) = fs::symlink_metadata(&joined) {
+            if metadata.file_type().is_symlink() {
+                return Err(CoreError::new(
+                    "FS_WRITE_SYMLINK_OR_NOT_FILE",
+                    "write targets must be regular, non-symlink files",
+                ));
+            }
+        }
         if joined.exists() {
             self.ensure_inside_root(&joined, true)
         } else {
@@ -3541,7 +3555,11 @@ fn test_runner_command(input: &TestRunInput) -> CoreResult<Vec<String>> {
             let script = input.script.as_deref().unwrap_or("test");
             vec!["yarn".to_string(), script.to_string()]
         }
-        "pytest" => vec!["python".to_string(), "-m".to_string(), "pytest".to_string()],
+        "pytest" => vec![
+            "python3".to_string(),
+            "-m".to_string(),
+            "pytest".to_string(),
+        ],
         "custom" => input.command.clone().ok_or_else(|| {
             CoreError::new(
                 "TEST_COMMAND_REQUIRED",
@@ -3741,9 +3759,20 @@ struct FileIdentity {
 }
 
 fn file_identity(metadata: &fs::Metadata) -> FileIdentity {
+    #[cfg(unix)]
+    let (len, modified) = if metadata.is_dir() {
+        // Creating the atomic temporary file changes the parent directory's
+        // length/mtime. Directory identity must therefore use stable inode
+        // data only, otherwise every safe atomic write looks like a race.
+        (0, None)
+    } else {
+        (metadata.len(), metadata.modified().ok())
+    };
+    #[cfg(not(unix))]
+    let (len, modified) = (metadata.len(), metadata.modified().ok());
     FileIdentity {
-        len: metadata.len(),
-        modified: metadata.modified().ok(),
+        len,
+        modified,
         #[cfg(unix)]
         device: metadata.dev(),
         #[cfg(unix)]
@@ -4961,7 +4990,7 @@ mod tests {
     #[test]
     fn http_localhost_request_returns_contract_shape_and_body_artifact() {
         let root = test_workspace("http_localhost");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
         let url = spawn_http_server(|_request| {
             http_response(
                 "200 OK",
@@ -5013,6 +5042,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root)
             .unwrap()
             .with_network_security_policy(NetworkSecurityPolicy {
+                allowed_domains: vec!["10.0.0.1".to_string()],
                 allow_private_network: false,
                 ..NetworkSecurityPolicy::default()
             });
@@ -5059,7 +5089,7 @@ mod tests {
     #[test]
     fn http_invalid_url_and_dns_failure_are_structured() {
         let root = test_workspace("http_invalid_url");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
 
         let invalid = executor
             .http_request(HttpRequestInput {
@@ -5077,7 +5107,7 @@ mod tests {
     #[test]
     fn http_timeout_returns_structured_error() {
         let root = test_workspace("http_timeout");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
         let url = spawn_http_server(|_request| {
             thread::sleep(Duration::from_secs(2));
             http_response("200 OK", &[], b"late")
@@ -5098,7 +5128,7 @@ mod tests {
     #[test]
     fn http_timeout_seconds_outside_contract_range_is_rejected() {
         let root = test_workspace("http_timeout_invalid");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
 
         for timeout_seconds in [0, 301] {
             let error = executor
@@ -5117,7 +5147,7 @@ mod tests {
     #[test]
     fn http_timeout_seconds_contract_max_is_accepted() {
         let root = test_workspace("http_timeout_contract_max");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
         let url = spawn_http_server(|_request| http_response("200 OK", &[], b"ok"));
 
         let output = executor
@@ -5135,7 +5165,7 @@ mod tests {
     #[test]
     fn http_redirect_blocked_by_default_and_allowed_by_internal_policy() {
         let root = test_workspace("http_redirect");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
         let blocked_target =
             spawn_http_server(|_request| http_response("200 OK", &[], b"blocked-target"));
         let blocked_redirect = spawn_http_server(move |_request| {
@@ -5172,7 +5202,7 @@ mod tests {
     #[test]
     fn http_response_too_large_is_truncated() {
         let root = test_workspace("http_truncate");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
         let url = spawn_http_server(|_request| http_response("200 OK", &[], b"0123456789"));
 
         let output = executor
@@ -5191,7 +5221,7 @@ mod tests {
     #[test]
     fn http_response_limit_above_contract_max_is_rejected() {
         let root = test_workspace("http_limit_too_large");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
         let url = spawn_http_server(|_request| http_response("200 OK", &[], b"ok"));
 
         let error = executor
@@ -5214,7 +5244,13 @@ mod tests {
             Vec::new(),
             vec!["x-secret-header".to_string()],
         )
-        .unwrap();
+        .unwrap()
+        .with_network_security_policy({
+            let mut network = NetworkSecurityPolicy::default();
+            network.allowed_domains = vec!["127.0.0.1".to_string()];
+            network.allow_localhost = true;
+            network
+        });
         let url = spawn_http_server(|_request| {
             http_response(
                 "200 OK",
@@ -5259,7 +5295,7 @@ mod tests {
     #[test]
     fn http_metadata_ip_is_denied() {
         let root = test_workspace("http_metadata_denied");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
 
         for url in [
             "http://169.254.169.254/latest/meta-data/",
@@ -5282,7 +5318,7 @@ mod tests {
     #[test]
     fn http_redirect_to_metadata_is_denied_before_follow() {
         let root = test_workspace("http_redirect_metadata_denied");
-        let executor = LocalCapabilityExecutor::new(&root).unwrap();
+        let executor = local_http_executor(&root);
         let redirect = spawn_http_server(|_request| {
             http_response(
                 "302 Found",
@@ -5335,6 +5371,7 @@ mod tests {
         let executor = LocalCapabilityExecutor::new(&root)
             .unwrap()
             .with_network_security_policy(NetworkSecurityPolicy {
+                allowed_domains: vec!["10.0.0.1".to_string(), "169.254.169.254".to_string()],
                 allow_private_network: false,
                 ..NetworkSecurityPolicy::default()
             });
@@ -5715,6 +5752,26 @@ mod tests {
         assert!(output.stdout_ref.starts_with("inline:"));
     }
 
+    #[test]
+    fn pytest_runner_uses_python3() {
+        let command = test_runner_command(&TestRunInput {
+            runner: "pytest".to_string(),
+            script: None,
+            command: None,
+            args: vec!["-q".to_string()],
+            env: BTreeMap::new(),
+            working_directory: None,
+            timeout_seconds: None,
+            max_output_bytes: None,
+        })
+        .unwrap();
+
+        assert_eq!(
+            vec!["python3", "-m", "pytest", "-q"],
+            command.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn patch_prepare_failure_does_not_partially_write_previous_files() {
@@ -5815,6 +5872,15 @@ mod tests {
             timeout_seconds: Some(5),
             max_response_bytes: Some(1024),
         }
+    }
+
+    fn local_http_executor(root: &Path) -> LocalCapabilityExecutor {
+        let mut network = NetworkSecurityPolicy::default();
+        network.allowed_domains = vec!["127.0.0.1".to_string(), "localhost".to_string()];
+        network.allow_localhost = true;
+        LocalCapabilityExecutor::new(root)
+            .unwrap()
+            .with_network_security_policy(network)
     }
 
     fn spawn_http_server(handler: impl FnOnce(String) -> Vec<u8> + Send + 'static) -> String {
