@@ -325,6 +325,45 @@ test("natural Loomex requests automatically enter first-use onboarding", async (
   assert.match(skill, /omit optional `files`\/file-list output fields/);
 });
 
+test("first-use onboarding gates the capability guide on complete readiness", async () => {
+  const skill = await readFile(path.join(root, "skills", "loomex", "SKILL.md"), "utf8");
+  const setup = await readFile(
+    path.join(root, "skills", "loomex", "references", "setup-and-auth.md"),
+    "utf8",
+  );
+  const guide = await readFile(
+    path.join(root, "skills", "loomex", "references", "capability-guide.md"),
+    "utf8",
+  );
+  for (const source of [skill, setup]) {
+    assert.match(source, /loomex_setup_status/);
+    assert.match(source, /loomex_setup_plan/);
+    assert.match(source, /loomex_setup_apply/);
+    assert.match(source, /planId[\s\S]*channel[\s\S]*installService/);
+    assert.match(source, /loomex_auth_status/);
+    assert.match(source, /loomex_auth_start/);
+    assert.match(source, /loomex_auth_wait/);
+    assert.match(source, /loginId/);
+    assert.match(source, /serial/);
+    assert.match(source, /runner_ready/);
+    assert.match(source, /runner_pending/);
+    assert.match(source, /pending_reconciliation/);
+    assert.match(source, /organization-create/);
+    assert.match(source, /organization-switch/);
+    assert.match(source, /capability-guide\.md/);
+    assert.match(source, /loomex\.first-use\.capability-guide\.v1/);
+  }
+  assert.match(guide, /loomex\.first-use\.capability-guide\.v1/);
+  assert.match(guide, /password[\s\S]*OTP[\s\S]*challenge[\s\S]*credential[\s\S]*secret/);
+  assert.match(guide, /failure[\s\S]*cancel[\s\S]*pending[\s\S]*retry/);
+  assert.match(skill, /If the marker is already present, skip the guide/);
+  assert.match(skill, /current conversation language/);
+  for (const id of [
+    "loomex", "setup", "login", "logout", "organization-create", "organization-switch",
+    "create-workflow", "workflow",
+  ]) assert.ok(guide.includes("- `id`: `" + id + "`"), id);
+});
+
 test("plugin has no default SessionStart hook and authenticates on first use", async () => {
   const manifest = JSON.parse(
     await readFile(path.join(root, ".codex-plugin", "plugin.json"), "utf8"),

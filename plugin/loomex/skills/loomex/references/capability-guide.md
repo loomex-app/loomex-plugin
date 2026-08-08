@@ -27,6 +27,21 @@ entryFormat: "one Entry section per skill directory"
 - `nextStep`: پس از معرفی هر قابلیت، همین قدم عملی بعدی را روشن و کوتاه بیان
   کن؛ اگر عملیات نیازمند تأیید یا انتخاب کاربر است، همان نقطه را صریح اعلام کن.
 
+## شرط نمایش و marker اولین استفاده
+
+این catalog فقط پس از عبور کامل از gate زیر نمایش داده می‌شود: `loomex_setup_status`
+و plan/apply لازم، احراز حساب، device auth با `loomex_auth_start` و
+`loomex_auth_wait`، تعیین organization scope، و health صریح `runner_ready`.
+وضعیت‌های `runner_pending`، `pending_reconciliation`، خطا، لغو یا timeout به
+معنای آمادگی نیستند و نباید guide را فعال کنند.
+
+پس از نمایش موفق تمام catalog، plugin marker غیرحساس
+`loomex.first-use.capability-guide.v1` را ثبت می‌کند. marker فقط وضعیت/version
+نمایش را نگه می‌دارد و هرگز token، password، OTP، challenge، credential، secret
+سازمان یا متن گفتگو را ذخیره نمی‌کند. اگر marker از قبل وجود داشته باشد، guide
+دوباره نمایش داده نمی‌شود و درخواست اصلی ادامه پیدا می‌کند. هیچ failure، cancel،
+pending یا retry ناموفق نباید marker را ثبت کند.
+
 ## Entry: loomex
 
 - `id`: `loomex`
