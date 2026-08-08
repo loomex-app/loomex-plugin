@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 
-EXPECTED_TOOL_COUNT = 36
+EXPECTED_TOOL_COUNT = 39
 REQUIRED_TOOLS = {
     "loomex_setup_status",
     "loomex_workflow_list",
