@@ -22,6 +22,15 @@ fn run_embedded_server_result(server_result: Value, tool: &str, arguments: Value
     let listener = UnixListener::bind(&socket).unwrap();
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
 
+    let expected_method = match tool {
+        "loomex_workflow_create" => "workflow.create",
+        "loomex_workflow_create_respond" => "workflow.create.respond",
+        "loomex_workflow_create_finalize" => "workflow.create.finalize",
+        "loomex_workflow_validate" => "workflow.validate",
+        "loomex_workflow_run" => "workflow.run",
+        other => panic!("wire-contract helper does not know tool route: {other}"),
+    };
+    let expected_arguments = arguments.clone();
     let daemon = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut request_line = String::new();
@@ -29,6 +38,14 @@ fn run_embedded_server_result(server_result: Value, tool: &str, arguments: Value
             .read_line(&mut request_line)
             .unwrap();
         let request: Value = serde_json::from_str(&request_line).unwrap();
+        assert_eq!(
+            request["method"], expected_method,
+            "wrong local-control route"
+        );
+        assert_eq!(
+            request["params"], expected_arguments,
+            "daemon params were rewritten"
+        );
         let mut response = json!({
             "protocolVersion":"loomex.local-control/v1",
             "id":request["id"],
@@ -73,6 +90,13 @@ fn run_embedded_server_result(server_result: Value, tool: &str, arguments: Value
         output.stderr
     );
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn workflow_definition(node_count: usize) -> Value {
+    let nodes = (0..node_count)
+        .map(|index| json!({"id": format!("node-{index}"), "type": "action"}))
+        .collect::<Vec<_>>();
+    json!({"nodes": nodes, "transitions": []})
 }
 
 #[test]
@@ -517,6 +541,52 @@ fn workflow_and_package_limit_wire_contract_matrix_preserves_server_failures() {
         validation_errors
     );
     assert_eq!(validation["result"]["isError"], false);
+
+    let exact_boundary_definition = workflow_definition(50);
+    let exact_boundary = run_embedded_server_result(
+        json!({
+            "ok": true,
+            "valid": true,
+            "errors": [],
+            "workflow": {"nodeCount": 50}
+        }),
+        "loomex_workflow_validate",
+        json!({"definition": exact_boundary_definition}),
+    );
+    assert_eq!(
+        exact_boundary["result"]["structuredContent"]["data"]["workflow"]["nodeCount"],
+        50
+    );
+    assert_eq!(exact_boundary["result"]["isError"], false);
+
+    let over_boundary_definition = workflow_definition(51);
+    let over_boundary_error = json!({
+        "code": "WORKFLOW_NODE_LIMIT_EXCEEDED",
+        "message": "Monthly package limit exceeded",
+        "retryable": false,
+        "details": {
+            "metric": "workflow.max.nodes",
+            "unit": "nodes",
+            "limit": "50",
+            "currentUsage": "50",
+            "requestedAmount": "1",
+            "period": "2026-08"
+        }
+    });
+    let over_boundary = run_embedded_server_result(
+        json!({"ok": false, "error": over_boundary_error.clone()}),
+        "loomex_workflow_validate",
+        json!({"definition": over_boundary_definition}),
+    );
+    assert_eq!(
+        over_boundary["result"]["structuredContent"]["error"],
+        over_boundary_error
+    );
+    assert_eq!(over_boundary["result"]["structuredContent"]["ok"], false);
+    assert_eq!(over_boundary["result"]["isError"], true);
+    assert!(over_boundary["result"]["structuredContent"]
+        .get("data")
+        .is_none());
 }
 
 #[test]
